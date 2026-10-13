@@ -1,0 +1,44 @@
+name: README 提交记录
+
+# 每次 push main 后，自动把最近提交写进 README 的「近期提交」小节。
+# 防循环：只改 README.md 的推送不触发；自动提交信息带 [skip ci]。
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "README.md"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: readme-log
+  cancel-in-progress: true
+
+jobs:
+  log:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: 更新 README 提交记录
+        run: node scripts/readme-log.mjs
+
+      - name: 有变化则提交
+        run: |
+          if git diff --quiet README.md; then
+            echo "README 无变化，跳过"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add README.md
+            git commit -m "docs: 自动更新 README 提交记录 [skip ci]"
+            git push
+          fi
