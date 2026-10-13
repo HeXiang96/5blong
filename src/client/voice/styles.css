@@ -2436,16 +2436,6 @@ html[data-theme="dark"] .vx-sign-lock-on {
   background: linear-gradient(180deg, #f7ecd6 0%, #eedfc0 100%);
 }
 
-/*
- * 从房间打开设置时的分层：
- * - .vx-room-layer 保持挂载但停止绘制（visibility 不动布局，
- *   getBoundingClientRect 依然有效——猪位广播不断）；
- * - .vx-overlay-layer 是盖在最上面的设置页。
- */
-.vx-room-layer[data-hidden="1"] {
-  visibility: hidden;
-}
-
 .vx-overlay-layer {
   position: fixed;
   inset: 0;

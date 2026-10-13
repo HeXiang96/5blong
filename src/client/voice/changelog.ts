@@ -20,14 +20,10 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    // 纯 bug 修复版本：lines 留空 → 公告栏跳过它，继续展示上一条有内容版本
     version: "1.0.5",
     date: "2026-10-13",
-    lines: [
-      "修好：房主进设置不再冻结全房间的猪",
-      "更新时显示下载进度，小猪跑给你看",
-      "设置页新增「快捷方式」使用指南",
-      "首页布局优化，滚动条不再乱入",
-    ],
+    lines: [],
   },
   {
     version: "1.0.4",
@@ -41,7 +37,7 @@ export const CHANGELOG: ChangelogEntry[] = [
   },
 ];
 
-/** 公告栏展示用：最新一条（没有则 undefined，界面自行兜底）。 */
+/** 公告栏展示用：最新一条**有内容**的记录（纯修复版本 lines 为空会跳过）。 */
 export function latestChangelog(): ChangelogEntry | undefined {
-  return CHANGELOG[0];
+  return CHANGELOG.find((entry) => entry.lines.length > 0);
 }

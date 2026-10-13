@@ -72,7 +72,6 @@ export function App() {
   if (voice.view === "room" || settingsOverRoom) {
     return (
       <>
-      <div className="vx-room-layer" data-hidden={settingsOverRoom ? "1" : "0"}>
       <RoomView
         status={voice.status}
         members={voice.members}
@@ -122,7 +121,6 @@ export function App() {
         onToggleLock={voice.toggleRoomLock}
         onInteract={voice.interact}
       />
-      </div>
       {settingsOverRoom ? (
         <div className="vx-overlay-layer">
           <SettingsView
