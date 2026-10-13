@@ -83,7 +83,7 @@ https://5blong.pages.dev/#c=<房间码>&h=<房主ID>&k=<邀请密钥>
 GitHub 下载不通时用国内直链（与自动更新源同步，换成最新版本号即可）：
 `https://5blong.pages.dev/desktop/5blong_<版本>_x64-setup.exe`。
 
-* 安装包约 2.5 MB（与网页版共用系统 WebView2，不内置浏览器内核）；
+* 安装包约 3.6 MB（与网页版共用系统 WebView2，不内置浏览器内核）；
 * 桌面快捷方式 + 开始菜单 + 系统托盘常驻；点右上角 × 隐藏到托盘、语音继续；
 * **自动更新**：启动后台静默检查新版本，发现后弹窗确认，一键下载安装并自动重启
   （更新包经 minisign 签名校验，更新源就是本仓库的 Releases）；
@@ -234,7 +234,7 @@ if (!guest.joined && message.t !== "joined") return;
 
 * 信令使用 **PeerJS 公共云**，媒体层是 **WebRTC P2P（全互联 mesh）**；
 * 前端：React 19 + Vite + TypeScript；桌面端：**Tauri 2（Rust 壳 + 系统 WebView2）**，
-  安装包约 2.5 MB，与网页版共用同一份前端产物；
+  安装包约 3.6 MB，与网页版共用同一份前端产物；
 * 网页通过 Cloudflare Pages（Wrangler）托管；桌面端由 **GitHub Actions 云出包**，
   **自动更新源托管在 Cloudflare Pages 的 /desktop/ 路径**（与网页同域，国内可直连），
   GitHub Releases 作为备源；
