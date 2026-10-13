@@ -1,13 +1,13 @@
 // 5blong 桌面端（Tauri 壳）。
 //
-// 对标原 Electron 主进程 electron/main.cjs 的能力：
+// 能力清单：
 //   - 单实例：第二次启动只聚焦已有窗口，不开新进程（tauri-plugin-single-instance）。
-//   - 托盘常驻：左键点托盘显示窗口；右键菜单「显示 5blong / 退出」。
+//   - 托盘常驻：左键点托盘显示窗口；右键菜单「显示 5blong / 检查更新 / 退出」。
 //   - 点窗口右上角 ×：不退出，隐藏到托盘，语音继续（CloseRequested 里 prevent_close + hide）。
 //   - 真正退出只走托盘「退出」（app.exit 会直接结束，不再被关窗拦截）。
 //
-// 前端仍是同一份 dist-web，由 Tauri 内置的本地安全协议（tauri.localhost）提供，
-// 它是 secure context，WASM（RNNoise）可正常 fetch，不需要 Electron 那套自定义 app:// 协议。
+// 前端与网页版是同一份 dist-web，由 Tauri 内置的本地安全协议（tauri.localhost）提供，
+// 它是 secure context，WASM（RNNoise）可正常 fetch。
 
 use tauri::{
     menu::{Menu, MenuItem},
@@ -26,6 +26,18 @@ fn show_main(app: &tauri::AppHandle) {
     }
 }
 
+/// 弹窗前置准备：把主窗口带到前台，并把主窗口返回给调用方当对话框 owner。
+/// 不设 owner 的原生对话框会被主窗口压在下面（用户实测踩过）。
+fn front_main(app: &tauri::AppHandle) -> Option<tauri::WebviewWindow> {
+    let window = app.get_webview_window("main");
+    if let Some(window) = &window {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+    window
+}
+
 /// 检查更新并询问安装（更新包来自 GitHub Releases，minisign 签名校验由插件完成）。
 ///
 /// `manual`：true 来自托盘「检查更新」，失败 / 已是最新都要弹窗告知；
@@ -40,7 +52,7 @@ fn check_for_update(app: tauri::AppHandle, manual: bool) {
         };
         match updater.check().await {
             Ok(Some(update)) => {
-                let confirmed = app
+                let mut dialog = app
                     .dialog()
                     .message(format!(
                         "发现新版本 v{}（当前 v{}），要立即下载并安装吗？\n\n更新自动进行，完成后 5blong 会自动重启。",
@@ -51,8 +63,12 @@ fn check_for_update(app: tauri::AppHandle, manual: bool) {
                     .buttons(MessageDialogButtons::OkCancelCustom(
                         "立即更新".into(),
                         "稍后再说".into(),
-                    ))
-                    .blocking_show();
+                    ));
+                // 挂到主窗口上并置前：保证启动时就能看到更新提示。
+                if let Some(window) = front_main(&app) {
+                    dialog = dialog.parent(&window);
+                }
+                let confirmed = dialog.blocking_show();
                 if !confirmed {
                     return;
                 }
@@ -83,19 +99,23 @@ fn check_for_update(app: tauri::AppHandle, manual: bool) {
 }
 
 /// 简单的信息弹窗（阻塞到用户关闭为止；只从异步线程调用）。
+/// 同样挂主窗口当 owner 并置前，避免被主窗口挡住。
 fn update_message_blocking(app: &tauri::AppHandle, title: &str, text: String) {
-    app.dialog()
+    let mut dialog = app
+        .dialog()
         .message(text)
         .title(title)
-        .kind(MessageDialogKind::Info)
-        .blocking_show();
+        .kind(MessageDialogKind::Info);
+    if let Some(window) = front_main(app) {
+        dialog = dialog.parent(&window);
+    }
+    dialog.blocking_show();
 }
 
 /// Windows/WebView2：自动放行页面的权限请求（主要是麦克风）。
 ///
-/// 等价于 Electron 版 `setPermissionRequestHandler(() => true)`。
-/// WebView2 默认遇到 getUserMedia 会弹一个原生权限条；这里挂到
-/// PermissionRequested 事件上一律返回「允许」，让“创建语音房即开聊”不被打断。
+/// 语义等价于浏览器扩展式的"一律允许"：getUserMedia 无需用户手动确认，
+/// 让"创建语音房即开聊"不被打断。
 /// 仅 Windows 编译，macOS/Linux 走各自的 WebView 权限机制。
 #[cfg(windows)]
 fn grant_webview2_permissions(app: &tauri::AppHandle) {
@@ -121,7 +141,7 @@ fn grant_webview2_permissions(app: &tauri::AppHandle) {
                 |_core: Option<ICoreWebView2>,
                  args: Option<ICoreWebView2PermissionRequestedEventArgs>| {
                     if let Some(args) = args {
-                        // 麦克风 / 相机等媒体权限一律放行，与 Electron 行为一致。
+                        // 麦克风 / 相机等媒体权限一律放行。
                         let _ = args.SetState(COREWEBVIEW2_PERMISSION_STATE_ALLOW);
                     }
                     Ok(())
@@ -157,7 +177,7 @@ pub fn run() {
             let menu = Menu::with_items(app, &[&show_item, &update_item, &quit_item])?;
 
             let mut tray_builder = TrayIconBuilder::with_id("main-tray")
-                .tooltip("5blong")
+                .tooltip(format!("5blong v{}", app.package_info().version))
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
@@ -167,7 +187,7 @@ pub fn run() {
                     _ => {}
                 })
                 .on_tray_icon_event(|tray, event| {
-                    // 左键单击：显示并聚焦（与原 Electron 行为一致）。
+                    // 左键单击：显示并聚焦主窗口。
                     if let TrayIconEvent::Click {
                         button: MouseButton::Left,
                         button_state: MouseButtonState::Up,
@@ -186,10 +206,11 @@ pub fn run() {
             #[cfg(windows)]
             grant_webview2_permissions(app.handle());
 
-            // 启动稍歇后静默检查一次更新（弹窗只在新版本真的存在时出现）。
+            // 启动后尽快静默检查一次更新（弹窗只在新版本真的存在时出现；
+            // 有更新时主窗口会自动置前、弹窗挂主窗口 owner，不会被挡住）。
             let handle = app.handle().clone();
             std::thread::spawn(move || {
-                std::thread::sleep(std::time::Duration::from_secs(4));
+                std::thread::sleep(std::time::Duration::from_secs(2));
                 check_for_update(handle, false);
             });
 

@@ -1,5 +1,6 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { Copy, LogIn, Plus, Settings as SettingsIcon } from "lucide-react";
+import { getVersion } from "@tauri-apps/api/app";
 
 import { AVATAR_COLORS, initials, type Identity } from "../identity";
 import { CODE_HINT, CODE_PLACEHOLDER, JOIN_PARSE_ERROR, ROOM_CODE_LEN } from "../protocol";
@@ -49,6 +50,15 @@ export function LandingView({
   const [draftName, setDraftName] = useState(identity.name);
   const viewWidth = typeof window !== "undefined" ? window.innerWidth : 1000;
 
+  // 桌面端显示当前版本号（网页版始终是最新部署，不显示）。
+  const [appVersion, setAppVersion] = useState<string | null>(null);
+  useEffect(() => {
+    if (typeof window === "undefined" || !("__TAURI_INTERNALS__" in window)) return;
+    getVersion()
+      .then(setAppVersion)
+      .catch(() => {});
+  }, []);
+
   const submit = (event: FormEvent) => {
     event.preventDefault();
     const ok = onJoin(joinText);
@@ -75,6 +85,7 @@ export function LandingView({
         <span className="vx-wordmark">
           <span className="vx-logo-dot" />
           5blong
+          {appVersion ? <span className="vx-version-badge">v{appVersion}</span> : null}
         </span>
         <button
           type="button"

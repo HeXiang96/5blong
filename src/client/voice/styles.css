@@ -1,6 +1,6 @@
 /* 5blong 视觉层
    深色为默认，浅色由 <html data-theme="light"> 覆盖。
-   统一 vx- 前缀，避免与上游 Piik 的样式表冲突。
+   全部类名统一 vx- 前缀。
 
    配色说明（2026-10-13 统一）：
    房间是暖奶油 + 木头，而落地页/设置页原来用的是冷蓝，点"创建语音房"像跨了两个应用。
@@ -97,6 +97,20 @@ select {
   gap: 8px;
   font-weight: 650;
   letter-spacing: 0.01em;
+}
+
+/* 桌面端首页的当前版本号徽标（跟随 wordmark，一眼可见）。 */
+.vx-version-badge {
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--vx-line);
+  background: var(--vx-surface);
+  color: var(--vx-text-dim);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 1.4;
+  user-select: text;
 }
 
 .vx-wordmark-sm {
