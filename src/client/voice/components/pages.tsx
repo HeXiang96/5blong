@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { Copy, LogIn, Plus, Settings as SettingsIcon } from "lucide-react";
+import { Copy, Download, LogIn, Plus, Settings as SettingsIcon } from "lucide-react";
 import { getVersion } from "@tauri-apps/api/app";
 
 import { AVATAR_COLORS, initials, type Identity } from "../identity";
@@ -52,12 +52,30 @@ export function LandingView({
 
   // 桌面端显示当前版本号（网页版始终是最新部署，不显示）。
   const [appVersion, setAppVersion] = useState<string | null>(null);
+  const isDesktop = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
   useEffect(() => {
-    if (typeof window === "undefined" || !("__TAURI_INTERNALS__" in window)) return;
+    if (!isDesktop) return;
     getVersion()
       .then(setAppVersion)
       .catch(() => {});
-  }, []);
+  }, [isDesktop]);
+
+  // 网页版首页的"下载客户端"：先读当前部署的更新清单拿到最新安装包地址，
+  // 失败则退到稳定短链 /desktop/latest（发布脚本每次部署都会重定向到当前版本）。
+  const startDownload = async () => {
+    try {
+      const res = await fetch("/desktop/latest.json");
+      const manifest = await res.json();
+      const url = manifest?.platforms?.["windows-x86_64"]?.url;
+      if (typeof url === "string" && url.startsWith("https://")) {
+        window.location.href = url;
+        return;
+      }
+    } catch {
+      // 走兜底短链
+    }
+    window.location.href = "/desktop/latest";
+  };
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
@@ -161,6 +179,20 @@ export function LandingView({
             <LogIn size={18} /> 加入语音房
           </button>
         </div>
+
+        {/* 仅网页版显示：桌面端用户已在客户端内（那里显示版本徽标）。 */}
+        {!isDesktop ? (
+          <div className="vx-download">
+            <button
+              type="button"
+              className="vx-btn vx-btn-ghost"
+              onClick={startDownload}
+              title="下载 Windows 安装包（约 3.6 MB，免管理员安装，带自动更新）"
+            >
+              <Download size={16} /> 下载 Windows 客户端
+            </button>
+          </div>
+        ) : null}
 
         <ul className="vx-facts">
           <li>建议 2–6 人，最多 8 人</li>

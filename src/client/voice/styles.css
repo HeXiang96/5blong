@@ -533,6 +533,19 @@ select {
   width: 100%;
 }
 
+/* 网页版首页的"下载 Windows 客户端"（桌面端隐藏，由 isDesktop 控制）。 */
+.vx-download {
+  display: flex;
+  justify-content: center;
+  margin-top: 4px;
+  width: 100%;
+}
+
+.vx-download .vx-btn {
+  font-size: 14px;
+  color: var(--vx-text-dim);
+}
+
 .vx-actions .vx-btn {
   flex: 1;
   padding: 15px;

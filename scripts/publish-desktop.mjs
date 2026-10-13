@@ -128,6 +128,13 @@ async function main() {
   }
   log("stage", `dist-deploy/ = dist-web + desktop/{${exeName}, .sig, latest.json}`);
 
+  // 6. 稳定短链：/desktop/latest 永远 302 到当前版本的安装包，
+  //    供网页首页"下载客户端"按钮兜底和对外分享（版本号变了链接不变）。
+  writeFileSync(
+    path.join(distDeploy, "_redirects"),
+    `/desktop/latest /desktop/${exeName} 302\n`,
+  );
+
   execSync(`node scripts/deploy-pages.mjs dist-deploy ${project} ${branch}`, {
     cwd: root,
     stdio: "inherit",
@@ -136,6 +143,7 @@ async function main() {
   log("done", [
     `更新源     ${pagesBase}/desktop/latest.json`,
     `安装包直链 ${pagesUrl}`,
+    `稳定短链   ${pagesBase}/desktop/latest`,
   ].join("\n                     "));
 }
 
