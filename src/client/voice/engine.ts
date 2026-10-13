@@ -1037,22 +1037,22 @@ export class VoiceMesh {
    */
   private broadcastPoses(): void {
     if (!this.hosting || this.guests.size === 0) return;
+    /*
+     * 只发"活快照"（PigActor 正在渲染的实时位置）。
+     * 曾经在快照缺失时回退到 penActorX 的历史值——猪圈一停止渲染
+     * （例如房主切到别的页面把 RoomView 卸了），就会一直发冻结坐标，
+     * 全房间的猪跟着卡住。宁可不发，也绝不发假位置。
+     */
     const snaps = readPenSnapshots();
-    const ids = new Set<string>([...this.penActorX.keys(), ...snaps.keys()]);
-    if (ids.size === 0) return;
+    if (snaps.size === 0) return;
     const poses: PenPose[] = [];
-    for (const id of ids) {
-      const snap = snaps.get(id);
-      const x = snap ? snap.x : this.penActorX.get(id);
-      if (x === undefined) continue;
-      const lane = snap ? snap.lane : (this.penActorLane.get(id) ?? 0.5);
+    for (const [id, snap] of snaps) {
       poses.push({
         id,
-        x: Number(x.toFixed(3)),
-        lane: Number(lane.toFixed(2)),
+        x: Number(snap.x.toFixed(3)),
+        lane: Number(snap.lane.toFixed(2)),
       });
     }
-    if (poses.length === 0) return;
     this.broadcastHost({ t: "pen-poses", ts: Date.now(), poses });
   }
 

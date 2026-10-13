@@ -676,6 +676,7 @@ export function useVoice() {
     leave,
     openSettings,
     closeSettings,
+    settingsReturn,
     saveAll,
     toggleChat,
     toggleMute,

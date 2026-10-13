@@ -32,7 +32,17 @@ export function App() {
     return () => document.removeEventListener("visibilitychange", sync);
   }, []);
 
-  if (voice.view === "settings") {
+  /*
+   * 从**房间里**打开设置：房间保持挂载、设置盖在上面。
+   *
+   * 曾经的实现是整页切走（early return），后果是房主一进设置，8 个
+   * PigActor 全部卸载 → 位置快照清空 → 房主停止广播 → **全房间的猪
+   * 瞬间冻结**；回来时整棵重建，还伴随一波挂载卡顿与位置跳变。
+   * 现在设置页是覆盖层，猪圈在下面继续走、广播不断，回来无缝。
+   */
+  const settingsOverRoom = voice.view === "settings" && voice.settingsReturn === "room";
+
+  if (voice.view === "settings" && !settingsOverRoom) {
     return (
       <SettingsView
         identity={voice.identity}
@@ -59,8 +69,10 @@ export function App() {
     );
   }
 
-  if (voice.view === "room") {
+  if (voice.view === "room" || settingsOverRoom) {
     return (
+      <>
+      <div className="vx-room-layer" data-hidden={settingsOverRoom ? "1" : "0"}>
       <RoomView
         status={voice.status}
         members={voice.members}
@@ -110,6 +122,19 @@ export function App() {
         onToggleLock={voice.toggleRoomLock}
         onInteract={voice.interact}
       />
+      </div>
+      {settingsOverRoom ? (
+        <div className="vx-overlay-layer">
+          <SettingsView
+            identity={voice.identity}
+            settings={voice.settings}
+            onSave={voice.saveAll}
+            onClose={voice.closeSettings}
+            onNotice={(kind, text) => voice.setNotice({ kind, text })}
+          />
+        </div>
+      ) : null}
+      </>
     );
   }
 
