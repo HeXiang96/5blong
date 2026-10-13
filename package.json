@@ -1,0 +1,48 @@
+{
+  "name": "5blong",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "description": "5blong：免注册的低延迟语音房（PeerJS 公共云信令 + WebRTC P2P）",
+  "main": "electron/main.cjs",
+  "engines": {
+    "node": ">=24.0.0 <27"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "npm run build:web:pages",
+    "build:web:pages": "vite build --base ./ --outDir dist-web --emptyOutDir",
+    "preview": "vite preview --outDir dist-web --host 127.0.0.1 --port 8787",
+    "typecheck": "tsc -b --pretty false",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check": "npm run typecheck && npm test && npm run build:web:pages",
+    "electron": "electron .",
+    "electron:dev": "set VOX_DEV=1&& electron .",
+    "package:desktop": "npm run build:web:pages && node scripts/package-desktop.mjs && node scripts/zip-desktop.mjs",
+    "verify:desktop": "node scripts/verify-desktop.mjs",
+    "smoke:desktop": "node scripts/smoke-desktop.mjs",
+    "deploy:pages": "node scripts/deploy-pages.mjs",
+    "status:pages": "node scripts/pages-status.mjs",
+    "bump": "node scripts/bump-version.mjs"
+  },
+  "dependencies": {
+    "@sapphi-red/web-noise-suppressor": "^0.4.1",
+    "lucide-react": "^1.55.0",
+    "peerjs": "^1.5.5",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.12.2",
+    "@types/node": "24.13.3",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.4",
+    "@vitejs/plugin-react": "6.0.5",
+    "electron": "^44.7.0",
+    "typescript": "~6.0.3",
+    "vite": "8.2.1",
+    "vitest": "4.1.11"
+  }
+}

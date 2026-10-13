@@ -1,0 +1,58 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "5blong",
+  "version": "1.0.0",
+  "identifier": "com.5blong.app",
+  "build": {
+    "frontendDist": "../dist-web",
+    "devUrl": "http://localhost:8787",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build:web:pages"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "5blong",
+        "width": 1080,
+        "height": 760,
+        "minWidth": 820,
+        "minHeight": 600,
+        "resizable": true,
+        "center": true,
+        "fullscreen": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "createUpdaterArtifacts": true,
+    "shortDescription": "5blong 临时语音房",
+    "longDescription": "免注册、免选服务器的低延迟 P2P 语音房：创建房间、分享链接即可开聊。",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": ["SimpChinese", "English"]
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDgxREE0MzQ5MkYwNDAyMjEKUldRaEFnUXZTVVBhZ1pzUHlQOGN0YU5iK0F6OW5KazdiZXZRUWlkTFd2WGxBVFlHeGl0NU9XejUK",
+      "endpoints": [
+        "https://github.com/HeXiang96/5blong/releases/latest/download/latest.json"
+      ]
+    }
+  }
+}

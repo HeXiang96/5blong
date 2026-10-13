@@ -1,0 +1,53 @@
+name: Release
+
+# 触发方式二选一：
+#   1. 推送 app-v* 标签（npm run bump 会自动做这件事）→ 出正式 Release；
+#   2. 在 GitHub Actions 页面手动 Run workflow（不出 Release，仅验证构建）。
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'app-v*'
+
+jobs:
+  build:
+    permissions:
+      contents: write
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      # tauri-action：构建 NSIS 安装包 + 更新产物（*.exe.zip + .sig + latest.json），
+      # 签名用仓库 Secrets 里的 TAURI_SIGNING_PRIVATE_KEY（密码为空串），
+      # 全部资产连同 latest.json 一起发布到 GitHub Releases。
+      - name: Build and release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: .
+          tagName: app-v__VERSION__
+          releaseName: '5blong v__VERSION__'
+          releaseBody: 'Windows 安装包（NSIS，免管理员）。桌面端会自动检查并提示更新；加入者用网页版无需安装。'
+          releaseDraft: false
+          prerelease: false
+          includeUpdaterJson: true

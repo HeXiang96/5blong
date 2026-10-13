@@ -1,0 +1,625 @@
+/* ================================= 顶部木牌：浮在猪圈上的一块挂牌（不是通栏） */
+/*
+ * `.vx-room-top` 的内边距与背景统一由 styles.css 负责
+ *（那里必须是全透明浮层，否则木牌两侧会留下一条通栏浅色带）。
+ * 这里只放木牌自己的外观。
+ */
+.vx-signboard {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: clamp(8px, 1.4vw, 16px);
+  margin: 0 auto;
+  width: fit-content;
+  max-width: calc(100% - 24px);
+  padding: 9px clamp(12px, 2vw, 22px);
+  border-radius: 14px;
+  pointer-events: auto;
+  /* 三块木板拼成，带木纹与上下缘高光 */
+  background:
+    linear-gradient(180deg, rgba(255, 246, 222, 0.55) 0%, rgba(255, 246, 222, 0) 26%),
+    linear-gradient(180deg, rgba(96, 60, 24, 0.18) 0 1px, rgba(96, 60, 24, 0) 1px 31%,
+      rgba(96, 60, 24, 0.16) 31% 32%, rgba(96, 60, 24, 0) 32% 64%,
+      rgba(96, 60, 24, 0.16) 64% 65%, rgba(96, 60, 24, 0) 65%),
+    repeating-linear-gradient(92deg, rgba(122, 82, 38, 0.1) 0 2px, rgba(122, 82, 38, 0) 2px 9px),
+    linear-gradient(180deg, #ecc78d 0%, #d8a866 48%, #bd8b4b 100%);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.5) inset,
+    0 -3px 0 rgba(120, 78, 34, 0.28) inset,
+    0 4px 10px rgba(70, 44, 14, 0.3),
+    0 1px 0 rgba(90, 58, 22, 0.45);
+  border: 1px solid rgba(120, 78, 34, 0.5);
+}
+
+/* 两根吊绳：把木牌挂在上木栏上 */
+.vx-sign-hanger {
+  position: absolute;
+  top: -20px;
+  width: 3px;
+  height: 22px;
+  border-radius: 2px;
+  background: linear-gradient(180deg, #a5824a 0%, #7d5f30 100%);
+  box-shadow: 0 0 0 1px rgba(80, 56, 20, 0.25);
+}
+
+.vx-sign-hanger-l {
+  left: 46px;
+  transform: rotate(-9deg);
+  transform-origin: bottom center;
+}
+
+.vx-sign-hanger-r {
+  right: 46px;
+  transform: rotate(9deg);
+  transform-origin: bottom center;
+}
+
+/* 两颗螺丝钉 */
+.vx-sign-screw {
+  position: absolute;
+  top: 6px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #f0e2c4 0%, #a98c58 60%, #7c6432 100%);
+  box-shadow: 0 1px 1px rgba(70, 45, 15, 0.45);
+}
+
+.vx-sign-screw-l {
+  left: 9px;
+}
+
+.vx-sign-screw-r {
+  right: 9px;
+}
+
+/* 品牌字：刻在木头上的感觉 */
+.vx-sign-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 800;
+  font-size: 16px;
+  letter-spacing: 0.01em;
+  color: #5b3d18;
+  text-shadow: 0 1px 0 rgba(255, 245, 220, 0.65);
+}
+
+/* 圈号：木牌上再钉一块小铜牌 */
+.vx-sign-code {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 7px;
+  padding: 4px 11px;
+  border: 1px solid rgba(120, 78, 34, 0.55);
+  border-radius: 9px;
+  background: linear-gradient(180deg, #fdf6e4 0%, #f0e0be 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8), 0 1px 2px rgba(70, 45, 15, 0.25);
+  color: #5b3d18;
+  cursor: pointer;
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+
+.vx-sign-code:hover {
+  transform: translateY(-1px);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8), 0 3px 7px rgba(70, 45, 15, 0.28);
+}
+
+.vx-sign-code-label {
+  font-size: 11px;
+  opacity: 0.72;
+}
+
+.vx-sign-code-value {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 17px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  color: #3f2a0c;
+}
+
+.vx-sign-code-state {
+  font-size: 11px;
+  opacity: 0.6;
+}
+
+.vx-sign-conn,
+.vx-sign-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #6b4a1e;
+  text-shadow: 0 1px 0 rgba(255, 246, 222, 0.6);
+  white-space: nowrap;
+}
+
+.vx-sign-btn {
+  box-shadow: 0 2px 5px rgba(70, 45, 15, 0.3);
+}
+
+.vx-sign-settings {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid rgba(120, 78, 34, 0.55);
+  border-radius: 9px;
+  background: linear-gradient(180deg, #fdf6e4 0%, #efdec0 100%);
+  color: #5b3d18;
+  cursor: pointer;
+}
+
+.vx-sign-settings:hover {
+  background: linear-gradient(180deg, #fffaf0 0%, #f6e8cd 100%);
+}
+
+/* 深色主题：木牌换成深色木 */
+html[data-theme="dark"] .vx-signboard {
+  background:
+    linear-gradient(180deg, rgba(255, 236, 200, 0.16) 0%, rgba(255, 236, 200, 0) 26%),
+    repeating-linear-gradient(92deg, rgba(255, 226, 170, 0.06) 0 2px, rgba(255, 226, 170, 0) 2px 9px),
+    linear-gradient(180deg, #6d5531 0%, #5a4323 48%, #453218 100%);
+  border-color: rgba(255, 226, 170, 0.28);
+}
+
+html[data-theme="dark"] .vx-sign-brand,
+html[data-theme="dark"] .vx-sign-conn,
+html[data-theme="dark"] .vx-sign-count {
+  color: #f4e4c2;
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.35);
+}
+
+html[data-theme="dark"] .vx-sign-code,
+html[data-theme="dark"] .vx-sign-settings {
+  background: linear-gradient(180deg, #4a3a1e 0%, #3a2c15 100%);
+  border-color: rgba(255, 226, 170, 0.3);
+  color: #f4e4c2;
+}
+
+@media (max-width: 720px) {
+  .vx-signboard {
+    gap: 6px;
+    padding: 7px 10px;
+    border-radius: 11px;
+  }
+
+  .vx-sign-brand {
+    font-size: 13px;
+  }
+
+  .vx-sign-code-value {
+    font-size: 14px;
+  }
+
+  .vx-sign-conn,
+  .vx-sign-count {
+    font-size: 11px;
+  }
+
+  .vx-sign-code-state {
+    display: none;
+  }
+}
+
+/* ------------------------------------------------------- 空地上的草与木料 */
+
+.vx-pen-scatter {
+  position: absolute;
+  inset: 18px;
+  pointer-events: none;
+}
+
+.vx-scatter {
+  position: absolute;
+  translate: -50% -50%;
+  scale: var(--vx-scatter-scale, 1);
+}
+
+.vx-scatter-svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.vx-scatter-grass {
+  width: 46px;
+  height: 34px;
+  opacity: 0.72;
+}
+
+.vx-scatter-log {
+  width: 60px;
+  height: 34px;
+  opacity: 0.95;
+}
+
+.vx-scatter-flower {
+  width: 30px;
+  height: 30px;
+  opacity: 0.78;
+}
+
+.vx-scatter-pebble {
+  width: 40px;
+  height: 24px;
+  opacity: 0.95;
+}
+
+.vx-scatter-mushroom {
+  width: 28px;
+  height: 28px;
+  opacity: 0.96;
+}
+
+/* 野花轻轻摆，比草更慢更柔 */
+.vx-scatter-flower .vx-scatter-svg {
+  transform-origin: 50% 100%;
+  animation: vx-grass-sway 5.6s ease-in-out infinite;
+}
+
+/* 草会轻微摆动，让空地不那么死 */
+.vx-scatter-grass .vx-scatter-svg {
+  transform-origin: 50% 100%;
+  animation: vx-grass-sway 4.5s ease-in-out infinite;
+}
+
+@keyframes vx-grass-sway {
+  0%,
+  100% {
+    rotate: -2.5deg;
+  }
+  50% {
+    rotate: 2.5deg;
+  }
+}
+
+@media (max-width: 720px) {
+  .vx-pen-scatter {
+    inset: 14px;
+  }
+
+  .vx-scatter-grass {
+    width: 34px;
+    height: 25px;
+  }
+
+  .vx-scatter-log {
+    width: 44px;
+    height: 25px;
+  }
+
+  .vx-scatter-flower {
+    width: 24px;
+    height: 24px;
+  }
+
+  .vx-scatter-pebble {
+    width: 30px;
+    height: 19px;
+  }
+
+  .vx-scatter-mushroom {
+    width: 22px;
+    height: 22px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vx-scatter-grass .vx-scatter-svg,
+  .vx-scatter-flower .vx-scatter-svg {
+    animation: none !important;
+  }
+}
+
+
+/* 吊绳的可见空间由 styles.css 里 .vx-room-top 的 padding-top 统一负责，
+   这里不再重复覆盖（历史上留了两处一样的 padding-top: 14px，互相打架）。 */
+
+/* DDY 名牌挪到左侧木栏上，别和中间的公告牌挤在一起 */
+.vx-npc-badge {
+  left: 18%;
+  top: 10px;
+}
+
+/* ------------------------------------------------- 层次：提示在最前，猪在它后面 */
+
+
+/* ------------------------------------------- 房间内的主按钮：木牌风实心暖色 */
+
+/*
+ * 2026-10-13 配色统一后，全局强调色本身就是木头系暖琥珀，
+ * 所以这里不再需要"把蓝色临时换成暖色"——只要在木牌场景里
+ * 把主按钮做成**实心暖色胶囊**（与木托盘的立体感一致）即可。
+ * 落地页/设置页的主按钮走 styles.css 里的通用规则，两者色相一致、只是形态不同。
+ */
+.vx-room .vx-btn-primary {
+  border-color: rgba(150, 96, 26, 0.65);
+  background:
+    linear-gradient(180deg, rgba(255, 248, 226, 0.55) 0%, rgba(255, 248, 226, 0) 36%),
+    linear-gradient(180deg, #f3bf5f 0%, #e0a13c 55%, #c9862a 100%);
+  color: #4a2e08;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.6),
+    0 2px 6px rgba(120, 74, 16, 0.32);
+}
+
+.vx-room .vx-btn-primary:hover:not(:disabled) {
+  background:
+    linear-gradient(180deg, rgba(255, 252, 236, 0.6) 0%, rgba(255, 252, 236, 0) 36%),
+    linear-gradient(180deg, #f8c96e 0%, #e8ab46 55%, #d18f31 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.7),
+    0 4px 10px rgba(120, 74, 16, 0.38);
+}
+
+html[data-theme="dark"] .vx-room .vx-btn-primary {
+  color: #3a2406;
+}
+
+/* ==================================================== 挂机省电：看不见时停动画 */
+
+/*
+ * 开黑一挂就是两三个小时，场景里有近 40 个 `infinite` 动画
+ *（猪待机浮动、睡觉冒 z、草在摆、木牌在摇……），窗口闲置时它们照跑，
+ * 笔记本上表现为持续耗电、风扇不停。
+ *
+ * **只按 `document.hidden` 来停**（最小化 / 切到别的标签页 / 窗口被完全遮住），
+ * 也就是"画面真的没人看"的时候。由 App.tsx 里的 visibilitychange 同步这个属性。
+ *
+ * 为什么不用"窗口失焦"（`:not(:focus-within)`）：
+ * 猪圈是**共享画面**——所有端的猪走位都由房主那一份状态驱动。
+ * 房主只要切到别的窗口，全房间所有人的猪就一起冻住，而其他人明明在看屏幕。
+ * 那是把房主一个人的省电需求强加给了所有人，所以不做。
+ */
+html[data-vx-hidden="1"] .vx-stage *,
+html[data-vx-hidden="1"] .vx-controls *,
+html[data-vx-hidden="1"] .vx-signboard * {
+  animation-play-state: paused !important;
+}
+
+/* ============================================================ DDY 走到栏边丢菜 */
+
+/*
+ * 出场时序（和 RoomView 里 npcActive 的时间窗对齐）：
+ *   0      ~ 1.15s  从右侧栏外走进来
+ *   1.15s  ~ 1.75s  停下、抬手丢菜（此刻正好是事件时间戳）
+ *   1.75s  ~ 3.2s   站在原地挥挥手
+ *   3.2s   ~ 4.4s   转身走回栏外
+ * 动画是 both 填充，所以走完后停在栏外。
+ */
+.vx-npc {
+  position: absolute;
+  inset: 0;
+  z-index: 7;
+  pointer-events: none;
+}
+
+.vx-npc-walker {
+  position: absolute;
+  right: 14px;
+  bottom: 30px;
+  width: 74px;
+  height: 92px;
+  animation: vx-npc-visit 4.4s cubic-bezier(0.33, 0.9, 0.4, 1) both;
+  will-change: transform;
+}
+
+@keyframes vx-npc-visit {
+  0% {
+    transform: translateX(140%);
+    opacity: 0;
+  }
+  6% {
+    opacity: 1;
+  }
+  26% {
+    transform: translateX(0);
+  }
+  40% {
+    transform: translateX(0);
+  }
+  73% {
+    transform: translateX(0);
+  }
+  96% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(140%);
+    opacity: 0;
+  }
+}
+
+.vx-npc-svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+  filter: drop-shadow(0 4px 4px rgba(70, 45, 15, 0.28));
+}
+
+/* 腿：走路时摆动；停下阶段（26%~73%）不摆 */
+.vx-npc-leg {
+  transform-origin: 50% 0;
+}
+.vx-npc-leg-a {
+  animation: vx-npc-step 0.62s ease-in-out infinite;
+}
+.vx-npc-leg-b {
+  animation: vx-npc-step 0.62s ease-in-out infinite;
+  animation-delay: -0.31s;
+}
+
+@keyframes vx-npc-step {
+  0%,
+  100% {
+    rotate: 16deg;
+  }
+  50% {
+    rotate: -16deg;
+  }
+}
+
+/* 挥手的胳膊：只在中段抬手挥两下 */
+.vx-npc-arm {
+  transform-box: fill-box;
+  transform-origin: 20% 90%;
+  animation: vx-npc-wave 4.4s ease-in-out both;
+}
+
+@keyframes vx-npc-wave {
+  0%,
+  28% {
+    rotate: 0deg;
+  }
+  44%,
+  70% {
+    rotate: -78deg;
+  }
+  52%,
+  62% {
+    rotate: -58deg;
+  }
+  100% {
+    rotate: 0deg;
+  }
+}
+
+/* 菜篮轻轻颠一下 */
+.vx-npc-basket {
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+  animation: vx-npc-basket 1.6s ease-in-out infinite;
+}
+
+@keyframes vx-npc-basket {
+  0%,
+  100% {
+    rotate: -3deg;
+  }
+  50% {
+    rotate: 3deg;
+  }
+}
+
+/* 名字名牌跟着人走 */
+.vx-npc-name {
+  position: absolute;
+  left: 50%;
+  top: -4px;
+  translate: -50% 0;
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(150, 110, 60, 0.6);
+  background: linear-gradient(180deg, #fffbe8 0%, #f2e0bb 100%);
+  color: #5a3f1e;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+  box-shadow: 0 2px 6px rgba(70, 45, 15, 0.26);
+}
+
+html[data-theme="dark"] .vx-npc-name {
+  background: linear-gradient(180deg, #5d4726 0%, #453318 100%);
+  border-color: rgba(255, 226, 170, 0.35);
+  color: #f6e6c4;
+}
+
+@media (max-width: 720px) {
+  .vx-npc-walker {
+    width: 56px;
+    height: 70px;
+    right: 10px;
+    bottom: 26px;
+  }
+
+  .vx-npc-name {
+    font-size: 11px;
+    padding: 1px 8px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vx-npc-walker,
+  .vx-npc-leg,
+  .vx-npc-arm,
+  .vx-npc-basket {
+    animation: none !important;
+  }
+}
+
+/* DDY 要站在栏外、且完整可见：侧栏虽然 z-index 低，但渲染顺序在后面，
+   所以这里把 DDY 提到最高层，并让脚正好落在下栏横杆上沿。 */
+.vx-npc {
+  z-index: 9;
+}
+
+.vx-npc-walker {
+  bottom: 40px;
+}
+
+/* ============================================ 远端音频被拦下时的恢复入口 */
+
+/*
+ * 这不是普通提示：用户不点就永远听不见对方说话，
+ * 所以做成醒目的可点击横条，插在猪圈顶部、不遮挡操作。
+ */
+.vx-audio-blocked {
+  position: absolute;
+  left: 50%;
+  top: calc(72px + 10px);
+  translate: -50% 0;
+  z-index: 8;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 18px;
+  border-radius: 999px;
+  border: 1px solid rgba(190, 74, 46, 0.65);
+  background:
+    linear-gradient(180deg, rgba(255, 242, 236, 0.7) 0%, rgba(255, 242, 236, 0) 36%),
+    linear-gradient(180deg, #fde3d8 0%, #f4bfa6 100%);
+  color: #8f2c17;
+  font-weight: 700;
+  font-size: 13.5px;
+  cursor: pointer;
+  box-shadow:
+    0 2px 8px rgba(150, 60, 30, 0.32),
+    inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  animation: vx-audio-pulse 1.6s ease-in-out infinite;
+}
+
+.vx-audio-blocked:hover {
+  background:
+    linear-gradient(180deg, rgba(255, 248, 244, 0.8) 0%, rgba(255, 248, 244, 0) 36%),
+    linear-gradient(180deg, #ffeade 0%, #f9cbb4 100%);
+}
+
+@keyframes vx-audio-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    box-shadow: 0 2px 8px rgba(150, 60, 30, 0.32), inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  }
+  50% {
+    transform: scale(1.025);
+    box-shadow: 0 4px 14px rgba(150, 60, 30, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.8);
+  }
+}
+
+html[data-theme="dark"] .vx-audio-blocked {
+  background: linear-gradient(180deg, #5a2b1c 0%, #46200f 100%);
+  border-color: rgba(255, 150, 120, 0.5);
+  color: #ffc9b0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vx-audio-blocked {
+    animation: none !important;
+  }
+}

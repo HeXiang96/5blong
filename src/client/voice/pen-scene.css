@@ -1,0 +1,662 @@
+/* ============================================================== 整页猪圈 */
+/* 房间本身就是猪圈：木栏围住整个房间区域，泥地铺满，猪在整片场地里走动。
+   顶部信息栏与底部控制栏浮在圈上，所以这里都用绝对定位叠加。 */
+
+.vx-stage {
+  position: relative;
+  /* 猪要在整片场地里走，所以内边距留给木栏，不再居中排布 */
+  padding: 0;
+  overflow: hidden;
+  justify-content: flex-start;
+}
+
+.vx-pen-frame {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* 暖色奶油天空：和木牌、粉猪同一暖调，不再是冷灰。 */
+.vx-pen-frame-sky {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, #fdf5e7 0%, #faecda 46%, #f5e8d3 100%);
+}
+
+html[data-theme="dark"] .vx-pen-frame-sky {
+  background: linear-gradient(180deg, #1b1814 0%, #191713 50%, #181510 100%);
+}
+
+/*
+ * 地面是一道柔和隆起的草坡（边缘完全渐变，没有硬边），
+ * 草绿压成低饱和灰绿，底下再垫一点暖泥，整体融进暖色天空。
+ */
+.vx-pen-frame-ground {
+  position: absolute;
+  inset: 0;
+  background:
+    /* 主草坡：中间圆润隆起，边缘完全渐变，没有硬边 */
+    radial-gradient(
+      82% 72% at 50% 120%,
+      #c9d9ab 0%,
+      #d3e0b8 48%,
+      rgba(210, 223, 184, 0.35) 70%,
+      rgba(210, 223, 184, 0.08) 86%,
+      rgba(210, 223, 184, 0) 100%
+    ),
+    /* 左右两侧缓坡，让天际线起伏，不再是一条水平线 */
+    radial-gradient(
+      120% 44% at 16% 126%,
+      rgba(208, 223, 178, 0.72) 0%,
+      rgba(208, 223, 178, 0) 60%
+    ),
+    radial-gradient(
+      120% 46% at 86% 128%,
+      rgba(208, 223, 178, 0.72) 0%,
+      rgba(208, 223, 178, 0) 60%
+    ),
+    /* 最底下垫一点暖色泥土 */
+    radial-gradient(
+      130% 42% at 50% 116%,
+      rgba(216, 190, 150, 0.3) 0%,
+      rgba(216, 190, 150, 0) 60%
+    );
+}
+
+html[data-theme="dark"] .vx-pen-frame-ground {
+  background:
+    radial-gradient(
+      92% 46% at 50% 128%,
+      rgba(122, 144, 94, 0.45) 0%,
+      rgba(122, 144, 94, 0.18) 42%,
+      rgba(122, 144, 94, 0) 68%
+    ),
+    radial-gradient(
+      115% 34% at 18% 130%,
+      rgba(122, 144, 94, 0.3) 0%,
+      rgba(122, 144, 94, 0) 58%
+    ),
+    radial-gradient(
+      115% 36% at 84% 132%,
+      rgba(122, 144, 94, 0.3) 0%,
+      rgba(122, 144, 94, 0) 58%
+    ),
+    radial-gradient(
+      130% 40% at 50% 122%,
+      rgba(122, 98, 62, 0.28) 0%,
+      rgba(122, 98, 62, 0) 60%
+    );
+}
+
+/*
+ * 透视地面：很淡的横向线条，越靠上越淡（mask），只保留"向远处收拢"的纵深，
+ * 不再是密集的横线，免得地面像作业本 / 木地板。
+ */
+.vx-pen-frame-floor {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 87.2%;
+  opacity: 0.3;
+  background-image: repeating-linear-gradient(
+    180deg,
+    rgba(120, 92, 52, 0.5) 0 1px,
+    transparent 1px 11px
+  );
+  -webkit-mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.1) 0%, #000 58%, #000 100%);
+  mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.1) 0%, #000 58%, #000 100%);
+}
+
+html[data-theme="dark"] .vx-pen-frame-floor {
+  background-image: repeating-linear-gradient(
+    180deg,
+    rgba(255, 226, 170, 0.14) 0 1px,
+    transparent 1px 9px
+  );
+}
+
+/* -------------------------------------------------------------------- 猪 */
+
+.vx-pig-slot {
+  position: absolute;
+  /* 跑道由内联 --vx-pig-bottom 决定：猪贴着地面站在泥地上 */
+  bottom: var(--vx-pig-bottom, 16px);
+  /* 左右各留出木栏宽度，猪不会走到栏上去 */
+  left: 40px;
+  width: var(--vx-pig-size, 96px);
+  height: var(--vx-pig-size, 96px);
+  z-index: 2;
+}
+
+.vx-pig-hit {
+  display: block;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+
+/* 横向位置由 JS 的 Web Animations 写 left 控制（见 PigPen.tsx） */
+.vx-pig-walker {
+  position: absolute;
+  bottom: 0;
+  width: 100%;
+  height: 100%;
+  will-change: left;
+}
+
+.vx-pig-flip {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  /* 转身由 JS 设 scale，这里只给个初始方向 */
+  scale: 1 1;
+}
+
+/* 转身时只镜像猪本身（SVG），名字牌 / 网络点 / 互动气泡 / 呼噜字保持正向不镜像 */
+.vx-pig-flip-l .vx-pig-tag,
+.vx-pig-flip-l .vx-pig-net,
+.vx-pig-flip-l .vx-pig-bubble,
+.vx-pig-flip-l .vx-pig-zzz {
+  scale: -1 1;
+}
+
+.vx-pig-shadow {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  width: 66%;
+  height: 10px;
+  translate: -50% 0;
+  border-radius: 50%;
+  /* 用两层收敛的椭圆渐变，避免出现"泛光" */
+  background:
+    radial-gradient(ellipse 60% 100% at 50% 50%, rgba(74, 52, 24, 0.4) 0%, transparent 100%);
+  opacity: calc(var(--vx-depth, 1) * 0.85);
+  pointer-events: none;
+  z-index: 0;
+}
+
+.vx-pig {
+  width: 100%;
+  height: 100%;
+  transform-origin: 50% 92%;
+}
+
+/* 走路：轻微起伏（与 walker 的位移分层，互不干扰） */
+.vx-pig-walking {
+  animation: vx-pig-bob 1.4s ease-in-out infinite;
+}
+
+
+.vx-pig-svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+  filter: drop-shadow(0 3px 3px rgba(70, 45, 15, 0.22));
+}
+
+/* 四条腿：只在走路时两两反相地小碎步 */
+.vx-pig-leg {
+  transform-origin: 50% 0;
+}
+
+.vx-pig:not(.vx-pig-walking) .vx-pig-leg {
+  animation: none;
+}
+
+.vx-pig-leg-a,
+.vx-pig-leg-c {
+  animation: vx-leg-swing 1.4s ease-in-out infinite;
+}
+
+.vx-pig-leg-b,
+.vx-pig-leg-d {
+  animation: vx-leg-swing 1.4s ease-in-out infinite;
+  animation-delay: -0.7s;
+}
+
+
+@keyframes vx-pig-bob {
+  0%,
+  100% {
+    translate: 0 0;
+  }
+  50% {
+    translate: 0 -2px;
+  }
+}
+
+/* 说话：停下、面向观众、抬耳朵、张嘴、轻轻跳 */
+.vx-pig-slot-still {
+  z-index: 4;
+}
+
+.vx-pig-speaking {
+  animation: vx-pig-talk 0.62s ease-in-out infinite;
+}
+
+.vx-pig-speaking + .vx-pig-shadow,
+.vx-pig-sleeping ~ .vx-pig-shadow {
+  opacity: calc(var(--vx-depth, 1) * 0.7);
+}
+
+.vx-pig-speaking .vx-pig-leg {
+  animation: none;
+  rotate: 0deg;
+}
+
+@keyframes vx-pig-talk {
+  0%,
+  100% {
+    transform: translateY(0) scale(1);
+  }
+  25% {
+    transform: translateY(-5px) scale(1.09);
+  }
+  50% {
+    transform: translateY(0) scale(1.02);
+  }
+  75% {
+    transform: translateY(-3px) scale(1.06);
+  }
+}
+
+.vx-pig-voice {
+  position: absolute;
+  left: 50%;
+  bottom: -2px;
+  width: 76%;
+  height: 16px;
+  translate: -50% 0;
+  border-radius: 50%;
+  border: 2px solid rgba(72, 190, 140, 0.75);
+  animation: vx-voice-ring 1.1s ease-out infinite;
+  pointer-events: none;
+}
+
+@keyframes vx-voice-ring {
+  0% {
+    transform: scale(0.6);
+    opacity: 0.9;
+  }
+  100% {
+    transform: scale(1.5);
+    opacity: 0;
+  }
+}
+
+/* 静音：趴下睡觉 + 冒 z */
+.vx-pig-sleeping {
+  animation: vx-pig-sleep 3.4s ease-in-out infinite;
+  opacity: 0.92;
+}
+
+@keyframes vx-pig-sleep {
+  0%,
+  100% {
+    transform: scaleY(0.86) translateY(4px);
+  }
+  50% {
+    transform: scaleY(0.92) translateY(3px);
+  }
+}
+
+.vx-pig-sleeping .vx-pig-leg {
+  animation: none;
+  rotate: 78deg;
+}
+
+.vx-pig-zzz {
+  position: absolute;
+  right: 2px;
+  top: -10px;
+  display: flex;
+  gap: 1px;
+  font-size: 12px;
+  font-weight: 700;
+  font-style: normal;
+  color: #7c8798;
+  pointer-events: none;
+}
+
+.vx-pig-zzz i {
+  font-style: normal;
+  opacity: 0;
+  animation: vx-zzz 2.6s ease-out infinite;
+}
+
+.vx-pig-zzz i:nth-child(2) {
+  animation-delay: 0.5s;
+  font-size: 14px;
+}
+
+.vx-pig-zzz i:nth-child(3) {
+  animation-delay: 1s;
+  font-size: 16px;
+}
+
+@keyframes vx-zzz {
+  0% {
+    opacity: 0;
+    transform: translate(0, 2px) scale(0.8);
+  }
+  30% {
+    opacity: 0.9;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(7px, -16px) scale(1.1);
+  }
+}
+
+/* ------------------------------------------------------- 挂在脖子上的木牌 */
+
+.vx-pig-tag {
+  position: absolute;
+  left: 50%;
+  /* 挂在脖子下方，别糊在脸上 */
+  top: var(--vx-tag-top, 58%);
+  translate: -50% 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  pointer-events: none;
+  z-index: 2;
+}
+
+/* 挂绳 */
+.vx-pig-tag-cord {
+  display: block;
+  width: 2px;
+  height: 9px;
+  background: linear-gradient(180deg, rgba(120, 80, 40, 0.85), rgba(150, 105, 55, 0.9));
+  border-radius: 2px;
+}
+
+/* 木牌正面 */
+.vx-pig-tag-face {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  /* 容得下常见昵称 + 房主/我 标记，别动不动就省略号 */
+  max-width: min(46vw, 190px);
+  padding: 1px 8px 2px;
+  border-radius: 5px;
+  background: linear-gradient(180deg, #f0d9a8 0%, #dcbb80 100%);
+  border: 1px solid #a8814a;
+  box-shadow: 0 1px 2px rgba(70, 45, 15, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.5);
+  color: #5a3f1e;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  animation: vx-tag-sway 3.4s ease-in-out infinite;
+}
+
+.vx-pig-tag-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.vx-pig-tag-face b {
+  flex: 0 0 auto;
+  font-size: 9px;
+  font-weight: 700;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--vx-plate-badge-bg);
+  color: var(--vx-plate-badge-fg);
+}
+
+.vx-pig-tag-face b.vx-plate-quiet {
+  background: rgba(110, 120, 135, 0.2);
+  color: #5b6472;
+}
+
+.vx-pig-tag-face b.vx-plate-deaf {
+  background: rgba(116, 108, 146, 0.22);
+  color: #565070;
+}
+
+/*
+ * 连接方式徽章：中继 / 连接中 / 连不上。
+ * 直连不显示（正常状态），避免名字牌被塞满。
+ */
+.vx-pig-tag-face b.vx-plate-net {
+  font-size: 9px;
+  letter-spacing: 0.02em;
+}
+
+.vx-pig-tag-face b.vx-plate-relay {
+  background: rgba(214, 150, 60, 0.24);
+  color: #8a5a12;
+}
+
+.vx-pig-tag-face b.vx-plate-connecting {
+  background: rgba(120, 130, 150, 0.2);
+  color: #5b6472;
+}
+
+.vx-pig-tag-face b.vx-plate-failed {
+  background: rgba(200, 74, 46, 0.22);
+  color: #9c2f1c;
+}
+
+html[data-theme="dark"] .vx-pig-tag-face b.vx-plate-relay {
+  background: rgba(224, 173, 108, 0.24);
+  color: #f2d49b;
+}
+
+html[data-theme="dark"] .vx-pig-tag-face b.vx-plate-failed {
+  background: rgba(220, 110, 80, 0.26);
+  color: #ffb9a0;
+}
+
+html[data-theme="dark"] .vx-pig-tag-face {
+  background: linear-gradient(180deg, #6b5533 0%, #55401f 100%);
+  border-color: #8a6a38;
+  color: #f6e6c4;
+}
+
+html[data-theme="dark"] .vx-pig-tag-face b {
+  background: rgba(224, 173, 108, 0.24);
+  color: #f2d49b;
+}
+
+@keyframes vx-tag-sway {
+  0%,
+  100% {
+    rotate: -2.2deg;
+  }
+  50% {
+    rotate: 2.2deg;
+  }
+}
+
+/* 说话时木牌更亮、晃得更快，强化"是这头在说" */
+.vx-pig-speaking .vx-pig-tag-face {
+  background: linear-gradient(180deg, #fff3d0 0%, #f2d79a 100%);
+  border-color: #caa055;
+  animation-duration: 1.6s;
+}
+
+/* ------------------------------------------------------- 圈边的邀请提示 */
+
+.vx-pen-footer {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 6px;
+  z-index: 5;
+  display: flex;
+}
+
+.vx-pen-invite {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 auto;
+  padding: 5px 8px 5px 14px;
+  border-radius: 999px;
+  background: rgba(255, 250, 240, 0.95);
+  border: 1px solid rgba(150, 110, 60, 0.45);
+  color: #5a442c;
+  font-size: 12px;
+  box-shadow: 0 2px 8px rgba(90, 60, 26, 0.14);
+}
+
+html[data-theme="dark"] .vx-pen-invite {
+  background: rgba(32, 40, 50, 0.95);
+  border-color: rgba(255, 226, 170, 0.3);
+  color: #f0e2c8;
+}
+
+@media (max-width: 720px) {
+  .vx-pig-tag {
+    top: 50%;
+  }
+
+  .vx-pig-tag-face {
+    max-width: 76px;
+    font-size: 9.5px;
+    padding: 1px 5px;
+  }
+
+  .vx-pig-tag-cord {
+    height: 6px;
+  }
+
+  .vx-pen-invite {
+    font-size: 11px;
+    gap: 6px;
+  }
+}
+
+/* --------------------------------------------------------------- 空圈提示 */
+
+.vx-empty-pen {
+  /*
+   * 整组放在场地**上半部分**的正中，而不是几何正中。
+   *
+   * 原因：猪的跑道集中在场地中下部，几何正中会和"停在中间的那头猪"叠在一起，
+   * 按钮被猪压住。往上挪到 40% 之后，提示和跑道分开，猪从提示下方走过。
+   * z-index 仍然压过猪，所以即便偶有重叠也是提示在上。
+   */
+  position: absolute;
+  left: 50%;
+  top: 40%;
+  translate: -50% -50%;
+  width: min(440px, 78%);
+  margin: 0;
+  z-index: 6;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.vx-empty-pen > * {
+  pointer-events: auto;
+}
+
+/* 三个小猪头：等待朋友进圈的装饰，不代表已有成员；中间略大、错开蹦跳 */
+.vx-empty-pigs {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 5px;
+  width: 160px;
+  height: 52px;
+  margin: 0 auto 6px;
+}
+
+.vx-empty-pigs svg {
+  width: 44px;
+  height: 42px;
+  animation: vx-piglet 2.2s ease-in-out infinite;
+}
+
+.vx-empty-pigs svg:nth-child(2) {
+  width: 50px;
+  height: 48px;
+  animation-delay: -0.7s;
+}
+
+.vx-empty-pigs svg:nth-child(3) {
+  animation-delay: -1.4s;
+}
+
+@keyframes vx-piglet {
+  0%,
+  100% {
+    transform: translateY(0) rotate(-4deg);
+  }
+  50% {
+    transform: translateY(-6px) rotate(4deg);
+  }
+}
+
+/* 尊重"减少动态效果"偏好：猪停下、取消所有循环动画 */
+@media (prefers-reduced-motion: reduce) {
+  .vx-pig-walker,
+  .vx-pig,
+  .vx-pig-leg,
+  .vx-pig-voice,
+  .vx-pig-zzz i,
+  .vx-pig-tag-face,
+  .vx-empty-pigs svg,
+  .vx-pig-speaking,
+  .vx-pig-sleeping,
+  .vx-pig-svg path {
+    animation: none !important;
+  }
+}
+
+/* ------------------------------------------------- 说话：竖耳朵 + 张嘴 + 跳 */
+
+/*
+ * 正脸 SVG 里耳朵是前两个 path，用 nth-of-type 选中（path 顺序：左耳、左耳内、右耳、右耳内）。
+ * 竖耳朵 = 绕耳根轻微抖动，像在用力听 / 说话。
+ */
+.vx-pig-speaking .vx-pig-svg path:nth-of-type(1),
+.vx-pig-speaking .vx-pig-svg path:nth-of-type(3) {
+  transform-origin: 50% 100%;
+  animation: vx-ear-perk 0.42s ease-in-out infinite;
+}
+
+.vx-pig-speaking .vx-pig-svg path:nth-of-type(2),
+.vx-pig-speaking .vx-pig-svg path:nth-of-type(4) {
+  transform-origin: 50% 100%;
+  animation: vx-ear-perk 0.42s ease-in-out infinite;
+  animation-delay: -0.21s;
+}
+
+@keyframes vx-ear-perk {
+  0%,
+  100% {
+    transform: rotate(-7deg) translateY(0);
+  }
+  50% {
+    transform: rotate(7deg) translateY(-1.2px);
+  }
+}
+
+/* 睡觉：耳朵下垂、整体更塌 */
+.vx-pig-sleeping .vx-pig-svg path:nth-of-type(1),
+.vx-pig-sleeping .vx-pig-svg path:nth-of-type(3) {
+  transform-origin: 50% 100%;
+  transform: rotate(24deg);
+}
+
+.vx-pig-sleeping .vx-pig-svg path:nth-of-type(2),
+.vx-pig-sleeping .vx-pig-svg path:nth-of-type(4) {
+  transform-origin: 50% 100%;
+  transform: rotate(24deg);
+}

@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#0d1117" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#f4f6fb" media="(prefers-color-scheme: light)" />
+    <meta name="description" content="5blong：免注册的低延迟语音房，把邀请链接发给朋友就能开聊。" />
+    <link rel="icon" type="image/png" href="/favicon.png" />
+    <link rel="apple-touch-icon" href="/icon-256.png" />
+    <title>5blong · 临时语音房</title>
+    <script>
+      // 主题只认自己的键；旧版的 piik:ui-theme 作为一次性迁移来源读一次。
+      var systemTheme = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      var stored = null;
+      try {
+        stored = localStorage.getItem("5blong:theme");
+        if (!stored) {
+          var legacy = localStorage.getItem("piik:ui-theme");
+          if (legacy === "light" || legacy === "dark") stored = legacy;
+        }
+      } catch (error) {}
+      document.documentElement.dataset.theme =
+        stored === "light" || stored === "dark" ? stored : systemTheme;
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/client/main.tsx"></script>
+  </body>
+</html>

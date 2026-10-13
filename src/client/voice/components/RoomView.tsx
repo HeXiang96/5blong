@@ -1,0 +1,960 @@
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type FormEvent,
+  type MouseEvent as ReactMouseEvent,
+} from "react";
+import {
+  Ban,
+  Carrot,
+  ChevronRight,
+  ChevronUp,
+  Ghost,
+  Hand,
+  HandMetal,
+  Headphones,
+  HeadphoneOff,
+  HeartHandshake,
+  Check,
+  Copy as CopyIcon,
+  Laugh,
+  Lock,
+  LockOpen,
+  MessageSquare,
+  Mic,
+  MicOff,
+  MousePointer2,
+  PartyPopper,
+  PhoneOff,
+  Send,
+  Settings as SettingsIcon,
+  Sparkles,
+  UserMinus,
+  Users,
+  Volume2,
+  VolumeX,
+  X,
+} from "lucide-react";
+
+import type { ChatMessage, EngineStatus, MediaLinkState, Member } from "../engine";
+import type { Notice } from "../use-voice";
+import type { InteractEvent, InteractKind, Invite } from "../protocol";
+import type { LucideIcon } from "lucide-react";
+
+/** 可对其他成员做的小猪互动，按顺序展示成一排按钮。 */
+const INTERACT_ACTIONS: ReadonlyArray<{ kind: InteractKind; label: string; Icon: LucideIcon }> = [
+  { kind: "poke", label: "戳一戳", Icon: MousePointer2 },
+  { kind: "wave", label: "打招呼", Icon: Hand },
+  { kind: "feed", label: "投喂", Icon: Carrot },
+  { kind: "pat", label: "摸一摸", Icon: HandMetal },
+  { kind: "tickle", label: "挠痒痒", Icon: Laugh },
+  { kind: "hug", label: "抱一抱", Icon: HeartHandshake },
+  { kind: "boo", label: "吓一跳", Icon: Ghost },
+  { kind: "cheer", label: "撒个花", Icon: PartyPopper },
+];
+import { Banner, Spinner, Toggle } from "./ui";
+import { PigActor, PenFrame, PenScatter, useElementSize } from "./PigPen";
+import { NpcVisitor, PenPropsLayer, type PenPropEntry } from "./PenProps";
+import { NPC_NAME, phaseForActor } from "../pen";
+
+interface AudioMenuState {
+  peerId: string;
+  personId: string;
+  self: boolean;
+  isHost: boolean;
+  /** 被选中的成员是否被房主强制禁言。 */
+  serverMuted: boolean;
+  name: string;
+  x: number;
+  y: number;
+  volume: number;
+  muted: boolean;
+  feedCount: number;
+}
+
+/** 滑条填充比例（Webkit 不支持原生 progress，用 CSS 变量画渐变）。 */
+const rangeStyle = (pct: number): CSSProperties =>
+  ({ "--vx-range-pct": `${pct}%` }) as CSSProperties;
+
+export function RoomView({
+  status,
+  members,
+  speaking,
+  messages,
+  invite,
+  notice,
+  chatOpen,
+  unread,
+  displayNames,
+  isHost,
+  maxMembers,
+  onCopyCode,
+  onCopyInvite,
+  onToggleMute,
+  onToggleChat,
+  onLeave,
+  onSettings,
+  onSend,
+  onDismissNotice,
+  micVolume,
+  onSetMicVolume,
+  onSetPeerVolume,
+  onTogglePeerMuted,
+  onGetPeerAudio,
+  processing,
+  captureLive,
+  onSetNoiseSuppression,
+  onSetProcessingFlag,
+  penEvents,
+  onReportPenActor,
+  getPenPosition,
+  audioBlocked,
+  onResumeAudio,
+  mediaStates,
+  roomLocked,
+  deaf,
+  interactions,
+  feedCounts,
+  onToggleDeaf,
+  onKick,
+  onForceMute,
+  onToggleLock,
+  onInteract,
+}: {
+  status: EngineStatus;
+  members: Member[];
+  speaking: string[];
+  messages: ChatMessage[];
+  invite: Invite | null;
+  notice: Notice | null;
+  chatOpen: boolean;
+  unread: number;
+  displayNames: Map<string, string>;
+  isHost: boolean;
+  maxMembers: number;
+  onCopyCode: () => void;
+  onCopyInvite: () => Promise<boolean>;
+  onToggleMute: () => void;
+  onToggleChat: () => void;
+  onLeave: () => void;
+  onSettings: () => void;
+  onSend: (text: string) => void;
+  onDismissNotice: () => void;
+  micVolume: number;
+  onSetMicVolume: (volume: number) => void;
+  onSetPeerVolume: (peerId: string, volume: number) => void;
+  onTogglePeerMuted: (peerId: string) => boolean;
+  onGetPeerAudio: (peerId: string) => { volume: number; muted: boolean };
+  processing: { echoCancellation: boolean; noiseSuppression: boolean; autoGainControl: boolean };
+  /** 回声消除 / 自动增益是否已实时应用到当前麦克风轨道（引擎回读确认）。 */
+  captureLive: { echoCancellation: boolean; autoGainControl: boolean };
+  onSetNoiseSuppression: (on: boolean) => void;
+  onSetProcessingFlag: (
+    key: "echoCancellation" | "autoGainControl",
+    value: boolean,
+  ) => void;
+  /** 猪圈事件（房主广播下来，各端同步播放）。 */
+  penEvents: PenPropEntry[];
+  /** 猪把横向位置报给引擎。 */
+  onReportPenActor: (id: string, x: number) => void;
+  /** 取某头猪最近上报的横向位置，用来把那一坨放在它脚边。 */
+  getPenPosition: (id: string) => number | undefined;
+  /** 对方的音频被浏览器拦下了（用户听不见别人说话）。 */
+  audioBlocked: boolean;
+  /** 借一次点击恢复远端音频播放。 */
+  onResumeAudio: () => void;
+  /** 与每个成员的媒体连接状态（用于猪头顶网络点）。 */
+  mediaStates: Record<string, MediaLinkState>;
+  /** 房间是否上锁。 */
+  roomLocked: boolean;
+  /** 本机是否闭听。 */
+  deaf: boolean;
+  /** 最近的小猪互动（戳/打招呼/投喂）。 */
+  interactions: { key: number; event: InteractEvent }[];
+  /** 本机对各成员（按个人 ID）的投喂次数。 */
+  feedCounts: Record<string, number>;
+  onToggleDeaf: () => void;
+  onKick: (id: string) => void;
+  onForceMute: (id: string, muted: boolean) => void;
+  onToggleLock: () => void;
+  onInteract: (peerId: string, personId: string, kind: InteractKind) => void;
+}) {
+  const self = members.find((member) => member.local) ?? null;
+  const muted = self?.muted ?? true;
+  const [copied, setCopied] = useState<"code" | "invite" | null>(null);
+  const speakingSet = useMemo(() => new Set(speaking), [speaking]);
+  const { ref: stageRef, width: stageWidth, height: stageHeight } = useElementSize<HTMLElement>();
+
+  /**
+   * 跑道分配（0=最远，1=最近），必须和 PigActor 内部算法一致，
+   * 否则那一坨会拉在错误的深度上。
+   */
+  const laneByActor = useMemo(() => {
+    const map = new Map<string, number>();
+    const groundTop = Math.round(stageHeight * 0.13);
+    const groundHeight = Math.max(0, stageHeight - groundTop - 8);
+    const actors = members.map((member, index) => ({ member, index }));
+    for (const { member, index } of actors) {
+      const crowd = members.length > 5 ? 0.68 : members.length > 3 ? 0.8 : members.length > 1 ? 0.92 : 1;
+      const size = Math.round((member.isHost ? 132 : 88) * crowd);
+      const lanes = Math.max(1, Math.min(3, Math.floor(groundHeight / (size * 0.8)) || 1));
+      const lane = index % lanes;
+      map.set(member.id, lanes === 1 ? 0.5 : lane / Math.max(1, lanes - 1));
+    }
+    return map;
+  }, [members, stageHeight]);
+
+  const laneOf = useCallback((actorId: string) => laneByActor.get(actorId) ?? 0.5, [laneByActor]);
+
+  /*
+   * 动作阶段（走过去 / 正在吃 / 使劲 / 闻一闻）是按时间戳推算的，
+   * 所以要有个时钟推着重渲染，否则阶段不会自己往前走。
+   */
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (penEvents.length === 0) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 400);
+    return () => window.clearInterval(timer);
+  }, [penEvents.length]);
+
+  /**
+   * DDY 正在出场吗。
+   * 出场动画是"走过来 1.2s → 丢菜 → 挥挥手 → 走回去 1.2s"，
+   * 所以从最近一次丢菜往前多留 1.2s、往后留 4.2s。
+   */
+  const npcActive = useMemo(() => {
+    for (const entry of penEvents) {
+      const event = entry.event;
+      if (event.kind !== "toss") continue;
+      // 成员投喂的菜 npc 为空，不该把 DDY 引出来。
+      if (event.npc !== NPC_NAME) continue;
+      if (now >= event.ts - 1200 && now <= event.ts + 4200) return true;
+    }
+    return false;
+  }, [penEvents, now]);
+
+  /** 每头猪最近一次"冲着它来"的互动（戳/打招呼/投喂），用于头顶气泡。 */
+  const reactionByActor = useMemo(() => {
+    const map = new Map<string, InteractEvent>();
+    for (const item of interactions) map.set(item.event.to, item.event);
+    return map;
+  }, [interactions]);
+
+  /** 该猪此刻要吃的那棵菜在哪儿（0~1）；没有就返回 undefined。 */
+  const eatTargetX = useCallback(
+    (actorId: string): number | undefined => {
+      // 最近一次"这头猪吃"发生在什么时候：比它早的菜都已经吃掉了
+      let lastEatAt = 0;
+      for (const entry of penEvents) {
+        const event = entry.event;
+        if (event.kind !== "eat") continue;
+        if ((event.actor === actorId || event.actor === "*") && event.ts > lastEatAt) {
+          lastEatAt = event.ts;
+        }
+      }
+      // 取还没被吃掉的那棵（最新的）
+      let best: number | undefined;
+      let bestTs = -1;
+      for (const entry of penEvents) {
+        const event = entry.event;
+        if (event.kind !== "toss") continue;
+        if (event.ts <= lastEatAt) continue;
+        if (event.ts > bestTs) {
+          bestTs = event.ts;
+          best = event.veg.x;
+        }
+      }
+      return best;
+    },
+    [penEvents],
+  );
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const [draft, setDraft] = useState("");
+  const [audioMenu, setAudioMenu] = useState<AudioMenuState | null>(null);
+  const [voiceOpen, setVoiceOpen] = useState(false);
+
+  const openAudioMenu = (event: ReactMouseEvent, member: Member) => {
+    event.stopPropagation();
+    const audio = member.local
+      ? { volume: micVolume, muted: false }
+      : onGetPeerAudio(member.id);
+    setAudioMenu({
+      peerId: member.id,
+      personId: member.personId,
+      self: member.local,
+      isHost: member.isHost,
+      serverMuted: member.serverMuted ?? false,
+      name: displayNames.get(member.id) ?? member.name,
+      x: event.clientX,
+      y: event.clientY,
+      volume: audio.volume,
+      muted: audio.muted,
+      feedCount: member.local ? 0 : feedCounts[member.personId] ?? 0,
+    });
+  };
+
+  /** 对菜单里的成员发起互动，并顺手关菜单（投喂/戳一下不需要重复点）。 */
+  const interactMenu = (kind: InteractKind) => {
+    if (!audioMenu) return;
+    onInteract(audioMenu.peerId, audioMenu.personId, kind);
+    if (kind === "feed") {
+      setAudioMenu((current) =>
+        current ? { ...current, feedCount: current.feedCount + 1 } : current,
+      );
+    }
+    closeAudioMenu();
+  };
+
+  const closeAudioMenu = () => setAudioMenu(null);
+
+  const changeMenuVolume = (value: number) => {
+    setAudioMenu((current) => (current ? { ...current, volume: value, muted: false } : current));
+    if (audioMenu?.self) onSetMicVolume(value);
+    else if (audioMenu) onSetPeerVolume(audioMenu.peerId, value);
+  };
+
+  const toggleMenuMute = () => {
+    if (!audioMenu || audioMenu.self) return;
+    const muted = onTogglePeerMuted(audioMenu.peerId);
+    setAudioMenu({ ...audioMenu, muted });
+  };
+
+  useEffect(() => {
+    if (!audioMenu && !voiceOpen) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        closeAudioMenu();
+        setVoiceOpen(false);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [audioMenu, voiceOpen]);
+
+  /*
+   * 全局热键。
+   *
+   * 这是「开黑」场景的刚需：人在游戏窗口里，要闭嘴只能切回来点按钮。
+   * Ctrl+Shift+M 是语音工具的通行约定（Discord 起），尽量别改。
+   *
+   * 只在**非输入状态**下生效，否则聊天框里按快捷键会误触。
+   * 用 event.code 判断字母键：中文输入法或大写锁定时 key 可能不是 "m"。
+   */
+  useEffect(() => {
+    const onHotkey = (event: KeyboardEvent) => {
+      if (!event.ctrlKey || !event.shiftKey || event.altKey) return;
+      const target = event.target as HTMLElement | null;
+      const tag = target?.tagName;
+      // 正在输入框/可编辑区域里打字时不抢键
+      if (tag === "INPUT" || tag === "TEXTAREA" || target?.isContentEditable) return;
+
+      if (event.code === "KeyM") {
+        event.preventDefault();
+        if (!(self?.serverMuted ?? false)) onToggleMute();
+      } else if (event.code === "KeyC") {
+        event.preventDefault();
+        onToggleChat();
+      } else if (event.code === "KeyD") {
+        event.preventDefault();
+        onToggleDeaf();
+      }
+    };
+    window.addEventListener("keydown", onHotkey);
+    return () => window.removeEventListener("keydown", onHotkey);
+  }, [onToggleMute, onToggleChat, onToggleDeaf, self?.serverMuted]);
+
+  useEffect(() => {
+    const element = listRef.current;
+    if (element) element.scrollTop = element.scrollHeight;
+  }, [messages.length, chatOpen]);
+
+  const flash = (which: "code" | "invite") => {
+    setCopied(which);
+    window.setTimeout(() => setCopied(null), 1400);
+  };
+
+  const submitChat = (event: FormEvent) => {
+    event.preventDefault();
+    if (!draft.trim()) return;
+    onSend(draft);
+    setDraft("");
+  };
+
+  // 标签页标题：有人说话时显示是谁，否则显示人数；离开房间恢复默认标题。
+  useEffect(() => {
+    const talking = members.filter((m) => !m.local && speakingSet.has(m.id) && !m.muted);
+    let title: string;
+    if (talking.length > 0) {
+      const names = talking
+        .slice(0, 2)
+        .map((m) => displayNames.get(m.id) ?? m.name)
+        .join("、");
+      const more = talking.length > 2 ? ` 等 ${talking.length} 人` : "";
+      title = `● ${names}${more} 正在说话 · 5blong`;
+    } else {
+      title = `${members.length} 人在房间 · 5blong`;
+    }
+    document.title = title;
+    return () => {
+      document.title = "5blong · 临时语音房";
+    };
+  }, [members, speakingSet, displayNames]);
+
+  const statusLabel =
+    status === "connected"
+      ? "已连接"
+      : status === "reconnecting"
+        ? "重连中…"
+        : status === "error"
+          ? "连接失败"
+          : "连接中…";
+
+  return (
+    <div className="vx-page vx-room">
+      {audioMenu || voiceOpen ? (
+        <div
+          className="vx-menu-backdrop"
+          onClick={() => {
+            closeAudioMenu();
+            setVoiceOpen(false);
+          }}
+        />
+      ) : null}
+      {audioMenu ? (
+        <>
+          <div
+            className="vx-member-menu"
+            style={{
+              left: Math.min(Math.max(audioMenu.x - 120, 8), window.innerWidth - 256),
+              top: Math.min(audioMenu.y + 12, window.innerHeight - 200),
+            }}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="vx-member-menu-head">
+              {audioMenu.self ? (
+                <Mic size={15} />
+              ) : audioMenu.muted ? (
+                <VolumeX size={15} />
+              ) : (
+                <Volume2 size={15} />
+              )}
+              <strong>{audioMenu.self ? "麦克风音量" : audioMenu.name}</strong>
+            </div>
+            <div className="vx-member-menu-row">
+              <input
+                type="range"
+                className="vx-range"
+                style={rangeStyle((audioMenu.volume / (audioMenu.self ? 2 : 1)) * 100)}
+                min={0}
+                max={audioMenu.self ? 2 : 1}
+                step={0.01}
+                value={audioMenu.volume}
+                onChange={(event) => changeMenuVolume(Number(event.target.value))}
+              />
+              <span className="vx-member-menu-value">
+                {audioMenu.self
+                  ? audioMenu.volume > 1
+                    ? `增强 ${Math.round(audioMenu.volume * 100)}%`
+                    : `${Math.round(audioMenu.volume * 100)}%`
+                  : audioMenu.muted
+                    ? "已静音"
+                    : `${Math.round(audioMenu.volume * 100)}%`}
+              </span>
+            </div>
+            {audioMenu.self ? (
+              <p className="vx-member-menu-hint">100% 为原始音量，再往上是麦克风增强</p>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  className={`vx-menu-btn${audioMenu.muted ? " vx-menu-btn-active" : ""}`}
+                  onClick={toggleMenuMute}
+                >
+                  {audioMenu.muted ? <VolumeX size={14} /> : <Volume2 size={14} />}
+                  {audioMenu.muted ? "取消静音 TA" : "本地静音 TA"}
+                </button>
+
+                <div className="vx-menu-divider" />
+                <div className="vx-interact-row">
+                  {INTERACT_ACTIONS.map(({ kind, label, Icon }) => (
+                    <button
+                      key={kind}
+                      type="button"
+                      className="vx-interact-btn"
+                      onClick={() => interactMenu(kind)}
+                    >
+                      <Icon size={15} />
+                      <span>{label}</span>
+                    </button>
+                  ))}
+                </div>
+                <p className="vx-member-menu-hint">你已经投喂了 {audioMenu.feedCount} 次</p>
+
+                {isHost && !audioMenu.isHost ? (
+                  <>
+                    <div className="vx-menu-divider" />
+                    <button
+                      type="button"
+                      className={`vx-menu-btn${audioMenu.serverMuted ? " vx-menu-btn-active" : ""}`}
+                      onClick={() => {
+                        onForceMute(audioMenu.peerId, !audioMenu.serverMuted);
+                        closeAudioMenu();
+                      }}
+                    >
+                      {audioMenu.serverMuted ? <Mic size={14} /> : <Ban size={14} />}
+                      {audioMenu.serverMuted ? "解除禁言" : "禁言（关麦）"}
+                    </button>
+                    <button
+                      type="button"
+                      className="vx-menu-btn vx-menu-btn-danger"
+                      onClick={() => {
+                        onKick(audioMenu.peerId);
+                        closeAudioMenu();
+                      }}
+                    >
+                      <UserMinus size={14} />
+                      踢出房间
+                    </button>
+                  </>
+                ) : null}
+                {audioMenu.serverMuted ? (
+                  <p className="vx-member-menu-hint vx-hint-warn">TA 已被房主禁言</p>
+                ) : null}
+              </>
+            )}
+          </div>
+        </>
+      ) : null}
+      {/*
+        顶栏改成挂在木栏上的"猪圈公告牌"：
+        房间码就是猪圈的铭牌号，状态/人数/邀请/设置都长在牌子上，
+        不再是一条飘在圈外的白色工具栏。
+      */}
+      <header className="vx-room-top">
+        <div className="vx-signboard">
+          <span className="vx-sign-hanger vx-sign-hanger-l" aria-hidden="true" />
+          <span className="vx-sign-hanger vx-sign-hanger-r" aria-hidden="true" />
+          <span className="vx-sign-screw vx-sign-screw-l" aria-hidden="true" />
+          <span className="vx-sign-screw vx-sign-screw-r" aria-hidden="true" />
+
+          <span className="vx-sign-brand">
+            <span className="vx-logo-dot" />
+            5blong
+          </span>
+
+          {invite ? (
+            <button
+              type="button"
+              className="vx-sign-code"
+              onClick={() => {
+                onCopyCode();
+                flash("code");
+              }}
+              title="点击复制房间码"
+            >
+              <span className="vx-sign-code-label">圈号</span>
+              <span className="vx-sign-code-value">{invite.code}</span>
+              {/*
+                这里原来写"复制 / 已复制"两个汉字，和右边的"复制邀请"重复了同一件事，
+                顶部条于是有两个都像主操作的按钮。改成一个小图标：默认复制、点了变勾。
+              */}
+              <span className="vx-sign-code-state" aria-hidden="true">
+                {copied === "code" ? <Check size={12} /> : <CopyIcon size={12} />}
+              </span>
+            </button>
+          ) : null}
+
+          <span className={`vx-sign-conn vx-conn-${status}`}>
+            <span className="vx-conn-dot" />
+            {statusLabel}
+          </span>
+
+          <span className="vx-sign-count" title={`房间人数上限 ${maxMembers} 人`}>
+            <Users size={14} /> {members.length}/{maxMembers}
+          </span>
+
+          {invite ? (
+            <button
+              type="button"
+              className="vx-btn vx-btn-small vx-btn-primary vx-sign-btn"
+              onClick={() => {
+                void onCopyInvite().then((ok) => {
+                  if (ok) flash("invite");
+                });
+              }}
+            >
+              {copied === "invite" ? "已复制邀请链接" : "复制邀请"}
+            </button>
+          ) : null}
+
+          {isHost ? (
+            /*
+             * 锁房按钮：以前只有 title 提示，锁上之后界面上**看不到"已锁"这件事**，
+             * 房主自己都不知道当前锁着没有。现在加一个可见的状态文字。
+             */
+            <button
+              type="button"
+              className={`vx-sign-lock${roomLocked ? " vx-sign-lock-on" : ""}`}
+              onClick={onToggleLock}
+              aria-pressed={roomLocked}
+              aria-label={roomLocked ? "房间已上锁，点击解锁" : "点击锁定房间，不再接受新成员"}
+              title={roomLocked ? "房间已上锁，点击解锁" : "上锁后不再接受新成员加入（点击上锁）"}
+            >
+              {roomLocked ? <Lock size={16} /> : <LockOpen size={16} />}
+              {roomLocked ? <span className="vx-sign-lock-text">已锁</span> : null}
+            </button>
+          ) : roomLocked ? (
+            <span className="vx-sign-lock vx-sign-lock-on" title="房间已上锁，暂不接受新成员">
+              <Lock size={16} />
+              <span className="vx-sign-lock-text">已锁</span>
+            </span>
+          ) : null}
+
+          <button
+            type="button"
+            className="vx-sign-settings"
+            onClick={onSettings}
+            aria-label="设置"
+            title="设置"
+          >
+            <SettingsIcon size={17} />
+          </button>
+        </div>
+      </header>
+
+      {notice ? (
+        <Banner kind={notice.kind} onClose={onDismissNotice}>
+          {notice.text}
+        </Banner>
+      ) : null}
+
+      {/*
+        音频被自动播放策略拦下时，给一个**必须点到的**恢复入口。
+        这个提示不能只是文字：用户不点就永远听不见别人说话。
+      */}
+      {audioBlocked ? (
+        <button type="button" className="vx-audio-blocked" onClick={onResumeAudio}>
+          <VolumeX size={16} />
+          <span>听不到对方的声音？点这里恢复</span>
+        </button>
+      ) : null}
+
+      <main className="vx-stage" ref={stageRef}>
+        {/* 整页猪圈：木栏围住整个房间区域，猪在整片场地里走动 */}
+        <PenFrame width={stageWidth} />
+
+        {status === "connecting" || status === "preparing" || status === "reconnecting" ? (
+          <div className="vx-stage-status">
+            <Spinner size={22} />
+            <span>
+              {status === "preparing"
+                ? "正在准备麦克风…"
+                : status === "reconnecting"
+                  ? "正在重新连接…"
+                  : "正在进入房间…"}
+            </span>
+          </div>
+        ) : null}
+
+        {members.map((member, index) => {
+          const active = speakingSet.has(member.id) && !member.muted;
+          const label = displayNames.get(member.id) ?? member.name;
+          const { action, phase } = phaseForActor(
+            penEvents.map((entry) => entry.event),
+            member.id,
+            now,
+          );
+          return (
+            <PigActor
+              key={member.id}
+              index={index}
+              total={members.length}
+              stageWidth={stageWidth}
+              stageHeight={Math.max(120, stageHeight - 96)}
+              color={member.color}
+              speaking={active}
+              sleeping={member.muted}
+              deafened={member.deafened ?? false}
+              isHost={member.isHost}
+              label={label}
+              action={action}
+              phase={phase}
+              targetX={eatTargetX(member.id)}
+              laneRatio={laneByActor.get(member.id) ?? 0.5}
+              mediaState={member.local ? undefined : mediaStates[member.id]}
+              reaction={reactionByActor.get(member.id)}
+              onReportPosition={(x) => onReportPenActor(member.id, x)}
+              badges={
+                <>
+                  {member.isHost ? <b>房主</b> : null}
+                  {member.local ? <b>我</b> : null}
+                  {member.deafened ? <b className="vx-plate-deaf">闭听</b> : null}
+                  {!member.hasMic ? <b className="vx-plate-quiet">收听</b> : null}
+                </>
+              }
+              onSelect={(event) => openAudioMenu(event, member)}
+            />
+          );
+        })}
+
+        {/* 地面点缀放在猪之后：这样猪在草地"后面"走动，而不是盖在草上 */}
+        <PenScatter seed={invite ? invite.code.length * 7 + invite.code.charCodeAt(0) : 3} />
+
+        {/* 道具层：DDY 丢的蔬菜、猪拉的那一坨 */}
+        <PenPropsLayer
+          entries={penEvents}
+          laneOf={laneOf}
+          xOf={getPenPosition}
+          fallbackX={0.14 + 0.1 / Math.max(1, members.length)}
+          now={now}
+        />
+
+        {/* DDY 本尊：从右侧栏外走过来、在栏边丢菜、再走回去 */}
+        <NpcVisitor name={NPC_NAME} active={npcActive} />
+
+        {invite && members.length === 1 ? (
+          <div className="vx-empty vx-empty-pen">
+            <span className="vx-empty-pigs" aria-hidden="true">
+              <WaitingPigHead />
+              <WaitingPigHead />
+              <WaitingPigHead />
+            </span>
+            <p>圈里只有你一头</p>
+            {/*
+              文案要和真实流程一致：拿到链接的人会先看到确认页（写清谁邀请、
+              用什么名字、要不要先静音），点一下才进房。原来写"他们一点开就进圈了"
+              与实现不符，会让人以为链接是"点开即入"。
+            */}
+            <span>把链接发给朋友，他们确认一下就进圈了</span>
+            <button type="button" className="vx-btn vx-btn-small vx-btn-primary" onClick={() => void onCopyInvite()}>
+              复制邀请链接
+            </button>
+          </div>
+        ) : null}
+      </main>
+
+      <footer className="vx-controls">
+        <div className="vx-controls-tray">
+        <div className="vx-mic-anchor">
+          <div className={`vx-mic-pill${muted ? " vx-mic-pill-muted" : ""}`}>
+            <button
+              type="button"
+              className="vx-mic-main"
+              onClick={onToggleMute}
+              disabled={self?.serverMuted ?? false}
+              aria-pressed={!muted}
+              title={
+                self?.serverMuted
+                  ? "你已被房主禁言，暂时不能开麦"
+                  : self?.hasMic
+                    ? muted
+                      ? "取消静音（Ctrl+Shift+M）"
+                      : "静音（Ctrl+Shift+M）"
+                    : "没有可用的麦克风"
+              }
+            >
+              {muted ? <MicOff size={20} /> : <Mic size={20} />}
+              <span>{muted ? "已静音" : "麦克风开"}</span>
+            </button>
+            <span className="vx-mic-sep" />
+            <button
+              type="button"
+              className={`vx-mic-expand${voiceOpen ? " vx-mic-expand-on" : ""}`}
+              onClick={() => setVoiceOpen((open) => !open)}
+              aria-label="语音快捷设置"
+              title="语音快捷设置"
+              aria-expanded={voiceOpen}
+            >
+              <ChevronUp size={18} />
+            </button>
+          </div>
+
+          {voiceOpen ? (
+            <div className="vx-voice-panel" onClick={(event) => event.stopPropagation()}>
+              <div className="vx-voice-volume">
+                <div className="vx-voice-volume-head">
+                  <span className="vx-voice-volume-label">
+                    <Mic size={14} /> 麦克风音量
+                  </span>
+                  <strong>
+                    {micVolume > 1
+                      ? `增强 ${Math.round(micVolume * 100)}%`
+                      : `${Math.round(micVolume * 100)}%`}
+                  </strong>
+                </div>
+                <input
+                  type="range"
+                  className="vx-range"
+                  style={rangeStyle((micVolume / 2) * 100)}
+                  min={0}
+                  max={2}
+                  step={0.01}
+                  value={micVolume}
+                  onChange={(event) => onSetMicVolume(Number(event.target.value))}
+                />
+                <div className="vx-voice-scale">
+                  <span>0</span>
+                  <span>100%</span>
+                  <span>增强 200%</span>
+                </div>
+              </div>
+
+              <div className="vx-voice-rows">
+                <div className="vx-voice-row">
+                  <span className="vx-voice-row-label">
+                    <Sparkles size={15} /> AI 智能降噪
+                  </span>
+                  <Toggle
+                    checked={processing.noiseSuppression}
+                    label="AI 智能降噪"
+                    onChange={onSetNoiseSuppression}
+                  />
+                </div>
+                <div className="vx-voice-row">
+                  <span className="vx-voice-row-label">回声消除</span>
+                  <div className="vx-voice-row-side">
+                    {processing.echoCancellation && !captureLive.echoCancellation ? (
+                      <span className="vx-voice-tag" title="当前浏览器不支持通话中修改，下次进房生效">
+                        重进生效
+                      </span>
+                    ) : null}
+                    <Toggle
+                      checked={processing.echoCancellation}
+                      label="回声消除"
+                      onChange={(next) => onSetProcessingFlag("echoCancellation", next)}
+                    />
+                  </div>
+                </div>
+                <div className="vx-voice-row">
+                  <span className="vx-voice-row-label">自动增益</span>
+                  <div className="vx-voice-row-side">
+                    {processing.autoGainControl && !captureLive.autoGainControl ? (
+                      <span className="vx-voice-tag" title="当前浏览器不支持通话中修改，下次进房生效">
+                        重进生效
+                      </span>
+                    ) : null}
+                    <Toggle
+                      checked={processing.autoGainControl}
+                      label="自动增益"
+                      onChange={(next) => onSetProcessingFlag("autoGainControl", next)}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                className="vx-voice-more"
+                onClick={() => {
+                  setVoiceOpen(false);
+                  onSettings();
+                }}
+              >
+                <SettingsIcon size={15} /> 完整语音设置
+                <ChevronRight size={15} />
+              </button>
+            </div>
+          ) : null}
+        </div>
+
+        <button
+          type="button"
+          className={`vx-ctl${deaf ? " vx-ctl-on vx-ctl-deaf" : ""}`}
+          onClick={onToggleDeaf}
+          aria-pressed={deaf}
+          title={
+            deaf
+              ? "取消闭听（恢复声音）（Ctrl+Shift+D）"
+              : "闭听：同时闭麦并暂时不听任何人（Ctrl+Shift+D）"
+          }
+        >
+          <span className="vx-ctl-icon">
+            {deaf ? <HeadphoneOff size={20} /> : <Headphones size={20} />}
+          </span>
+          <span>{deaf ? "已闭听" : "闭听"}</span>
+        </button>
+
+        <button
+          type="button"
+          className={`vx-ctl${chatOpen ? " vx-ctl-on" : ""}`}
+          onClick={onToggleChat}
+          aria-pressed={chatOpen}
+          title="房间聊天（Ctrl+Shift+C）"
+        >
+          <span className="vx-ctl-icon">
+            <MessageSquare size={20} />
+            {unread > 0 ? <span className="vx-badge">{unread > 99 ? "99+" : unread}</span> : null}
+          </span>
+          <span>聊天</span>
+        </button>
+
+        <button type="button" className="vx-ctl vx-ctl-danger" onClick={onLeave}>
+          <PhoneOff size={20} />
+          <span>{isHost ? "结束房间" : "离开"}</span>
+        </button>
+        </div>
+      </footer>
+
+      <aside className={`vx-chat${chatOpen ? " vx-chat-open" : ""}`} aria-hidden={!chatOpen}>
+        <div className="vx-chat-head">
+          <span>房间聊天</span>
+          <button type="button" className="vx-icon-btn" onClick={onToggleChat} aria-label="关闭聊天">
+            <X size={18} />
+          </button>
+        </div>
+        <div className="vx-chat-list" ref={listRef}>
+          {messages.length === 0 ? (
+            <p className="vx-chat-empty">还没有消息。发言会在所有人屏幕上高亮。</p>
+          ) : (
+            messages.map((message) => (
+              <div key={message.id} className={`vx-msg${message.self ? " vx-msg-self" : ""}`}>
+                {!message.self ? <span className="vx-msg-name">{message.name}</span> : null}
+                <span className="vx-msg-bubble">{message.text}</span>
+                <span className="vx-msg-time">
+                  {new Date(message.ts).toLocaleTimeString("zh-CN", {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })}
+                </span>
+              </div>
+            ))
+          )}
+        </div>
+        <form className="vx-chat-form" onSubmit={submitChat}>
+          <input
+            className="vx-input"
+            value={draft}
+            maxLength={500}
+            placeholder="说点什么…"
+            onChange={(event) => setDraft(event.target.value)}
+          />
+          <button type="submit" className="vx-icon-btn vx-icon-btn-primary" aria-label="发送">
+            <Send size={16} />
+          </button>
+        </form>
+      </aside>
+    </div>
+  );
+}
+
+/** 空圈等待示意用的小猪头（与真猪同配色，仅作装饰，不代表已有成员）。 */
+function WaitingPigHead() {
+  return (
+    <svg viewBox="0 0 64 58" aria-hidden="true">
+      <path d="M15 17 C9 7 13 -2 23 4 C27 8 26 15 23 19 Z" fill="#f092a8" />
+      <path d="M49 17 C55 7 51 -2 41 4 C37 8 38 15 41 19 Z" fill="#f092a8" />
+      <ellipse cx="32" cy="31" rx="24" ry="22" fill="#f8b8c4" />
+      <ellipse cx="23" cy="28" rx="3.2" ry="4.2" fill="#4a2b34" />
+      <ellipse cx="41" cy="28" rx="3.2" ry="4.2" fill="#4a2b34" />
+      <circle cx="24.2" cy="26.4" r="1.1" fill="#ffffff" />
+      <circle cx="42.2" cy="26.4" r="1.1" fill="#ffffff" />
+      <ellipse cx="32" cy="41" rx="9" ry="7" fill="#f5a7b9" />
+      <ellipse cx="28.6" cy="41" rx="1.7" ry="2.6" fill="#c77f93" />
+      <ellipse cx="35.4" cy="41" rx="1.7" ry="2.6" fill="#c77f93" />
+    </svg>
+  );
+}
