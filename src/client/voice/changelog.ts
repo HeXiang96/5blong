@@ -20,7 +20,17 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
-    // 纯 bug 修复版本：lines 留空 → 公告栏跳过它，继续展示上一条有内容版本
+    version: "1.0.6",
+    date: "2026-10-13",
+    lines: [
+      "小猪换 3D 新形象，全套动作上线",
+      "新互动「吊起来」+ 降落伞空降入场",
+      "场景与界面跟随早晚自动变色",
+      "更新下载显示进度：小猪跑给你看",
+    ],
+  },
+  {
+    // 纯修复/已合并版本：lines 留空 → 公告栏跳过，只展示最新一条有内容的
     version: "1.0.5",
     date: "2026-10-13",
     lines: [],
@@ -28,12 +38,7 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     version: "1.0.4",
     date: "2026-10-13",
-    lines: [
-      "小猪换 3D 新形象，全套动作上线",
-      "新互动「吊起来」：把朋友的猪吊到半空",
-      "新成员降落伞空降入场",
-      "场景与界面跟随早晚自动变色",
-    ],
+    lines: [],
   },
 ];
 
