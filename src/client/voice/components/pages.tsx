@@ -61,7 +61,7 @@ export function LandingView({
   }, [isDesktop]);
 
   // 网页版首页的"下载客户端"：先读当前部署的更新清单拿到最新安装包地址，
-  // 失败则退到稳定短链 /desktop/latest（发布脚本每次部署都会重定向到当前版本）。
+  // 失败则退到稳定短链 /desktop/latest.exe（发布脚本每次部署都放当前版本的副本）。
   const startDownload = async () => {
     try {
       const res = await fetch("/desktop/latest.json");
@@ -74,7 +74,7 @@ export function LandingView({
     } catch {
       // 走兜底短链
     }
-    window.location.href = "/desktop/latest";
+    window.location.href = "/desktop/latest.exe";
   };
 
   const submit = (event: FormEvent) => {

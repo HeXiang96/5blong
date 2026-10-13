@@ -22,7 +22,7 @@
 // 只需要 latest.json 指向的当前版本，不受影响）。
 
 import { execFileSync, execSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -128,12 +128,11 @@ async function main() {
   }
   log("stage", `dist-deploy/ = dist-web + desktop/{${exeName}, .sig, latest.json}`);
 
-  // 6. 稳定短链：/desktop/latest 永远 302 到当前版本的安装包，
-  //    供网页首页"下载客户端"按钮兜底和对外分享（版本号变了链接不变）。
-  writeFileSync(
-    path.join(distDeploy, "_redirects"),
-    `/desktop/latest /desktop/${exeName} 302\n`,
-  );
+  // 6. 稳定短链：/desktop/latest.exe 永远是当前版本安装包的副本
+  //    （Pages 直传管线不处理 _redirects，所以用固定路径复制文件实现）。
+  //    供网页首页"下载客户端"按钮兜底和对外分享（版本号变了路径不变）。
+  copyFileSync(path.join(desktopDir, exeName), path.join(desktopDir, "latest.exe"));
+  log("stage", "desktop/latest.exe ← 当前版本安装包副本");
 
   execSync(`node scripts/deploy-pages.mjs dist-deploy ${project} ${branch}`, {
     cwd: root,
@@ -143,7 +142,7 @@ async function main() {
   log("done", [
     `更新源     ${pagesBase}/desktop/latest.json`,
     `安装包直链 ${pagesUrl}`,
-    `稳定短链   ${pagesBase}/desktop/latest`,
+    `稳定短链   ${pagesBase}/desktop/latest.exe`,
   ].join("\n                     "));
 }
 
