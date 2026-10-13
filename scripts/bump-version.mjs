@@ -71,6 +71,7 @@ for (const rel of ["src-tauri/Cargo.toml", "src-tauri/Cargo.lock"]) {
 run("git add -A");
 run(`git commit -m "release: v${version}"`);
 run(`git tag app-v${version}`);
-run("git push origin main --follow-tags");
+run("git push origin main");
+run(`git push origin app-v${version}`);
 console.log(`\n已推送 app-v${version}，GitHub Actions 开始出包：`);
 console.log(`https://github.com/${repo()}/actions`);

@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "5blong",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "identifier": "com.5blong.app",
   "build": {
     "frontendDist": "../dist-web",
@@ -29,7 +29,9 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
+    "targets": [
+      "nsis"
+    ],
     "createUpdaterArtifacts": true,
     "shortDescription": "5blong 临时语音房",
     "longDescription": "免注册、免选服务器的低延迟 P2P 语音房：创建房间、分享链接即可开聊。",
@@ -43,7 +45,10 @@
     "windows": {
       "nsis": {
         "installMode": "currentUser",
-        "languages": ["SimpChinese", "English"]
+        "languages": [
+          "SimpChinese",
+          "English"
+        ]
       }
     }
   },
