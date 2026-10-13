@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Copy, Download, LogIn, Plus, Settings as SettingsIcon } from "lucide-react";
 import { getVersion } from "@tauri-apps/api/app";
-import { latestChangelog } from "../changelog";
+import { boardEntries } from "../changelog";
 
 import { AVATAR_COLORS, initials, type Identity } from "../identity";
 import { CODE_HINT, CODE_PLACEHOLDER, JOIN_PARSE_ERROR, ROOM_CODE_LEN } from "../protocol";
@@ -44,8 +44,14 @@ export function LandingView({
   onSettings: () => void;
   onCopyId: () => void;
 }) {
-  /** 首页公告栏的更新内容：单一数据源见 ../changelog.ts（发版时只改那里）。 */
-  const latest = latestChangelog();
+  /**
+   * 首页公告栏：可左右翻阅的过往更新（数据源见 ../changelog.ts，
+   * 发版时只改那个文件）。默认显示最新一条。
+   */
+  const boardItems = boardEntries();
+  const [boardIdx, setBoardIdx] = useState(0);
+  const boardItem =
+    boardItems.length > 0 ? boardItems[boardIdx % boardItems.length] : undefined;
   const [joinOpen, setJoinOpen] = useState(false);
   const [joinText, setJoinText] = useState("");
   const [joinError, setJoinError] = useState<string | null>(null);
@@ -213,13 +219,44 @@ export function LandingView({
         <div className="vx-landing-board-face">
           <b className="vx-landing-board-title">
             最新更新
-            {latest ? <span className="vx-landing-board-ver">v{latest.version}</span> : null}
+            {boardItem ? <span className="vx-landing-board-ver">v{boardItem.version}</span> : null}
           </b>
           <ul>
-            {(latest?.lines ?? []).map((line) => (
+            {(boardItem?.lines ?? ["更多内容，敬请期待"]).map((line) => (
               <li key={line}>{line}</li>
             ))}
           </ul>
+          {boardItems.length > 1 ? (
+            <div className="vx-landing-board-nav">
+              <button
+                type="button"
+                className="vx-board-nav-btn"
+                aria-label="上一条更新"
+                onClick={() =>
+                  setBoardIdx((idx) => (idx + boardItems.length - 1) % boardItems.length)
+                }
+              >
+                ‹
+              </button>
+              <span className="vx-board-dots" aria-hidden="true">
+                {boardItems.map((item, idx) => (
+                  <i
+                    key={item.version}
+                    className={idx === boardIdx ? "vx-board-dot-on" : ""}
+                    onClick={() => setBoardIdx(idx)}
+                  />
+                ))}
+              </span>
+              <button
+                type="button"
+                className="vx-board-nav-btn"
+                aria-label="下一条更新"
+                onClick={() => setBoardIdx((idx) => (idx + 1) % boardItems.length)}
+              >
+                ›
+              </button>
+            </div>
+          ) : null}
         </div>
         <span className="vx-landing-board-post vx-landing-board-post-l" aria-hidden="true" />
         <span className="vx-landing-board-post vx-landing-board-post-r" aria-hidden="true" />

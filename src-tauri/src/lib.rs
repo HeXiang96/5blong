@@ -61,10 +61,13 @@ async fn check_update(
 /// 检查更新（发事件，不弹原生框）：有新版发 update:available，
 /// 手动检查的结果发 update:notice，启动静默检查只在新版时打扰。
 async fn run_check(app: &tauri::AppHandle, state: &UpdaterState, manual: bool) -> Result<(), String> {
-    let _ = app.emit(
-        "update:phase",
-        UpdatePhase { phase: "checking", message: None },
-    );
+    // 只有手动检查才展示"检查中"；启动静默检查不打扰用户。
+    if manual {
+        let _ = app.emit(
+            "update:phase",
+            UpdatePhase { phase: "checking", message: None },
+        );
+    }
     let Ok(updater) = app.updater() else {
         let _ = app.emit(
             "update:notice",
@@ -86,6 +89,11 @@ async fn run_check(app: &tauri::AppHandle, state: &UpdaterState, manual: bool) -
             }
         }
         Ok(None) => {
+            // 复位前端阶段：即便静默检查，也让界面回到空闲（防御性）
+            let _ = app.emit(
+                "update:phase",
+                UpdatePhase { phase: "idle", message: None },
+            );
             if manual {
                 let _ = app.emit(
                     "update:notice",
@@ -97,6 +105,10 @@ async fn run_check(app: &tauri::AppHandle, state: &UpdaterState, manual: bool) -
             }
         }
         Err(e) => {
+            let _ = app.emit(
+                "update:phase",
+                UpdatePhase { phase: "idle", message: None },
+            );
             if manual {
                 let _ = app.emit(
                     "update:notice",

@@ -23,7 +23,7 @@ interface ProgressPayload {
 }
 
 interface PhasePayload {
-  phase: "checking" | "installing" | "error";
+  phase: "checking" | "installing" | "error" | "idle";
   message?: string | null;
 }
 
@@ -98,6 +98,7 @@ export function UpdateOverlay() {
           listen<PhasePayload>("update:phase", (event) => {
             const { phase: p, message } = event.payload;
             if (p === "checking") setPhase("checking");
+            else if (p === "idle") setPhase("idle");
             else if (p === "installing") setPhase("installing");
             else if (p === "error") {
               setPhase("notice");

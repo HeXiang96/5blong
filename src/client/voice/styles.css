@@ -2691,3 +2691,53 @@ html[data-theme="light"][data-daypart="dusk"] .vx-settings {
 .vx-update-title-err {
   color: #c0392b;
 }
+
+
+/* 公告栏翻页导航：小木箭头 + 圆点（公告栏本体 pointer-events:none，这里恢复） */
+.vx-landing-board-nav {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 9px;
+}
+
+.vx-board-nav-btn {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid #a8814a;
+  background: linear-gradient(180deg, #f0d9a8 0%, #dcbb80 100%);
+  color: #5a3f1e;
+  font-size: 14px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 1px 2px rgba(70, 45, 15, 0.25);
+}
+
+.vx-board-nav-btn:hover {
+  filter: brightness(1.06);
+}
+
+.vx-board-dots {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+}
+
+.vx-board-dots i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgba(122, 79, 18, 0.32);
+  cursor: pointer;
+}
+
+.vx-board-dots i.vx-board-dot-on {
+  background: #7a4f12;
+}
