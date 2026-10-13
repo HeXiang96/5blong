@@ -20,7 +20,7 @@ import {
 import { toAvatarDataUrl } from "../storage";
 import { Avatar, Toggle } from "./ui";
 
-type Tab = "profile" | "audio";
+type Tab = "profile" | "audio" | "shortcuts";
 
 /** 滑条填充比例（Webkit 不支持原生 progress，用 CSS 变量画渐变）。 */
 const rangeStyle = (pct: number): CSSProperties =>
@@ -51,6 +51,8 @@ export function SettingsView({
   const [theme, setTheme] = useState<ThemeChoice>(() => loadTheme());
   const stopTest = useRef<(() => void) | null>(null);
   const fileInput = useRef<HTMLInputElement | null>(null);
+  /** 桌面客户端（Tauri）：托盘等相关说明只在客户端里展示。 */
+  const isDesktop = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
   const refreshDevices = async () => {
     const groups = await listDevices();
@@ -142,6 +144,13 @@ export function SettingsView({
           >
             语音设备
           </button>
+          <button
+            type="button"
+            className={`vx-tab${tab === "shortcuts" ? " vx-tab-on" : ""}`}
+            onClick={() => setTab("shortcuts")}
+          >
+            快捷方式
+          </button>
         </div>
         <button type="button" className="vx-icon-btn vx-icon-btn-primary" onClick={save} aria-label="保存">
           <Check size={18} />
@@ -229,7 +238,7 @@ export function SettingsView({
               </div>
             </section>
           </>
-        ) : (
+        ) : tab === "audio" ? (
           <>
             <section className="vx-card">
               <label className="vx-field">
@@ -407,6 +416,78 @@ export function SettingsView({
                 />
               </label>
               <small>麦克风音量与 AI 智能降噪在通话中实时生效；回声消除、自动增益在下次进房时生效。</small>
+            </section>
+          </>
+        ) : (
+          <>
+            <section className="vx-card">
+              <h3 className="vx-card-title">房间内快捷键</h3>
+              <ul className="vx-shortcuts">
+                <li>
+                  <span className="vx-keys">
+                    <kbd>Ctrl</kbd>
+                    <kbd>Shift</kbd>
+                    <kbd>M</kbd>
+                  </span>
+                  <span>静音 / 取消静音（被房主禁言时不可用）</span>
+                </li>
+                <li>
+                  <span className="vx-keys">
+                    <kbd>Ctrl</kbd>
+                    <kbd>Shift</kbd>
+                    <kbd>C</kbd>
+                  </span>
+                  <span>打开 / 收起聊天</span>
+                </li>
+                <li>
+                  <span className="vx-keys">
+                    <kbd>Ctrl</kbd>
+                    <kbd>Shift</kbd>
+                    <kbd>D</kbd>
+                  </span>
+                  <span>闭听 / 取消闭听</span>
+                </li>
+                <li>
+                  <span className="vx-keys">
+                    <kbd>Esc</kbd>
+                  </span>
+                  <span>关闭弹出的面板</span>
+                </li>
+              </ul>
+              <small>在聊天输入框里打字时快捷键自动让位，不会误触；人在游戏里也能直接按。</small>
+            </section>
+
+            <section className="vx-card">
+              <h3 className="vx-card-title">桌面客户端怎么用更省心</h3>
+              {isDesktop ? (
+                <ul className="vx-shortcuts vx-shortcuts-plain">
+                  <li>
+                    <b>托盘常驻</b>
+                    <span>点窗口右上角 × 只是收进托盘，语音继续、不断线；想真退出走托盘右键的「退出」。</span>
+                  </li>
+                  <li>
+                    <b>托盘菜单</b>
+                    <span>左键点托盘图标立即显示窗口；右键菜单有「显示 5blong / 检查更新 / 退出」。</span>
+                  </li>
+                  <li>
+                    <b>重复启动</b>
+                    <span>再点一次图标不会开第二个进程，只会把已有窗口带到前台。</span>
+                  </li>
+                  <li>
+                    <b>自动更新</b>
+                    <span>启动时自动检查新版本；更新时显示下载进度（小猪跑给你看），安装完成后自动重启。</span>
+                  </li>
+                  <li>
+                    <b>麦克风免授权</b>
+                    <span>客户端自动放行麦克风权限，不用每次弹系统确认框。</span>
+                  </li>
+                </ul>
+              ) : (
+                <small>
+                  当前是网页版。安装 Windows 客户端后：托盘常驻（关窗口不掉线）、全局快捷键、
+                  自动更新、麦克风免授权，长时间挂机也更省资源更流畅。
+                </small>
+              )}
             </section>
           </>
         )}
