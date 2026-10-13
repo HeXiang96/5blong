@@ -2678,3 +2678,16 @@ html[data-theme="light"][data-daypart="dusk"] .vx-settings {
   font-weight: 650;
   font-size: 13.5px;
 }
+
+
+/* 更新确认框的按钮排布与错误标题 */
+.vx-update-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  margin-top: 14px;
+}
+
+.vx-update-title-err {
+  color: #c0392b;
+}

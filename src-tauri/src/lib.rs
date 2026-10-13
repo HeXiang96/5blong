@@ -9,13 +9,167 @@
 // 前端与网页版是同一份 dist-web，由 Tauri 内置的本地安全协议（tauri.localhost）提供，
 // 它是 secure context，WASM（RNNoise）可正常 fetch。
 
+use std::sync::Mutex;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Emitter, Manager, WindowEvent,
+    Emitter, Manager, State, WindowEvent,
 };
-use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
-use tauri_plugin_updater::UpdaterExt;
+use tauri_plugin_updater::{Update, UpdaterExt};
+
+/// 已发现、待用户确认下载的更新（确认后 start_update_download 取走）。
+struct UpdaterState {
+    pending: Mutex<Option<Update>>,
+}
+
+/// 主题化提示事件（检查结果 / 错误说明，前端用木牌风卡片展示）。
+#[derive(Clone, serde::Serialize)]
+struct UpdateNotice {
+    kind: &'static str, // "info" | "error"
+    text: String,
+}
+
+/// 发现新版本事件载荷。
+#[derive(Clone, serde::Serialize)]
+struct UpdateMeta {
+    version: String,
+    current: String,
+}
+
+/// 窗口底色跟随时段天空色（前端每次时段变化时调用），
+/// 让系统标题栏不再是一块突兀的白条。
+#[tauri::command]
+fn set_window_bg(app: tauri::AppHandle, color: String) {
+    use std::str::FromStr;
+    let Ok(parsed) = tauri::utils::config::Color::from_str(&color) else {
+        return;
+    };
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.set_background_color(Some(parsed));
+    }
+}
+
+/// 检查更新（前端触发）：结果全部走事件，由主题化界面展示。
+#[tauri::command]
+async fn check_update(
+    app: tauri::AppHandle,
+    state: State<'_, UpdaterState>,
+) -> Result<(), String> {
+    run_check(&app, &state, true).await
+}
+
+/// 检查更新（发事件，不弹原生框）：有新版发 update:available，
+/// 手动检查的结果发 update:notice，启动静默检查只在新版时打扰。
+async fn run_check(app: &tauri::AppHandle, state: &UpdaterState, manual: bool) -> Result<(), String> {
+    let _ = app.emit(
+        "update:phase",
+        UpdatePhase { phase: "checking", message: None },
+    );
+    let Ok(updater) = app.updater() else {
+        let _ = app.emit(
+            "update:notice",
+            UpdateNotice { kind: "error", text: "更新器初始化失败（配置缺失）。".into() },
+        );
+        return Ok(());
+    };
+    match updater.check().await {
+        Ok(Some(update)) => {
+            let meta = UpdateMeta {
+                version: update.version.clone(),
+                current: update.current_version.clone(),
+            };
+            *state.pending.lock().unwrap() = Some(update);
+            let _ = app.emit("update:available", meta);
+            // 把主窗口带到前台：用户可能从托盘发起，提示框要看得见。
+            if let Some(window) = front_main(app) {
+                let _ = window.set_focus();
+            }
+        }
+        Ok(None) => {
+            if manual {
+                let _ = app.emit(
+                    "update:notice",
+                    UpdateNotice {
+                        kind: "info",
+                        text: format!("当前已是最新版本（v{}）。", app.package_info().version),
+                    },
+                );
+            }
+        }
+        Err(e) => {
+            if manual {
+                let _ = app.emit(
+                    "update:notice",
+                    UpdateNotice { kind: "error", text: format!("无法连接更新源：{e}") },
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+/// 用户确认后开始下载安装：进度/阶段事件照发，安装完整结束后才重启。
+#[tauri::command]
+async fn start_update_download(
+    app: tauri::AppHandle,
+    state: State<'_, UpdaterState>,
+) -> Result<(), String> {
+    let Some(update) = state.pending.lock().unwrap().take() else {
+        return Err("没有待安装的更新".into());
+    };
+    // 下载/安装期间窗口置顶：进度框钉在界面最上层。
+    if let Some(window) = front_main(&app) {
+        let _ = window.set_always_on_top(true);
+        let _ = window.set_focus();
+    }
+    let progress_app = app.clone();
+    let finish_app = app.clone();
+    let mut downloaded: u64 = 0;
+    let mut last_emit = std::time::Instant::now();
+    let result = update
+        .download_and_install(
+            move |chunk: usize, total: Option<u64>| {
+                downloaded += chunk as u64;
+                // 限流 ~8 次/秒，避免每几 KB 就发一条事件
+                let done = total.map(|t| t > 0 && downloaded >= t).unwrap_or(false);
+                if done || last_emit.elapsed().as_millis() >= 120 {
+                    last_emit = std::time::Instant::now();
+                    let _ = progress_app.emit(
+                        "update:progress",
+                        serde_json::json!({ "downloaded": downloaded, "total": total }),
+                    );
+                }
+            },
+            move || {
+                let _ = finish_app.emit(
+                    "update:phase",
+                    UpdatePhase { phase: "installing", message: None },
+                );
+            },
+        )
+        .await;
+    match result {
+        Err(e) => {
+            let _ = app.emit(
+                "update:phase",
+                UpdatePhase { phase: "error", message: Some(e.to_string()) },
+            );
+            let _ = app.emit(
+                "update:notice",
+                UpdateNotice { kind: "error", text: format!("下载或安装出错：{e}") },
+            );
+            // 失败就把置顶恢复掉，别把窗口"钉"死在最前面
+            if let Some(window) = front_main(&app) {
+                let _ = window.set_always_on_top(false);
+            }
+            Err(e.to_string())
+        }
+        Ok(()) => {
+            // 安装完整结束后才重启（NSIS 拉起新版本）。
+            app.restart();
+        }
+    }
+}
 
 /// 显示并聚焦主窗口（托盘菜单 / 单实例 / 托盘左键共用）。
 fn show_main(app: &tauri::AppHandle) {
@@ -38,151 +192,11 @@ fn front_main(app: &tauri::AppHandle) -> Option<tauri::WebviewWindow> {
     window
 }
 
-/// 下载进度事件（发给前端画进度条）。
-#[derive(Clone, serde::Serialize)]
-struct UpdateProgress {
-    downloaded: u64,
-    total: Option<u64>,
-}
-
 /// 阶段事件：安装中 / 出错（下载中的阶段由进度事件隐含）。
 #[derive(Clone, serde::Serialize)]
 struct UpdatePhase {
     phase: &'static str,
     message: Option<String>,
-}
-
-/// 检查更新并询问安装（更新包来自 GitHub Releases，minisign 签名校验由插件完成）。
-///
-/// `manual`：true 来自托盘「检查更新」，失败 / 已是最新都要弹窗告知；
-/// false 为启动后的静默检查，只在确实有新版本时才打扰用户。
-fn check_for_update(app: tauri::AppHandle, manual: bool) {
-    tauri::async_runtime::spawn(async move {
-        let Ok(updater) = app.updater() else {
-            if manual {
-                update_message_blocking(&app, "检查更新失败", "更新器初始化失败（配置缺失）。".into());
-            }
-            return;
-        };
-        match updater.check().await {
-            Ok(Some(update)) => {
-                let mut dialog = app
-                    .dialog()
-                    .message(format!(
-                        "发现新版本 v{}（当前 v{}），要立即下载并安装吗？\n\n下载过程会显示进度，完成后 5blong 会自动重启。",
-                        update.version, update.current_version
-                    ))
-                    .title("5blong 更新")
-                    .kind(MessageDialogKind::Info)
-                    .buttons(MessageDialogButtons::OkCancelCustom(
-                        "立即更新".into(),
-                        "稍后再说".into(),
-                    ));
-                // 挂到主窗口上并置前：保证启动时就能看到更新提示。
-                if let Some(window) = front_main(&app) {
-                    dialog = dialog.parent(&window);
-                }
-                let confirmed = dialog.blocking_show();
-                if !confirmed {
-                    return;
-                }
-                /*
-                 * 下载/安装阶段给前端发进度事件（前端画进度条）。
-                 * 之前的回调是空的：7MB 的包在慢网下要等几十秒到几分钟，
-                 * 点完「立即更新」界面毫无反馈，用户不知道在干嘛——
-                 * 现在主窗口置前 + 进度条（已下载/总量/百分比），
-                 * 下载完切到"正在安装，马上自动重启"。
-                 */
-                // 下载/安装期间窗口置顶：进度框钉在界面最上层，
-                // 用户切到别的应用也能一眼看到更新进度。
-                if let Some(window) = front_main(&app) {
-                    let _ = window.set_always_on_top(true);
-                    let _ = window.set_focus();
-                }
-                let progress_app = app.clone();
-                let finish_app = app.clone();
-                let mut downloaded: u64 = 0;
-                let mut last_emit = std::time::Instant::now();
-                let result = update
-                    .download_and_install(
-                        move |chunk: usize, total: Option<u64>| {
-                            downloaded += chunk as u64;
-                            // 限流 ~8 次/秒，避免每几 KB 就发一条事件
-                            let done = total.map(|t| t > 0 && downloaded >= t).unwrap_or(false);
-                            if done || last_emit.elapsed().as_millis() >= 120 {
-                                last_emit = std::time::Instant::now();
-                                let _ = progress_app.emit(
-                                    "update:progress",
-                                    UpdateProgress { downloaded, total },
-                                );
-                            }
-                        },
-                        move || {
-                            let _ = finish_app.emit(
-                                "update:phase",
-                                UpdatePhase { phase: "installing", message: None },
-                            );
-                        },
-                    )
-                    .await;
-                if let Err(e) = result {
-                    let _ = app.emit(
-                        "update:phase",
-                        UpdatePhase { phase: "error", message: Some(e.to_string()) },
-                    );
-                    // 失败就把置顶恢复掉，别把窗口"钉"死在最前面
-                    if let Some(window) = front_main(&app) {
-                        let _ = window.set_always_on_top(false);
-                    }
-                    update_message_blocking(&app, "更新失败", format!("下载或安装出错：{e}"));
-                } else {
-                    // 不返回：重启进程，由 NSIS 安装完成后拉起新版本。
-                    app.restart();
-                }
-            }
-            Ok(None) => {
-                if manual {
-                    update_message_blocking(
-                        &app,
-                        "检查更新",
-                        format!("当前已是最新版本（v{}）。", app.package_info().version),
-                    );
-                }
-            }
-            Err(e) => {
-                if manual {
-                    update_message_blocking(&app, "检查更新失败", format!("无法连接更新源：{e}"));
-                }
-            }
-        }
-    });
-}
-
-/// 简单的信息弹窗（阻塞到用户关闭为止；只从异步线程调用）。
-/// 同样挂主窗口当 owner 并置前，避免被主窗口挡住。
-fn update_message_blocking(app: &tauri::AppHandle, title: &str, text: String) {
-    let mut dialog = app
-        .dialog()
-        .message(text)
-        .title(title)
-        .kind(MessageDialogKind::Info);
-    if let Some(window) = front_main(app) {
-        dialog = dialog.parent(&window);
-    }
-    dialog.blocking_show();
-}
-
-/// 窗口底色跟随时段天空色（前端每次时段变化时调用），
-/// 让系统标题栏不再是一块突兀的白条。
-#[tauri::command]
-fn set_window_bg(app: tauri::AppHandle, color: String) {
-    use std::str::FromStr;
-    let Ok(parsed) = tauri::utils::config::Color::from_str(&color) else {
-        return;
-    };
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.set_background_color(Some(parsed));
-    }
 }
 
 /// Windows/WebView2：自动放行页面的权限请求（主要是麦克风）。
@@ -228,7 +242,8 @@ fn grant_webview2_permissions(app: &tauri::AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![set_window_bg])
+        .manage(UpdaterState { pending: Mutex::new(None) })
+        .invoke_handler(tauri::generate_handler![set_window_bg, check_update, start_update_download])
         // 单实例必须在其它插件 / WebView 初始化之前注册。
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             show_main(app);
@@ -256,7 +271,13 @@ pub fn run() {
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "show" => show_main(app),
-                    "check_update" => check_for_update(app.clone(), true),
+                    "check_update" => {
+                        let update_app = app.clone();
+                        tauri::async_runtime::spawn(async move {
+                            let state = update_app.state::<UpdaterState>();
+                            let _ = run_check(&update_app, &state, true).await;
+                        });
+                    }
                     "quit" => app.exit(0),
                     _ => {}
                 })
@@ -285,7 +306,13 @@ pub fn run() {
             let handle = app.handle().clone();
             std::thread::spawn(move || {
                 std::thread::sleep(std::time::Duration::from_secs(2));
-                check_for_update(handle, false);
+                {
+                    let silent_app = handle.clone();
+                    tauri::async_runtime::spawn(async move {
+                        let state = silent_app.state::<UpdaterState>();
+                        let _ = run_check(&silent_app, &state, false).await;
+                    });
+                }
             });
 
             Ok(())

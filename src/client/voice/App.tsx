@@ -42,6 +42,38 @@ export function App() {
    */
   const settingsOverRoom = voice.view === "settings" && voice.settingsReturn === "room";
 
+  /*
+   * 桌面端标题栏颜色跟随主题与时段（覆盖层/房间/首页都协调）：
+   * 深色外观跟 --vx-bg，浅色外观跟各时段天空顶色。
+   * 用 MutationObserver 监听 html 属性变化，主题/时段一变就同步。
+   */
+  useEffect(() => {
+    const isDesktop = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+    if (!isDesktop) return;
+    const SKY_TOP: Record<string, string> = {
+      morning: "#f9e9e3",
+      day: "#f7e9d4",
+      dusk: "#f8e3c8",
+      night: "#171c2c",
+    };
+    const apply = () => {
+      const theme = document.documentElement.dataset.theme;
+      const daypart = document.documentElement.dataset.daypart ?? "day";
+      const color =
+        theme === "dark" ? "#14110d" : (SKY_TOP[daypart] ?? "#f7e9d4");
+      void import("@tauri-apps/api/core")
+        .then(({ invoke }) => invoke("set_window_bg", { color }))
+        .catch(() => {});
+    };
+    apply();
+    const observer = new MutationObserver(apply);
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-theme", "data-daypart"],
+    });
+    return () => observer.disconnect();
+  }, []);
+
   if (voice.view === "settings" && !settingsOverRoom) {
     return (
       <SettingsView
