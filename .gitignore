@@ -6,3 +6,4 @@ dist-desktop/
 # 本地日志与临时文件
 *.log
 .DS_Store
+dist-deploy/

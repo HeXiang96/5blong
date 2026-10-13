@@ -56,6 +56,7 @@
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDgxREE0MzQ5MkYwNDAyMjEKUldRaEFnUXZTVVBhZ1pzUHlQOGN0YU5iK0F6OW5KazdiZXZRUWlkTFd2WGxBVFlHeGl0NU9XejUK",
       "endpoints": [
+        "https://5blong.pages.dev/desktop/latest.json",
         "https://github.com/HeXiang96/5blong/releases/latest/download/latest.json"
       ]
     }

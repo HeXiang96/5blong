@@ -9,6 +9,9 @@
 //   4. 推送 main 和标签 → GitHub Actions 自动出安装包并发布 Release，
 //      已安装的桌面端会在下次启动或点托盘「检查更新」时收到更新。
 //
+// CI 出包完成后（约 10 分钟），再跑一步把更新源发布到国内可直连的 Pages：
+//   npm run publish:desktop -- X.Y.Z
+//
 // 注意：推送到 GitHub 需要本机 FlClash 代理在线（仓库已配置 git 走 127.0.0.1:7890）。
 // 签名私钥在本机 %USERPROFILE%\.tauri\5blong.key，对应公钥已写进 tauri.conf.json，
 // CI 用仓库 Secrets 里的同名私钥签名更新包。
@@ -75,3 +78,6 @@ run("git push origin main");
 run(`git push origin app-v${version}`);
 console.log(`\n已推送 app-v${version}，GitHub Actions 开始出包：`);
 console.log(`https://github.com/${repo()}/actions`);
+console.log(`\n出包成功后 CI 会自动把更新源发布到 Pages（需在仓库 Secrets 配置 CLOUDFLARE_API_TOKEN）。`);
+console.log(`若未配置 Secret，在本机（需代理在线）手动发布：`);
+console.log(`npm run publish:desktop -- ${version}`);

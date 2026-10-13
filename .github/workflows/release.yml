@@ -51,3 +51,20 @@ jobs:
           releaseDraft: false
           prerelease: false
           includeUpdaterJson: true
+
+      # 出包成功后，把更新源（exe + .sig + latest.json，下载地址改写为 pages.dev）
+      # 直接从 runner 部署到 Cloudflare Pages /desktop/——runner 访问 GitHub 和
+      # Cloudflare 都不需要代理，本机零操作。需要仓库 Secrets：
+      #   CLOUDFLARE_API_TOKEN：权限 Account → Cloudflare Pages → Edit。
+      # 未配置该 Secret 时跳过（可之后在本机手动 npm run publish:desktop）。
+      - name: Publish desktop assets to Pages
+        if: startsWith(github.ref, 'refs/tags/app-v')
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        shell: bash
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "未配置 CLOUDFLARE_API_TOKEN，跳过 Pages 发布（可本机手动 npm run publish:desktop）"
+            exit 0
+          fi
+          node scripts/publish-desktop.mjs "${GITHUB_REF_NAME#app-v}"

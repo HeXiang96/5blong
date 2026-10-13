@@ -19,11 +19,13 @@
     "test:watch": "vitest",
     "check": "npm run typecheck && npm test && npm run build:web:pages",
     "deploy:pages": "node scripts/deploy-pages.mjs",
+    "publish:desktop": "node scripts/publish-desktop.mjs",
     "status:pages": "node scripts/pages-status.mjs",
     "bump": "node scripts/bump-version.mjs"
   },
   "dependencies": {
     "@sapphi-red/web-noise-suppressor": "^0.4.1",
+    "@tauri-apps/api": "^2.12.3",
     "lucide-react": "^1.55.0",
     "peerjs": "^1.5.5",
     "react": "19.2.8",

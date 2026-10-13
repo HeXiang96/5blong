@@ -1,15 +1,18 @@
 /**
  * 直接用 Cloudflare API 部署到 Pages，不依赖 wrangler。
  *
- * 环境里没有 npm / npx / wrangler，但本机已有 wrangler 的 OAuth 凭据，
- * 所以这里复刻 wrangler 的上传流程（对照 workers-sdk 的 pages/upload.ts）：
- *   1. 刷新 OAuth token（refresh token 存在就自动续期，不需要 client secret）
- *   2. GET  /accounts                                  → account_id
- *   3. GET  /accounts/:id/pages/projects/:name/upload-token
- *   4. POST /pages/assets/check-missing                → 只上传缺的
- *   5. POST /pages/assets/upload                       → 每个 bucket 一条 JSON 数组
- *   6. POST /pages/assets/upsert-hashes
- *   7. POST /accounts/:id/pages/projects/:name/deployments（multipart manifest）
+ * 认证二选一：
+ *   - 环境变量 CLOUDFLARE_API_TOKEN（CI 里用；需 Cloudflare Pages: Edit 权限）；
+ *   - 本机 wrangler 的 OAuth 凭据（没有上述变量时），过期自动续期
+ *     （复刻 wrangler 的上传流程，对照 workers-sdk 的 pages/upload.ts）。
+ *
+ * 上传流程（与 wrangler 一致）：
+ *   1. GET  /accounts                                  → account_id
+ *   2. GET  /accounts/:id/pages/projects/:name/upload-token
+ *   3. POST /pages/assets/check-missing                → 只上传缺的
+ *   4. POST /pages/assets/upload                       → 每个 bucket 一条 JSON 数组
+ *   5. POST /pages/assets/upsert-hashes
+ *   6. POST /accounts/:id/pages/projects/:name/deployments（multipart manifest）
  *
  * 用法：node scripts/deploy-pages.mjs [目录] [项目名] [分支]
  * 默认：dist-web / 5blong / main
@@ -145,8 +148,15 @@ async function refreshOAuth(config) {
   return { token: token.access_token, expiration };
 }
 
-/** 拿一个可用的 access token：没过期就直接用，过期就续期。 */
+/** 拿一个可用的 access token：
+ *  - CI 里设了 CLOUDFLARE_API_TOKEN（Pages: Edit 权限）就直接用；
+ *  - 本机没有该变量则走 wrangler OAuth 凭据（过期自动续期）。 */
 async function getToken() {
+  const envToken = process.env.CLOUDFLARE_API_TOKEN;
+  if (envToken) {
+    log("auth", "使用环境变量 CLOUDFLARE_API_TOKEN");
+    return envToken;
+  }
   const config = readWranglerConfig();
   const expiresAt = Date.parse(config.expirationTime);
   if (config.oauthToken && Number.isFinite(expiresAt) && expiresAt - Date.now() > 120_000) {
