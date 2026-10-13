@@ -3,6 +3,7 @@
 低延迟语音为核心的临时沟通工具。无需注册账号、无需选择服务器，**创建房间、复制邀请链接**即可开聊，适合朋友、团队和临时群组。
 
 * 公网地址（任何网络可开）：[https://5blong.pages.dev](https://5blong.pages.dev)
+* 源码仓库：[https://github.com/HeXiang96/5blong](https://github.com/HeXiang96/5blong)
 * 单房建议 2–6 人，最多 8 人；音频在参与者之间点对点（P2P）直连。
 * 全程 0 成本：信令用免费公共 PeerJS 云，NAT 穿透用免费公共 STUN，不需要任何付费服务。
 
@@ -78,19 +79,25 @@ https://5blong.pages.dev/#c=<房间码>&h=<房主ID>&k=<邀请密钥>
 
 `#` 之后的内容**不会随请求发给任何服务器**，邀请密钥只在你和拿到链接的人之间传递。
 
-### 方式二：桌面端（免安装便携版）
+### 方式二：桌面端（安装包，带自动更新）
 
-打包产物在 `dist-desktop/5blong-win-x64/`，双击 `5blong.exe` 即可；整包压缩件是
-`dist-desktop/5blong-win-x64.zip`。
+从 [GitHub Releases](https://github.com/HeXiang96/5blong/releases/latest) 下载
+`5blong_<版本>_x64-setup.exe` 双击安装（免管理员，装到当前用户目录）：
+
+* 安装包约 2.5 MB（与网页版共用系统 WebView2，不内置浏览器内核）；
+* 桌面快捷方式 + 开始菜单 + 系统托盘常驻；点右上角 × 隐藏到托盘、语音继续；
+* **自动更新**：启动后台静默检查新版本，发现后弹窗确认，一键下载安装并自动重启
+  （更新包经 minisign 签名校验，更新源就是本仓库的 Releases）；
+* 也可随时右键托盘图标点「检查更新」手动检查。
 
 开发时在 `piik` 目录运行：
 
 ```
-npm run electron        # 加载本地构建的页面
-npm run electron:dev    # 加载本地开发服务器（需先 npm run dev）
+npm run tauri dev      # 加载本地开发服务器（需先 npm run dev）
+npm run tauri build    # 本地出安装包（需配置签名环境变量，一般直接用 CI）
 ```
 
-桌面端会自动授予麦克风权限，不弹系统授权框。点右上角 × 不会退出，而是最小化到系统托盘、语音继续；右键托盘图标可显示窗口或退出，再次启动会聚焦已开窗口（单实例）。
+桌面端会自动授予麦克风权限，不弹系统授权框。再次启动会聚焦已开窗口（单实例）。
 
 ***
 

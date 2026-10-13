@@ -11,6 +11,7 @@
   },
   "scripts": {
     "dev": "vite",
+    "tauri": "tauri",
     "build": "npm run build:web:pages",
     "build:web:pages": "vite build --base ./ --outDir dist-web --emptyOutDir",
     "preview": "vite preview --outDir dist-web --host 127.0.0.1 --port 8787",
