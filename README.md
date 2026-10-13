@@ -235,26 +235,41 @@ if (!guest.joined && message.t !== "joined") return;
 
 * 在开源项目 **Piik（MIT）** 基础上二创，保留其版权声明；
 * 信令使用 **PeerJS 公共云**，媒体层是 **WebRTC P2P（全互联 mesh）**；
-* 前端：React 19 + Vite + TypeScript；桌面端：Electron；
-* 网页通过 Cloudflare Pages（Wrangler）托管；
+* 前端：React 19 + Vite + TypeScript；桌面端：**Tauri 2（Rust 壳 + 系统 WebView2）**，
+  安装包约 2.5 MB，与网页版共用同一份前端产物；
+* 网页通过 Cloudflare Pages（Wrangler）托管；桌面端由 **GitHub Actions 云出包**
+  （Windows runner 构建 NSIS 安装包并发布 Release）；
 * 协议核心（房间码、握手证明、准入裁决、消息校验）是**不依赖 DOM 的纯函数**，有独立单元测试。
 
 ## 开发者命令（在 `piik` 目录）
 
 ```
 npm install                 # 安装依赖
-npm run dev                 # 本地开发服务器
+npm run dev                 # 本地开发服务器（网页）
+npm run tauri dev           # 桌面端开发模式（自动起 dev 服务器 + Tauri 窗口）
 npm run typecheck           # 类型检查
-npm test                    # 单元测试
+npm test                    # 单元测试（102 项）
 npm run build:web:pages     # 构建静态网页到 dist-web
-npm run package:desktop     # 构建网页 + 打包 Windows 便携版
-npm run verify:desktop      # 校验打包产物完整性
-npm run smoke:desktop       # 启动打包产物做渲染自检（需要普通 Windows 会话）
-npm run deploy:pages        # 部署到 Cloudflare Pages（复用本机 wrangler 凭据）
+npm run tauri build         # 本地出桌面安装包（更新签名需要环境变量，一般直接用 CI）
+npm run deploy:pages        # 部署网页到 Cloudflare Pages（复用本机 wrangler 凭据）
 npm run status:pages        # 查看 Pages 部署状态
+npm run bump -- 1.0.2       # 发新版本：改版本号 → 提交 → 打 tag 推送（CI 自动出包发 Release）
 ```
 
-### 部署说明
+### 桌面端发布与自动更新
+
+* **云出包**：推 `app-v*` 标签（`npm run bump -- x.y.z` 一条命令搞定）触发
+  `.github/workflows/release.yml`，在 Windows runner 上构建 NSIS 安装包
+  （`5blong_x.y.z_x64-setup.exe`，免管理员）并发布到
+  [Releases](https://github.com/HeXiang96/5blong/releases)；
+* **自动更新**：安装包同时产出签名更新包（`.exe.zip + .sig`）与 `latest.json` 清单。
+  已安装的桌面端启动后静默检查（也可托盘右键「检查更新」），发现新版本弹窗确认，
+  下载 → minisign 签名校验 → 安装 → 自动重启，全程不需要打开浏览器；
+* **签名密钥**：更新包用 Tauri minisign 密钥签名，公钥写在 `src-tauri/tauri.conf.json`，
+  私钥保存在本机 `~/.tauri/5blong.key` 并存于仓库 Secrets（`TAURI_SIGNING_PRIVATE_KEY`）。
+  **私钥丢失将无法再发布可被旧版本识别的更新，请妥善备份**。
+
+### 网页部署说明
 
 `npm run deploy:pages` 直接调 Cloudflare API，不需要 wrangler/npm：
 
@@ -271,10 +286,6 @@ npm run status:pages        # 查看 Pages 部署状态
 > 该算法由 `src/shared/blake3.ts` 实现（部署脚本用等价的 `scripts/lib/blake3.mjs`），
 > 两者都由官方 BLAKE3 测试向量验证，见 `tests/blake3.test.ts`。
 
-> 打包脚本同样零依赖（没有 npm/npx/electron-builder 也能跑）：
-> `scripts/package-desktop.mjs` 复刻 Electron 的 `resources/app` 应用形式，
-> `scripts/zip-desktop.mjs` 用 `node:zlib` 手写 zip。
-
 ## 目录
 
 * `src/client/voice/`：5blong 前端
@@ -285,15 +296,19 @@ npm run status:pages        # 查看 Pages 部署状态
   * `use-voice.ts`：引擎与 React 之间的唯一桥接
   * `App.tsx` / `components/` / `styles.css`：界面
 * `src/shared/blake3.ts`：BLAKE3（部署资源指纹用），由官方向量测试
+* `src-tauri/`：桌面端 Tauri 壳（Rust）
+  * `src/lib.rs`：托盘常驻、单实例、点 × 隐藏驻留、WebView2 麦克风权限自动放行、
+    启动静默检查更新 + 托盘「检查更新」
+  * `tauri.conf.json`：窗口 / NSIS 打包 / 自动更新源（GitHub Releases `latest.json`）与公钥
+* `.github/workflows/release.yml`：云出包工作流（`app-v*` 标签触发，出安装包 + 签名更新包 + latest.json）
 * `tests/`：协议 / 握手 / 准入（`voice-protocol.test.ts`、`engine-join-handshake.test.ts`）、
   猪圈与小猪动画（`pen`）、说话检测（`voice-activity`）、定时器（`timers`）、
   `blake3.test.ts`（BLAKE3 5 项），当前合计 102 项
-* `electron/`：Electron 主进程（含 `VOX_SMOKE=1` 启动自检）
-* `scripts/`：`deploy-pages.mjs`（部署）、`package-desktop.mjs` / `zip-desktop.mjs` /
-  `verify-desktop.mjs` / `smoke-desktop.mjs`（桌面端打包与验证）、`pages-status.mjs`、`lib/blake3.mjs`
+* `scripts/`：`deploy-pages.mjs`（部署）、`pages-status.mjs`、`bump-version.mjs`（发版一键化）、
+  `probe-*`（历史诊断脚本）、`lib/blake3.mjs`
 * `public/`：图标与第三方许可（`index.html` 引用的 `/favicon.png`、`/icon-256.png` 来自这里）
-* `dist-web/`：静态网页产物；`dist-desktop/`：桌面端产物
+* `dist-web/`：静态网页产物（桌面端与网页共用，构建时生成，不入库）
 
 > 目录已清理：上游 Piik 的 Go 服务端、原生采集、官网、文档与 80 多个上游测试均已移除，
-> 只保留 5blong 实际使用的代码。上游的 MIT 许可证原文保留在 `LICENSE`，
-> 上游说明保留在 [README.piik.md](./README.piik.md)。
+> Electron 旧壳（约 155 MB 安装包）也已由 Tauri 替换并删除，历史可在 git 中查阅。
+> 上游的 MIT 许可证原文保留在 `LICENSE`，上游说明保留在 [README.piik.md](./README.piik.md)。
