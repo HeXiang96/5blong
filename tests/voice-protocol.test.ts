@@ -136,15 +136,15 @@ describe("invite link", () => {
   /*
    * 回归：邀请链接必须**永远**指向公开网址，不能跟着当前页面的地址走。
    *
-   * 桌面端的页面地址是 Electron 内部的 app://bundle/index.html。
+   * 桌面端窗口加载的是本地资源（tauri.localhost）。
    * 之前复制邀请是手拼 `${location.origin}${location.pathname}#...`，
-   * 在桌面端复制出来的是 `app://bundle/index.html#c=...`，
-   * 这个链接只有本机能打开，发给别人完全没用（实测就是这样）。
+   * 在桌面端复制出来的是本地地址开头的链接，
+   * 只有本机能打开，发给别人完全没用（实测就是这样）。
    */
   it("永远指向公开网址，不受当前页面地址影响", () => {
     const url = buildInviteUrl(invite);
     expect(url.startsWith("https://5blong.pages.dev/#")).toBe(true);
-    // 绝不能出现 Electron 的内部协议或本地路径
+    // 绝不能出现桌面壳的内部协议或本地路径
     expect(url).not.toContain("app://");
     expect(url).not.toContain("bundle");
     expect(url).not.toContain("index.html");

@@ -128,7 +128,7 @@
 **不要靠读代码猜。** 这个缺陷只能靠运行时打点定位（我用这套方法已经定位了三个前置 bug）：
 
 1. 起一个本地静态服务器伺服 `dist-web/`（不要用 `file://`）。
-2. 用 Electron 的 Chromium 开**两个真窗口**（宿主 + 访客）。
+2. 用 Chrome/Edge 开**两个真窗口**（宿主 + 访客）。
    在同一窗口里导航会把宿主的 peer 一起销毁，**测出来的是假象**。
 3. 通过 CDP 驱动：
    * 点「创建语音房」；
@@ -140,14 +140,6 @@
    把中间值 push 到 `window.__engine`，再用 CDP 读出来。
    注意压缩后变量名会变（例如 `if(n.t===\`joined\`)`），
    插桩前先 `indexOf` 确认真实写法，**不要照抄源码里的文本**。
-
-### 环境注意事项
-
-* **`ELECTRON_RUN_AS_NODE=1` 如果被设置**，任何 Electron 应用都会退化成纯 Node 运行
-  （表现是双击无反应、`require("electron")` 返回 undefined）。
-  启动前必须 `delete env.ELECTRON_RUN_AS_NODE`。
-* Electron 主进程在 Windows 上抓不到 stdout，自检结果请写文件（构建包里的
-  `VOX_SMOKE=1` 机制就是这么做的）。
 
 ---
 

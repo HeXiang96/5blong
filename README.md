@@ -7,9 +7,6 @@
 * 单房建议 2–6 人，最多 8 人；音频在参与者之间点对点（P2P）直连。
 * 全程 0 成本：信令用免费公共 PeerJS 云，NAT 穿透用免费公共 STUN，不需要任何付费服务。
 
-> 上游 Piik 的原始说明保留在 [README.piik.md](./README.piik.md)；
-> 上游源码已按你的要求从本目录清理，如需查阅请看上游仓库或 `README.piik.md`。
->
 > **✅ 前述缺陷已修复（2026-10-12）**：此前"访客用邀请链接能进房并看到房主，
 > 但房主看不到访客、访客约 12 秒后被断开"的问题，根因是 `onGuestData()` 里
 > `joined` 守卫顺序的死循环（catch-22），已修复并补充回归测试。
@@ -82,7 +79,9 @@ https://5blong.pages.dev/#c=<房间码>&h=<房主ID>&k=<邀请密钥>
 ### 方式二：桌面端（安装包，带自动更新）
 
 从 [GitHub Releases](https://github.com/HeXiang96/5blong/releases/latest) 下载
-`5blong_<版本>_x64-setup.exe` 双击安装（免管理员，装到当前用户目录）：
+`5blong_<版本>_x64-setup.exe` 双击安装（免管理员，装到当前用户目录）；
+GitHub 下载不通时用国内直链（与自动更新源同步，换成最新版本号即可）：
+`https://5blong.pages.dev/desktop/5blong_<版本>_x64-setup.exe`。
 
 * 安装包约 2.5 MB（与网页版共用系统 WebView2，不内置浏览器内核）；
 * 桌面快捷方式 + 开始菜单 + 系统托盘常驻；点右上角 × 隐藏到托盘、语音继续；
@@ -90,7 +89,7 @@ https://5blong.pages.dev/#c=<房间码>&h=<房主ID>&k=<邀请密钥>
   （更新包经 minisign 签名校验，更新源就是本仓库的 Releases）；
 * 也可随时右键托盘图标点「检查更新」手动检查。
 
-开发时在 `piik` 目录运行：
+开发时在项目根目录运行：
 
 ```
 npm run tauri dev      # 加载本地开发服务器（需先 npm run dev）
@@ -233,15 +232,15 @@ if (!guest.joined && message.t !== "joined") return;
 
 ## 技术说明
 
-* 在开源项目 **Piik（MIT）** 基础上二创，保留其版权声明；
 * 信令使用 **PeerJS 公共云**，媒体层是 **WebRTC P2P（全互联 mesh）**；
 * 前端：React 19 + Vite + TypeScript；桌面端：**Tauri 2（Rust 壳 + 系统 WebView2）**，
   安装包约 2.5 MB，与网页版共用同一份前端产物；
-* 网页通过 Cloudflare Pages（Wrangler）托管；桌面端由 **GitHub Actions 云出包**
-  （Windows runner 构建 NSIS 安装包并发布 Release）；
+* 网页通过 Cloudflare Pages（Wrangler）托管；桌面端由 **GitHub Actions 云出包**，
+  **自动更新源托管在 Cloudflare Pages 的 /desktop/ 路径**（与网页同域，国内可直连），
+  GitHub Releases 作为备源；
 * 协议核心（房间码、握手证明、准入裁决、消息校验）是**不依赖 DOM 的纯函数**，有独立单元测试。
 
-## 开发者命令（在 `piik` 目录）
+## 开发者命令
 
 ```
 npm install                 # 安装依赖
@@ -251,23 +250,34 @@ npm run typecheck           # 类型检查
 npm test                    # 单元测试（102 项）
 npm run build:web:pages     # 构建静态网页到 dist-web
 npm run tauri build         # 本地出桌面安装包（更新签名需要环境变量，一般直接用 CI）
-npm run deploy:pages        # 部署网页到 Cloudflare Pages（复用本机 wrangler 凭据）
+npm run deploy:pages        # 手动部署网页到 Cloudflare Pages（复用本机 wrangler 凭据）
+npm run publish:desktop     # 手动发布桌面端更新源到 Pages（CI 通常自动做，此为兜底）
 npm run status:pages        # 查看 Pages 部署状态
-npm run bump -- 1.0.2       # 发新版本：改版本号 → 提交 → 打 tag 推送（CI 自动出包发 Release）
+npm run bump -- 1.0.2       # 发新版本：改版本号 → 提交 → 打 tag 推送（CI 出包并自动发布到 Pages）
 ```
 
 ### 桌面端发布与自动更新
 
-* **云出包**：推 `app-v*` 标签（`npm run bump -- x.y.z` 一条命令搞定）触发
+* **云出包 + 自动发布（一条命令）**：推 `app-v*` 标签（`npm run bump -- x.y.z` 一条命令搞定）触发
   `.github/workflows/release.yml`，在 Windows runner 上构建 NSIS 安装包
-  （`5blong_x.y.z_x64-setup.exe`，免管理员）并发布到
-  [Releases](https://github.com/HeXiang96/5blong/releases)；
-* **自动更新**：安装包同时产出签名更新包（`.exe.zip + .sig`）与 `latest.json` 清单。
+  （`5blong_x.y.z_x64-setup.exe`，免管理员）发布到
+  [Releases](https://github.com/HeXiang96/5blong/releases)，**随后 CI 自动把更新源
+  发布到 Pages**——runner 直连 GitHub 和 Cloudflare，全程不需要本机挂代理；
+* **CI 自动发布的前置配置（一次性）**：GitHub 仓库 Secrets 里加 `CLOUDFLARE_API_TOKEN`，
+  取自 Cloudflare → My Profile → API Tokens → Create Custom Token，
+  权限选 **Account → Cloudflare Pages → Edit**；未配置时 CI 会跳过发布，
+  此时可本机手动跑 `npm run publish:desktop -- x.y.z`（需代理在线）；
+* **更新源顺序**：主源 `https://5blong.pages.dev/desktop/latest.json`（国内可直连），
+  备源 GitHub Releases（主源连不上时自动尝试）；
+* **自动更新**：安装包同时产出签名更新包（`.sig`）与 `latest.json` 清单。
   已安装的桌面端启动后静默检查（也可托盘右键「检查更新」），发现新版本弹窗确认，
   下载 → minisign 签名校验 → 安装 → 自动重启，全程不需要打开浏览器；
+  签名校验只针对安装包内容，与下载地址无关；
 * **签名密钥**：更新包用 Tauri minisign 密钥签名，公钥写在 `src-tauri/tauri.conf.json`，
   私钥保存在本机 `~/.tauri/5blong.key` 并存于仓库 Secrets（`TAURI_SIGNING_PRIVATE_KEY`）。
-  **私钥丢失将无法再发布可被旧版本识别的更新，请妥善备份**。
+  **私钥丢失将无法再发布可被旧版本识别的更新，请妥善备份**；
+* 注意：更新源列表写在安装包里——**只有 1.0.2 起的版本才知道 Pages 主源**。
+  1.0.0 / 1.0.1 客户端升级到 1.0.2 仍需走 GitHub 备源（本机需代理在线）一次。
 
 ### 网页部署说明
 
@@ -299,16 +309,12 @@ npm run bump -- 1.0.2       # 发新版本：改版本号 → 提交 → 打 tag
 * `src-tauri/`：桌面端 Tauri 壳（Rust）
   * `src/lib.rs`：托盘常驻、单实例、点 × 隐藏驻留、WebView2 麦克风权限自动放行、
     启动静默检查更新 + 托盘「检查更新」
-  * `tauri.conf.json`：窗口 / NSIS 打包 / 自动更新源（GitHub Releases `latest.json`）与公钥
+  * `tauri.conf.json`：窗口 / NSIS 打包 / 自动更新源（Pages 主源 + GitHub 备源）与公钥
 * `.github/workflows/release.yml`：云出包工作流（`app-v*` 标签触发，出安装包 + 签名更新包 + latest.json）
 * `tests/`：协议 / 握手 / 准入（`voice-protocol.test.ts`、`engine-join-handshake.test.ts`）、
   猪圈与小猪动画（`pen`）、说话检测（`voice-activity`）、定时器（`timers`）、
   `blake3.test.ts`（BLAKE3 5 项），当前合计 102 项
-* `scripts/`：`deploy-pages.mjs`（部署）、`pages-status.mjs`、`bump-version.mjs`（发版一键化）、
-  `probe-*`（历史诊断脚本）、`lib/blake3.mjs`
+* `scripts/`：`deploy-pages.mjs`（部署）、`publish-desktop.mjs`（桌面端更新源发布）、
+  `pages-status.mjs`、`bump-version.mjs`（发版一键化）、`lib/blake3.mjs`
 * `public/`：图标与第三方许可（`index.html` 引用的 `/favicon.png`、`/icon-256.png` 来自这里）
 * `dist-web/`：静态网页产物（桌面端与网页共用，构建时生成，不入库）
-
-> 目录已清理：上游 Piik 的 Go 服务端、原生采集、官网、文档与 80 多个上游测试均已移除，
-> Electron 旧壳（约 155 MB 安装包）也已由 Tauri 替换并删除，历史可在 git 中查阅。
-> 上游的 MIT 许可证原文保留在 `LICENSE`，上游说明保留在 [README.piik.md](./README.piik.md)。

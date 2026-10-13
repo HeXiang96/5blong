@@ -429,10 +429,8 @@ export function useVoice() {
     /*
      * 必须用 buildInviteUrl（它固定指向公开网址），**不能用 window.location**。
      *
-     * 桌面端的页面地址是 Electron 内部的 app://bundle/index.html，
-     * 按 window.location 拼出来的邀请链接是
-     *   app://bundle/index.html#c=...&h=...&k=...
-     * 这个地址只有本机能打开，别人收到完全没用（实测就是这样）。
+     * 桌面端窗口加载的是本地资源（tauri.localhost），不是公网地址，
+     * 按 window.location 拼出来的邀请链接只有本机能打开，别人收到完全没用。
      *
      * 之前这里是手拼的，和 protocol.ts 里的 buildInviteUrl 重复实现，
      * 于是改了公开地址那处、漏了这处。现在只保留唯一实现。

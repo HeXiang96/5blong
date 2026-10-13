@@ -18,6 +18,6 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true
   },
-  // 只包含本项目实际存在的配置与测试；上游 Piik 的 gate/工具脚本已移除。
+  // 只包含本项目实际存在的配置与测试。
   "include": ["../vite.config.ts", "../vitest.config.ts", "../tests"]
 }

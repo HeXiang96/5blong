@@ -34,6 +34,6 @@ tauri-plugin-updater = "2"
 tauri-plugin-dialog = "2"
 
 [target.'cfg(windows)'.dependencies]
-# WebView2：自动授予麦克风等媒体权限（对齐 Electron 的 setPermissionRequestHandler），
-# 避免系统权限条打断“开聊”。版本与 Tauri 内部使用的 webview2-com 保持一致。
+# WebView2：自动授予麦克风等媒体权限，避免系统权限条打断“开聊”。
+# 版本与 Tauri 内部使用的 webview2-com 保持一致。
 webview2-com = "0.39"

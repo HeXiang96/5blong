@@ -10,15 +10,11 @@
     <link rel="apple-touch-icon" href="/icon-256.png" />
     <title>5blong · 临时语音房</title>
     <script>
-      // 主题只认自己的键；旧版的 piik:ui-theme 作为一次性迁移来源读一次。
+      // 主题初始化：本地存储优先，否则跟随系统。
       var systemTheme = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
       var stored = null;
       try {
         stored = localStorage.getItem("5blong:theme");
-        if (!stored) {
-          var legacy = localStorage.getItem("piik:ui-theme");
-          if (legacy === "light" || legacy === "dark") stored = legacy;
-        }
       } catch (error) {}
       document.documentElement.dataset.theme =
         stored === "light" || stored === "dark" ? stored : systemTheme;
