@@ -1,6 +1,7 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./voice/App";
+import { UpdateOverlay } from "./voice/components/UpdateOverlay";
 /*
  * 样式按模块引入。
  *
@@ -21,5 +22,7 @@ if (!root) {
 createRoot(root).render(
   <StrictMode>
     <App />
+    {/* 桌面端更新进度（网页版自动不渲染） */}
+    <UpdateOverlay />
   </StrictMode>,
 );

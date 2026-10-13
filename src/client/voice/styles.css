@@ -520,8 +520,22 @@ select {
 
 .vx-landing {
   position: relative;
-  overflow: hidden;
+  /*
+   * 页面自己当滚动容器：内容超高时内部滚动，而不是整页滚出
+   * Windows 原生滚动条（截图里那条很难看）。滚动条隐藏但滚动保留。
+   */
+  height: 100dvh;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: none;
+  overscroll-behavior: contain;
   padding: 22px clamp(16px, 5vw, 48px) 40px;
+}
+
+.vx-landing::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
 }
 
 /*
@@ -535,6 +549,7 @@ select {
   align-self: flex-end;
   position: relative;
   z-index: 3;
+  flex-shrink: 0;
   width: min(268px, calc(100vw - 44px));
   margin: 20px clamp(16px, 5vw, 48px) 34px 0;
   transform: rotate(-1.6deg);
@@ -666,7 +681,8 @@ html[data-theme="dark"] /* 公告栏标题旁的小版本号：标明"最新更�
 .vx-landing-main {
   position: relative;
   z-index: 4;
-  flex: 1;
+  /* grow 但不 shrink：窗口够高时填满居中，不够高时保持自然高度触发滚动 */
+  flex: 1 0 auto;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -819,9 +835,15 @@ html[data-theme="dark"] .vx-identity .vx-link-btn:hover {
 /* 网页版首页的"下载 Windows 客户端"（桌面端隐藏，由 isDesktop 控制）。 */
 .vx-download {
   display: flex;
-  justify-content: center;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
   margin-top: 4px;
   width: 100%;
+}
+
+.vx-download .vx-btn {
+  white-space: nowrap;
 }
 
 .vx-download .vx-btn {
@@ -2483,3 +2505,136 @@ html[data-theme="light"][data-daypart="dusk"] .vx-settings {
   box-shadow: 0 10px 24px rgba(0, 0, 0, 0.3);
 }
 
+
+
+/*
+ * 矮窗口（客户端常见 700~800 高）收紧落地页间距：
+ * 尽量让"吉祥物 + 按钮 + 公告栏"一屏放下，滚动只作为兜底。
+ */
+@media (max-height: 860px) {
+  .vx-landing {
+    padding-top: 14px;
+    padding-bottom: 20px;
+  }
+
+  .vx-landing-main {
+    gap: 16px;
+    padding: 10px 0;
+  }
+
+  .vx-landing-mascot {
+    width: 96px;
+    height: 96px;
+  }
+
+  .vx-landing-board {
+    margin-top: 12px;
+    margin-bottom: 18px;
+  }
+}
+
+/* 下载按钮下的一行推荐说明（仅网页版显示） */
+.vx-download-note {
+  margin: 10px 0 0;
+  font-size: 12.5px;
+  line-height: 1.6;
+  text-align: center;
+  color: var(--vx-text-faint);
+  max-width: 420px;
+}
+
+.vx-download-note b {
+  color: var(--vx-text-dim);
+  font-weight: 650;
+}
+
+/* ------------------------------------------------- 桌面端更新进度覆盖层 */
+
+.vx-update-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(18, 13, 8, 0.55);
+  backdrop-filter: blur(3px);
+}
+
+.vx-update-card {
+  width: min(360px, calc(100vw - 48px));
+  padding: 22px 22px 18px;
+  border-radius: 14px;
+  border: 1px solid var(--vx-line);
+  background: var(--vx-surface);
+  box-shadow: 0 18px 46px rgba(0, 0, 0, 0.35);
+  text-align: center;
+}
+
+.vx-update-title {
+  display: block;
+  font-size: 15px;
+  letter-spacing: 0.02em;
+  color: var(--vx-text);
+  margin-bottom: 14px;
+}
+
+/* 跑道：底部是进度填充，小猪按进度往前跑（跑到头 = 下载完成） */
+.vx-update-track {
+  position: relative;
+  height: 12px;
+  margin: 34px 6px 0;
+  border-radius: 999px;
+  background: var(--vx-surface-2);
+  border: 1px solid var(--vx-line);
+}
+
+.vx-update-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--vx-accent), #e8b874);
+  transition: width 120ms linear;
+}
+
+.vx-update-pig {
+  position: absolute;
+  top: 50%;
+  width: 52px;
+  height: 52px;
+  /* 素材原生朝左，镜像成朝右；骑在跑道上 */
+  scale: -1 1;
+  translate: 50% -76%;
+  transition: left 120ms linear;
+  pointer-events: none;
+  filter: drop-shadow(0 4px 6px rgba(60, 38, 12, 0.28));
+}
+
+/* 拿不到总大小时：小猪来回冲刺，表示"还在下" */
+.vx-update-pig[data-indeterminate="1"] {
+  animation: vx-update-sprint 1.15s linear infinite;
+}
+
+@keyframes vx-update-sprint {
+  0% {
+    left: 3%;
+  }
+  100% {
+    left: 96%;
+  }
+}
+
+.vx-update-note {
+  margin: 12px 0 0;
+  font-size: 13px;
+  color: var(--vx-text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.vx-update-sub {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--vx-text-faint);
+}

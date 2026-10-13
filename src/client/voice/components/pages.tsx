@@ -190,10 +190,14 @@ export function LandingView({
               type="button"
               className="vx-btn vx-btn-ghost"
               onClick={startDownload}
-              title="下载 Windows 安装包（约 3.6 MB，免管理员安装，带自动更新）"
+              title="下载 Windows 安装包（约 7 MB，免管理员安装，带自动更新）"
             >
               <Download size={16} /> 下载 Windows 客户端
             </button>
+            <p className="vx-download-note">
+              <b>推荐装客户端</b>：内存与耗电更低、长时间挂机更稳更流畅，
+              支持托盘常驻、快捷静音与自动更新，聊天记录和设置也不会丢。
+            </p>
           </div>
         ) : null}
 

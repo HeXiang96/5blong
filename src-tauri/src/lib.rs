@@ -12,7 +12,7 @@
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Manager, WindowEvent,
+    Emitter, Manager, WindowEvent,
 };
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tauri_plugin_updater::UpdaterExt;
@@ -38,6 +38,20 @@ fn front_main(app: &tauri::AppHandle) -> Option<tauri::WebviewWindow> {
     window
 }
 
+/// 下载进度事件（发给前端画进度条）。
+#[derive(Clone, serde::Serialize)]
+struct UpdateProgress {
+    downloaded: u64,
+    total: Option<u64>,
+}
+
+/// 阶段事件：安装中 / 出错（下载中的阶段由进度事件隐含）。
+#[derive(Clone, serde::Serialize)]
+struct UpdatePhase {
+    phase: &'static str,
+    message: Option<String>,
+}
+
 /// 检查更新并询问安装（更新包来自 GitHub Releases，minisign 签名校验由插件完成）。
 ///
 /// `manual`：true 来自托盘「检查更新」，失败 / 已是最新都要弹窗告知；
@@ -55,7 +69,7 @@ fn check_for_update(app: tauri::AppHandle, manual: bool) {
                 let mut dialog = app
                     .dialog()
                     .message(format!(
-                        "发现新版本 v{}（当前 v{}），要立即下载并安装吗？\n\n更新自动进行，完成后 5blong 会自动重启。",
+                        "发现新版本 v{}（当前 v{}），要立即下载并安装吗？\n\n下载过程会显示进度，完成后 5blong 会自动重启。",
                         update.version, update.current_version
                     ))
                     .title("5blong 更新")
@@ -72,8 +86,54 @@ fn check_for_update(app: tauri::AppHandle, manual: bool) {
                 if !confirmed {
                     return;
                 }
-                // 进度回调留空：安装包只有几 MB，秒级完成，不值得再弹一层窗。
-                if let Err(e) = update.download_and_install(|_, _| {}, || {}).await {
+                /*
+                 * 下载/安装阶段给前端发进度事件（前端画进度条）。
+                 * 之前的回调是空的：7MB 的包在慢网下要等几十秒到几分钟，
+                 * 点完「立即更新」界面毫无反馈，用户不知道在干嘛——
+                 * 现在主窗口置前 + 进度条（已下载/总量/百分比），
+                 * 下载完切到"正在安装，马上自动重启"。
+                 */
+                // 下载/安装期间窗口置顶：进度框钉在界面最上层，
+                // 用户切到别的应用也能一眼看到更新进度。
+                if let Some(window) = front_main(&app) {
+                    let _ = window.set_always_on_top(true);
+                    let _ = window.set_focus();
+                }
+                let progress_app = app.clone();
+                let finish_app = app.clone();
+                let mut downloaded: u64 = 0;
+                let mut last_emit = std::time::Instant::now();
+                let result = update
+                    .download_and_install(
+                        move |chunk: usize, total: Option<u64>| {
+                            downloaded += chunk as u64;
+                            // 限流 ~8 次/秒，避免每几 KB 就发一条事件
+                            let done = total.map(|t| t > 0 && downloaded >= t).unwrap_or(false);
+                            if done || last_emit.elapsed().as_millis() >= 120 {
+                                last_emit = std::time::Instant::now();
+                                let _ = progress_app.emit(
+                                    "update:progress",
+                                    UpdateProgress { downloaded, total },
+                                );
+                            }
+                        },
+                        move || {
+                            let _ = finish_app.emit(
+                                "update:phase",
+                                UpdatePhase { phase: "installing", message: None },
+                            );
+                        },
+                    )
+                    .await;
+                if let Err(e) = result {
+                    let _ = app.emit(
+                        "update:phase",
+                        UpdatePhase { phase: "error", message: Some(e.to_string()) },
+                    );
+                    // 失败就把置顶恢复掉，别把窗口"钉"死在最前面
+                    if let Some(window) = front_main(&app) {
+                        let _ = window.set_always_on_top(false);
+                    }
                     update_message_blocking(&app, "更新失败", format!("下载或安装出错：{e}"));
                 } else {
                     // 不返回：重启进程，由 NSIS 安装完成后拉起新版本。
