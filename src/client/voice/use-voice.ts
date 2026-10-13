@@ -10,6 +10,7 @@ import {
 } from "./engine";
 import { loadIdentity, resolveDisplayNames, saveIdentity, type Identity } from "./identity";
 import { debugPoseFrom, eventTtl, pruneEvents, type PenEvent } from "./pen";
+import { clearPenPoses, setLatestPenPoses } from "./pen-follow";
 
 /**
  * 提示条停留多久（毫秒）。
@@ -79,6 +80,7 @@ export function useVoice() {
   const [deaf, setDeaf] = useState(false);
   /** 最近的小猪互动（带序号，超时自动移除）。 */
   const [interactions, setInteractions] = useState<{ key: number; event: InteractEvent }[]>([]);
+
   const interactSeq = useRef(0);
   /** 本机对各成员（按个人 ID）的投喂次数。 */
   const [feedCounts, setFeedCounts] = useState<Record<string, number>>(() =>
@@ -98,7 +100,7 @@ export function useVoice() {
    * 房主统一下发，所有端看到的是同一件事。
    */
   /**
-   * 调试用：`?pen=pose:eat` / `?pen=pose:poop` 直接摆出某个动作，方便人工看效果。
+   * 调试用：`?pen=pose:eat` 直接摆出吃菜动作，方便人工看效果。
    * 只在开发构建、或线上手动打开 `localStorage['5blong:debugPen']='1'` 时生效
    * （见 pen.ts 的 debugPoseFrom）——正式包里不能靠手输参数就改行为。
    * 用 ref 求值一次，且不能被 resetRoom 清掉，否则建房时就没了。
@@ -109,9 +111,7 @@ export function useVoice() {
       const pose = debugPoseFrom(location.search);
       if (!pose) return null;
       const now = Date.now();
-      return pose === "eat"
-        ? { kind: "eat", id: "debug-eat", ts: now, actor: "*", veg: "carrot" }
-        : { kind: "poop", id: "debug-poop", ts: now, actor: "*" };
+      return { kind: "eat", id: "debug-eat", ts: now, actor: "*", veg: "carrot" };
     })(),
   );
 
@@ -152,6 +152,7 @@ export function useVoice() {
     setRoomLocked(false);
     setDeaf(false);
     setInteractions([]);
+    clearPenPoses();
     setPenEvents(initialPenEvents());
     setStatus("idle");
   }, [initialPenEvents]);
@@ -185,6 +186,14 @@ export function useVoice() {
           ...pruneEvents(prev, now),
           { event, expiresAt: now + eventTtl(event) },
         ]);
+      },
+      /*
+       * 房主权威猪位（只有访客会收到）：写进模块级 store，各猪的
+       * 渲染循环按帧自取。**刻意不 setState**——50ms 一条快照要是每条
+       * 都触发 React 渲染，主线程会被拖垮（"动画很卡"的根因）。
+       */
+      penPoses: (poses) => {
+        setLatestPenPoses(poses);
       },
       // 提示音由引擎合成播放（房主统一广播，全房间同时响）
       sound: (event) => {
@@ -576,16 +585,21 @@ export function useVoice() {
     setNotice(null);
   }, []);
 
-  /** 猪把当前横向位置报给引擎，房主据此挑最近的猪去吃菜。 */
-  const reportPenActor = useCallback((id: string, x: number) => {
-    // 本地也记一份，用来把"那一坨"放在猪当时站的位置
+  /** 猪把当前位置报给引擎（横向 0~1 + 纵深 0~1），房主据此挑最近的猪去吃菜。 */
+  const reportPenActor = useCallback((id: string, x: number, lane: number) => {
+    // 本地也记一份，用来把蔬菜放在猪当时站的位置
     penPositionsRef.current.set(id, { x, at: Date.now() });
-    engineRef.current?.reportPenActor(id, x);
+    engineRef.current?.reportPenActor(id, x, lane);
   }, []);
 
   /** 取某头猪最近一次上报的位置；没有就返回 undefined 由界面兜底。 */
   const getPenPosition = useCallback((id: string): number | undefined => {
     return penPositionsRef.current.get(id)?.x;
+  }, []);
+
+  /** 取某头猪最近一次上报的纵深（0=最远 1=最近）。 */
+  const getPenLane = useCallback((id: string): number | undefined => {
+    return engineRef.current?.getPenLane(id);
   }, []);
 
   const displayNames = useMemo(
@@ -680,6 +694,7 @@ export function useVoice() {
     penEvents,
     reportPenActor,
     getPenPosition,
+    getPenLane,
     audioBlocked,
     mediaStates,
     resumeAudio,

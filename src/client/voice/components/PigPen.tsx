@@ -1,7 +1,6 @@
 import {
   useCallback,
   useEffect,
-  useId,
   useMemo,
   useRef,
   useState,
@@ -9,10 +8,26 @@ import {
   type MouseEvent,
 } from "react";
 
-import { EAT_APPROACH_MS, POOP_STRAIN_MS, clampToRange, type PenActionPhase } from "../pen";
+import { EAT_APPROACH_MS, FEET_MAX_VH, FEET_MIN_VH, clampToRange, feetViewportPx, type PenActionPhase } from "../pen";
 import type { MediaLinkState } from "../engine";
 import { INTERACT_KINDS, type InteractEvent, type InteractKind } from "../protocol";
-import { Pig } from "./Pig";
+import { daypartForHour, daypartOverride, type Daypart } from "../daypart";
+import { registerPenPoseReader, readPenSnapshots } from "../pen-registry";
+import { latestPenPose, registerPigFollower } from "../pen-follow";
+import pigJoinUrl from "../assets/pig-join.webp?url";
+import pigHoistUrl from "../assets/pig-hoist.webp?url";
+import pigRunUrl from "../assets/pig-run.webp?url";
+import pigWalkUrl from "../assets/pig-walk.webp?url";
+import pigIdleUrl from "../assets/pig-idle.webp?url";
+import pigDanceUrl from "../assets/pig-dance.webp?url";
+import pigSleepUrl from "../assets/pig-sleep.webp?url";
+import pigMunchUrl from "../assets/pig-munch.webp?url";
+import pigPatUrl from "../assets/pig-pat.webp?url";
+import pigBooUrl from "../assets/pig-boo.webp?url";
+import pigPokeUrl from "../assets/pig-poke.webp?url";
+import pigWaveUrl from "../assets/pig-wave.webp?url";
+import pigTickleUrl from "../assets/pig-tickle.webp?url";
+import pigCheerUrl from "../assets/pig-cheer.webp?url";
 
 /**
  * 整页猪圈。
@@ -53,16 +68,73 @@ export function useElementSize<T extends HTMLElement>() {
 }
 
 /**
+ * 当前光照时段（清晨/白天/傍晚/夜晚），按本地时钟每分钟刷新。
+ * `?daypart=` URL 参数可强制指定，方便开发时目检各时段场景。
+ * 除了挂到场景层（.vx-pen-frame），也挂到 <html> 上——浅色主题下
+ * UI 色板会跟着时段一起微调（styles.css 里按 html[data-daypart] 覆盖）。
+ */
+function useDaypart(): Daypart {
+  const compute = () => {
+    const forced = daypartOverride(window.location.search);
+    if (forced) return forced;
+    const now = new Date();
+    return daypartForHour(now.getHours() + now.getMinutes() / 60);
+  };
+  const [daypart, setDaypart] = useState<Daypart>(compute);
+  useEffect(() => {
+    const update = () => {
+      const value = compute();
+      setDaypart(value);
+      document.documentElement.dataset.daypart = value;
+    };
+    update();
+    const timer = window.setInterval(update, 60_000);
+    return () => window.clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return daypart;
+}
+
+/**
  * 场景背板。
  *
- * 围栏已撤掉，改成干净简洁的背景板（顶部天光、底部一点点地面暖色暗示），
- * 小猪直接在简洁背板上走动、吃食物；不再有四边木栏。
+ * 分层静帧插画（与落地页同一暖调）：天空渐变 → 太阳/云（夜晚换月亮星星）→
+ * 远山 → 近坡 → 走道草地。猪在草坡上走动。
+ * 配色由 CSS 按 `data-daypart`（清晨/白天/傍晚/夜晚，跟随本地时钟）与
+ * 深浅主题切换，这里只负责把层摆出来。
  */
 export function PenFrame({ width: _width = 0 }: { width?: number }) {
+  const daypart = useDaypart();
   return (
-    <div className="vx-pen-frame" aria-hidden="true">
+    <div className="vx-pen-frame" data-daypart={daypart} aria-hidden="true">
       <div className="vx-pen-frame-sky" />
-      <div className="vx-pen-frame-ground" />
+      <i className="vx-sun" />
+      <i className="vx-cloud vx-cloud-1" />
+      <i className="vx-cloud vx-cloud-2" />
+      <i className="vx-moon" />
+      <i className="vx-star vx-star-1" />
+      <i className="vx-star vx-star-2" />
+      <i className="vx-star vx-star-3" />
+      <i className="vx-star vx-star-4" />
+      <i className="vx-star vx-star-5" />
+      <svg
+        className="vx-pen-frame-hills"
+        viewBox="0 0 1000 300"
+        preserveAspectRatio="none"
+      >
+        <path
+          className="vx-hill vx-hill-far"
+          d="M0 132 C150 84 330 110 490 92 C670 72 840 102 1000 82 L1000 300 L0 300 Z"
+        />
+        <path
+          className="vx-hill vx-hill-mid"
+          d="M0 192 C190 148 410 178 620 158 C790 142 910 164 1000 150 L1000 300 L0 300 Z"
+        />
+        <path
+          className="vx-hill vx-hill-ground"
+          d="M0 238 C250 216 530 236 770 226 C880 221 950 226 1000 222 L1000 300 L0 300 Z"
+        />
+      </svg>
     </div>
   );
 }
@@ -193,19 +265,29 @@ export interface PigActorProps {
   /** 木牌上的小标记（房主 / 我 / 收听）。 */
   badges?: React.ReactNode;
   /** 正在吃 / 正在拉。 */
-  action?: "none" | "eat" | "poop";
+  action?: "none" | "eat";
   /** 动作进行到哪一段。 */
   phase?: PenActionPhase;
-  /** 要吃的那棵菜的横向位置（0~1）；没有就继续漫步。 */
-  targetX?: number;
-  /** 猪的跑道纵向比例（0=最远，1=最近），报给道具层对齐那一坨。 */
-  laneRatio?: number;
-  /** 把当前横向位置（0~1）报给引擎，房主据此挑最近的猪去吃菜。 */
-  onReportPosition?: (x: number) => void;
+  /** 要吃的那棵菜：横向位置（0~1）与落地高度（px，相对场地底边）。 */
+  targetX?: { x: number; bottomPx: number };
+  /** 猪的跑道纵向比例（0=最远，1=最近）——出生时的兜底值。 */
+  /** 把当前位置（横向 0~1、纵深 0~1）报给引擎，房主据此挑最近的猪去吃菜。 */
+  onReportPosition?: (x: number, lane: number) => void;
   /** 与该成员的媒体连接状态（本地自己不传，不显示）。 */
   mediaState?: MediaLinkState;
   /** 最近一次冲着这头猪来的互动（戳/打招呼/投喂）。 */
   reaction?: InteractEvent;
+  /** 该成员第一次出现在名册的时刻（本地毫秒）。入圈时播"天降吊猪"动画。 */
+  entryAt?: number;
+  /** 这头猪被投喂过的次数（本地视角）：喂得越多体型越大一点点。 */
+  feedCount?: number;
+  /**
+   * 访客端：跟随房主权威位置渲染（数据从 pen-follow store 按帧读取，
+   * 刻意不走 React state——50ms 一条快照 setState 会把主线程拖垮）。
+   */
+  followEnabled?: boolean;
+  /** 成员 id：猪位快照注册表的键（房主后台广播用）。 */
+  actorId: string;
 }
 
 const NETWORK_TITLE: Record<MediaLinkState, string> = {
@@ -225,10 +307,32 @@ const BUBBLE_TEXT: Record<InteractKind, string> = {
   hug: "抱抱",
   boo: "！！",
   cheer: "耶~",
+  hoist: "哇啊～",
+};
+
+/**
+ * 各互动对应的精灵素材。
+ * 抱抱暂时借用"被摸"、投喂借用"撒花"的动画，后续有专属素材再换。
+ */
+const REACT_SRC: Partial<Record<InteractKind, string>> = {
+  poke: pigPokeUrl,
+  wave: pigWaveUrl,
+  tickle: pigTickleUrl,
+  pat: pigPatUrl,
+  boo: pigBooUrl,
+  cheer: pigCheerUrl,
+  hug: pigPatUrl,
+  feed: pigCheerUrl,
 };
 
 /** 互动时加在猪身上的动作 class，用全量移除保证连续触发也能重播。 */
 const REACT_CLASSES = INTERACT_KINDS.map((kind) => `vx-pig-react-${kind}`).join(" ");
+
+/**
+ * 新成员"空降入圈"动画的总时长：精灵是"伞张开悬停"循环，
+ * 下落由 CSS 演（2.1s 垂降 + 落地轻弹），这里多留一点缓冲。
+ */
+export const ENTRY_TOTAL_MS = 2_400;
 
 /** 一头会走、会走过去吃、会拉完闻一闻的小猪。 */
 export function PigActor({
@@ -236,53 +340,49 @@ export function PigActor({
   total,
   stageWidth,
   stageHeight,
-  color,
+  actorId,
   speaking,
   sleeping,
   deafened = false,
-  isHost,
   onSelect,
   label,
   badges,
   action = "none",
   phase = "none",
   targetX,
-  laneRatio = 0.5,
   onReportPosition,
   mediaState,
   reaction,
+  entryAt,
+  feedCount = 0,
+  followEnabled = false,
 }: PigActorProps) {
   const crowd = total > 5 ? 0.68 : total > 3 ? 0.8 : total > 1 ? 0.92 : 1;
-  const size = Math.round((isHost ? 132 : 88) * crowd);
+  /*
+   * 全员默认同一体型（112px 基准）；被投喂多了会长大一点点：
+   * 每次 +0.8%、封顶 12 次（+9.6%），最大 ≈123px，不会变成巨猪。
+   */
+  const feedGrowth = 1 + Math.min(feedCount, 12) * 0.008;
+  const size = Math.round(112 * crowd * feedGrowth);
   const half = size / 2;
 
-  // 活动范围：左右各留 40px 给木栏，右端再多留半只猪，走到头也不会被切掉。
+  /*
+   * 自由漫步的活动范围：横向左右各留 40px；纵向从贴地 14px 到场地上部
+   * ——四面八方都能走，不再锁死在固定跑道上。
+   */
   const leftLimit = 40;
   const rightLimit = Math.max(leftLimit, stageWidth - 40 - size);
-  /*
-   * 猪可以在整片场地上走（不再只占左侧）：
-   * 单人提示浮在场地中间偏上，猪走的是下半部分的跑道，两者本来就错开。
-   */
   const roamMax = rightLimit;
 
-  // 跑道
+  /*
+   * 跑道参数只作为**出生兜底**：真正的出生点是随机的（见漫步 effect），
+   * 阴影浓淡（深度感）也先按出生兜底给个初值。
+   */
   const groundTop = Math.round(stageHeight * 0.13);
   const groundHeight = Math.max(size + 8, stageHeight - groundTop - 8);
-  /*
-   * 猪要在整片泥地上活动，不能都贴着下栏走。
-   * 跑道数由体型决定（通常 3 条）；人少时**不减少跑道**，只把猪分配到
-   * 不同的跑道上，这样单只猪也站在场地中间而不是贴着下栏。
-   */
   const lanes = Math.max(1, Math.min(3, Math.floor(groundHeight / (size * 0.78)) || 1));
   const laneSpan = Math.max(0, groundHeight - size - 26);
   const laneCount = Math.max(1, lanes - 1);
-  /*
-   * 跑道分配：
-   * - 单人（空房等待）时让猪贴最下面那条跑道、横向在场地中央漫步，
-   *   中上部完整留给"圈里只有你一头"提示块，二者在垂直方向彻底不重叠
-   *   （运行时自检曾测到猪站立时顶到提示按钮 6px）。
-   * - 多人时按序铺开到底、中、上跑道。
-   */
   const lane = total <= 1 ? 0 : index % lanes;
   const depth = lanes === 1 ? 1 : 0.8 + (lane / laneCount) * 0.2;
   const laneBottom =
@@ -291,15 +391,79 @@ export function PigActor({
   const walkerRef = useRef<HTMLDivElement | null>(null);
   const flipRef = useRef<HTMLDivElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
-  /** 猪此刻的横向位置（px，相对场地左边缘）——由采样持续更新。 */
+  /** 猪此刻的位置（px，相对场地左/下边缘）——由采样持续更新。 */
   const livePosRef = useRef(leftLimit);
+  const liveBottomRef = useRef(laneBottom);
   /** 每趟漫步的起点，仅用于决定往哪边走。 */
   const posRef = useRef(leftLimit);
+  /** 出生点是否已经随机化过（场地尺寸就绪后一次性随机）。 */
+  const spawnedRef = useRef(false);
+  /** 朝向（1=面右 -1=面左）：只用于翻转视觉。 */
+  const facingRef = useRef<1 | -1>(1);
+  /** 当前走位动画的解析参数（供后台快照用，见 pen-registry）。 */
+  const segRef = useRef<{ fromX: number; fromB: number; toX: number; toB: number; player: Animation } | null>(null);
   const playerRef = useRef<Animation | null>(null);
+  /** 统一设置朝向：翻转视觉 + 记录给上报。 */
+  const setFacing = useCallback((facingLeft: boolean) => {
+    facingRef.current = facingLeft ? -1 : 1;
+    if (flipRef.current) {
+      flipRef.current.style.scale = facingLeft ? "-1 1" : "1 1";
+      flipRef.current.classList.toggle("vx-pig-flip-l", facingLeft);
+    }
+  }, []);
+
+  /**
+   * 视口脚部带（stage 相对 bottom 的上下限）。
+   * 草坡背景是 fixed 到视口的，所以纵深必须按**视口**归一：
+   * 猪脚只允许落在视口高度的 [FEET_MIN_VH, FEET_MAX_VH] 区间内——
+   * 任何分辨率下都不会再"走到天上"，而且同一 lane 在任何窗口里
+   * 都落在同一视口高度（跨端同步的基础）。
+   */
+  const feetRange = useCallback((): { min: number; max: number } => {
+    const slot = stageRef.current;
+    const root = (slot?.closest(".vx-stage") ?? slot) as HTMLElement | null;
+    const ih = typeof window !== "undefined" ? window.innerHeight : 800;
+    if (!root) return { min: 14, max: Math.max(140, stageHeight * 0.52) };
+    const rootRect = root.getBoundingClientRect();
+    const min = rootRect.bottom - ih * (1 - FEET_MIN_VH);
+    const max = Math.min(rootRect.height - size - 6, rootRect.bottom - ih * (1 - FEET_MAX_VH));
+    return { min: Math.max(8, min), max: Math.max(min + 8, max) };
+  }, [stageHeight, size]);
+
+  /** 其他猪的实时中心点（舞台 px）——出生/选点的互斥距离检查用。 */
+  const otherCenters = useCallback((): Array<{ x: number; b: number }> => {
+    const width = stageWidthRef.current;
+    if (width <= 0) return [];
+    const feet = feetRange();
+    const out: Array<{ x: number; b: number }> = [];
+    for (const [id, snap] of readPenSnapshots()) {
+      if (id === actorId) continue;
+      out.push({
+        x: snap.x * width,
+        b: feet.min + snap.lane * (feet.max - feet.min),
+      });
+    }
+    return out;
+  }, [actorId, feetRange]);
+
+  /** 出生点：随机 + 与其他猪保持距离（ rejection sampling，最多试 14 次）。 */
+  const pickSpreadSpawn = useCallback((): { x: number; b: number } => {
+    const cfg = cfgRef.current;
+    const feet = feetRange();
+    const others = otherCenters();
+    const randX = () => cfg.leftLimit + Math.random() * Math.max(1, cfg.roamMax - cfg.leftLimit);
+    const randB = () => feet.min + Math.random() * Math.max(1, feet.max - feet.min);
+    for (let i = 0; i < 14; i += 1) {
+      const x = randX();
+      const b = randB();
+      if (others.every((o) => Math.hypot(o.x - x, (o.b - b) * 1.6) >= 150)) return { x, b };
+    }
+    return { x: randX(), b: randB() };
+  }, [otherCenters, feetRange]);
   /** 上报回调放进 ref：避免它变化导致采样/动画重启。 */
   const onReportPositionRef = useRef(onReportPosition);
   onReportPositionRef.current = onReportPosition;
-  /** 空闲漫步：走到端点后歇一会儿再往回走。 */
+  /** 空闲漫步：走到目标点后歇一会儿再挑下一个目标。 */
   const [restKey, setRestKey] = useState(0);
   /**
    * 会随布局/成员变化的值统一放 ref：
@@ -308,16 +472,57 @@ export function PigActor({
    */
   const stageWidthRef = useRef(stageWidth);
   stageWidthRef.current = stageWidth;
-  const cfgRef = useRef({ leftLimit, roamMax, rightLimit, half, stageWidth, durationMs: 0 });
-  cfgRef.current = { leftLimit, roamMax, rightLimit, half, stageWidth, durationMs: 0 };
-
-  const uid = useId().replace(/[^a-zA-Z0-9]/g, "");
+  const cfgRef = useRef({
+    leftLimit,
+    roamMax,
+    rightLimit,
+    half,
+    stageWidth,
+  });
+  cfgRef.current = { leftLimit, roamMax, rightLimit, half, stageWidth };
 
   const busy = action !== "none";
-  const walking = !speaking && !sleeping && !busy;
+
+  /*
+   * 新成员吊装入圈：entryAt 起 ENTRY_TOTAL_MS 内播放
+   * "吊绳下放 → 落地打个滚"，期间不漫步、不蹦迪（纯 CSS 双段动画，
+   * JS 只负责到点把 entering 撤掉）。
+   */
+  const [entering, setEntering] = useState(
+    () => entryAt !== undefined && Date.now() - entryAt < ENTRY_TOTAL_MS,
+  );
+  useEffect(() => {
+    if (entryAt === undefined) {
+      setEntering(false);
+      return;
+    }
+    const remain = ENTRY_TOTAL_MS - (Date.now() - entryAt);
+    if (remain <= 0) {
+      setEntering(false);
+      return;
+    }
+    setEntering(true);
+    const timer = window.setTimeout(() => setEntering(false), remain);
+    return () => window.clearTimeout(timer);
+  }, [entryAt]);
+
+  /*
+   * 互动反应窗口内（约 3.2s）猪停下当前活动做反应：
+   * 否则漫步/说话/睡觉的动画类会和反应/吊起动画在同一元素上打架
+   * （同一个 transform/animation 属性只能有一份）。
+   */
+  const reacting = Boolean(reaction);
+  /*
+   * 访客端的猪跟随房主权威位置：不本地漫步，走位由 rAF 插值循环驱动。
+   * （房主端 followEnabled=false，一切照旧。）
+   */
+  const following = followEnabled;
+  const walking = !speaking && !sleeping && !busy && !entering && !reacting && !following;
   // 吃 / 拉优先于说话，否则侧面那套动作会被正面姿态顶掉
   // 闭听的猪仍是侧躺睡觉姿态（戴耳罩），不正面、不讲话。
-  const frontPose = speaking && !busy;
+  const frontPose = speaking && !busy && !entering && !reacting;
+  /** 跟随模式下"正在移动"（用来播走路素材）。 */
+  const [remoteMoving, setRemoteMoving] = useState(false);
 
   const bumpRef = useRef<HTMLDivElement | null>(null);
   // 收到互动时给猪加对应的动作 class（移除再重加，强制重播动画）。
@@ -330,30 +535,105 @@ export function PigActor({
   }, [reaction]);
 
   /*
-   * 走动过程中**持续采样真实位置**。
+   * 走动过程中**持续采样真实位置**（横向 + 纵深）。
    *
    * 为什么必须采样而不是停下时去读：
    * - `walker.style.left` 是 Web Animations 的**起点值**，动画不会改写 inline style，
    *   所以读它永远是这趟的起点（上一版就是这么错的，等于没修）；
    * - 用 `getComputedStyle` 去读动画中的值又受"取消后填充帧还在不在"影响，不可靠。
    *
-   * 采样值同时供两个用途：停下时把位置钉住、以及上报给房主挑最近的猪去吃菜。
+   * 采样值同时供两个用途：停下时把位置钉住、以及上报（横向 0~1 + 纵深 0~1，
+   * 房主据此挑最近的猪去吃菜）。
    */
   const samplePosition = useCallback(() => {
     const walker = walkerRef.current;
-    const stage = stageRef.current;
-    if (!walker || !stage) return;
-    const stageRect = stage.getBoundingClientRect();
-    if (stageRect.width <= 0) return;
+    const slot = stageRef.current;
+    if (!walker || !slot) return;
+    /*
+     * 注意量测基准：
+     * - slot 是猪的小格子（121px），walker 的 left 是"槽内坐标"（动画/边界用它）；
+     * - 上报给引擎的百分比必须按**真正的舞台**（.vx-stage）归一化——
+     *   历史上这里错用了小格子宽度，横向百分比全被 clamp 成 1.0
+     *   （表现为"投喂的菜永远落在最右边/同一处"）。
+     */
+    const root = slot.closest(".vx-stage") ?? slot;
+    const rootRect = root.getBoundingClientRect();
+    const slotRect = slot.getBoundingClientRect();
+    if (rootRect.width <= 0) return;
     const rect = walker.getBoundingClientRect();
     const { leftLimit: lo, roamMax: hi } = cfgRef.current;
-    const px = clampToRange(rect.left - stageRect.left, lo, hi);
+    const feetBand = feetRange();
+    const px = clampToRange(rect.left - slotRect.left, lo, hi);
     livePosRef.current = px;
-    onReportPositionRef.current?.(Math.min(1, Math.max(0, (px + rect.width / 2) / stageRect.width)));
+    liveBottomRef.current = clampToRange(rootRect.bottom - rect.bottom, feetBand.min, feetBand.max);
+    /*
+     * lane 按**视口**归一（不是舞台）：草坡背景 fixed 在视口上，
+     * 同一 lane 在任何窗口高度都落在同一视口高度——跨分辨率同步的基础。
+     */
+    const ih = typeof window !== "undefined" ? window.innerHeight : 800;
+    const feet = ih - rect.bottom;
+    const band = (FEET_MAX_VH - FEET_MIN_VH) * ih;
+    const lane = band > 0 ? Math.min(1, Math.max(0, (feet - FEET_MIN_VH * ih) / band)) : 0.5;
+    onReportPositionRef.current?.(
+      Math.min(1, Math.max(0, (rect.left - rootRect.left + rect.width / 2) / rootRect.width)),
+      lane,
+    );
+  }, [feetRange]);
+
+  /**
+   * 位置快照（不依赖 rAF）：直接量 DOM 矩形。
+   * 猪的走位动画跑的是 left/bottom（主线程布局属性），
+   * getBoundingClientRect 在后台标签页里也是准的——房主切后台时
+   * 广播出去的坐标不会冻结（否则全房跟着卡住）。
+   */
+  const snapshotPose = useCallback((): { x: number; lane: number } | null => {
+    const walker = walkerRef.current;
+    const slot = stageRef.current;
+    if (!walker || !slot) return null;
+    const root = slot.closest(".vx-stage") ?? slot;
+    const rootRect = root.getBoundingClientRect();
+    if (rootRect.width <= 0) return null;
+    /*
+     * 房主广播热路径：走位动画在跑时**解析式**算位置（动画起点/终点 +
+     * currentTime），不逐帧量 DOM（50ms × 8 头猪的强制布局也是负担）。
+     * 动画不在跑（待机/停下）时才落到下面的矩形量测。
+     */
+    const seg = segRef.current;
+    if (seg && seg.player.playState === "running") {
+      const timing = seg.player.effect?.getComputedTiming();
+      const duration = typeof timing?.duration === "number" ? timing.duration : 0;
+      const t =
+        duration > 0 ? Math.min(1, Math.max(0, Number(seg.player.currentTime ?? 0) / duration)) : 1;
+      const slotRect = slot.getBoundingClientRect();
+      const leftPx = seg.fromX + (seg.toX - seg.fromX) * t + (slotRect.left - rootRect.left);
+      const bottomPx =
+        seg.fromB + (seg.toB - seg.fromB) * t + (rootRect.bottom - slotRect.bottom);
+      const x = Math.min(1, Math.max(0, (leftPx + cfgRef.current.half) / rootRect.width));
+      const ih = typeof window !== "undefined" ? window.innerHeight : 800;
+      const feet = ih - (rootRect.bottom - bottomPx);
+      const band = (FEET_MAX_VH - FEET_MIN_VH) * ih;
+      const lane = band > 0 ? Math.min(1, Math.max(0, (feet - FEET_MIN_VH * ih) / band)) : 0.5;
+      return { x, lane };
+    }
+    const rect = walker.getBoundingClientRect();
+    const x = Math.min(
+      1,
+      Math.max(0, (rect.left - rootRect.left + rect.width / 2) / rootRect.width),
+    );
+    const ih = typeof window !== "undefined" ? window.innerHeight : 800;
+    const feet = ih - rect.bottom;
+    const band = (FEET_MAX_VH - FEET_MIN_VH) * ih;
+    const lane = band > 0 ? Math.min(1, Math.max(0, (feet - FEET_MIN_VH * ih) / band)) : 0.5;
+    return { x, lane };
   }, []);
 
-  // 走动时高频采样（每帧），停下/说话时也采一次，保证最后一帧是准的
+  // 注册到快照表：房主广播（含后台标签页）从这里取实时位置
+  useEffect(() => registerPenPoseReader(actorId, snapshotPose), [actorId, snapshotPose]);
+
+  // 走动时高频采样（每帧），停下/说话时也采一次，保证最后一帧是准的。
+  // 访客端跳过：走位由 rAF 插值循环直接维护，无需再量 DOM。
   useEffect(() => {
+    if (following) return;
     let raf = 0;
     const loop = () => {
       samplePosition();
@@ -361,7 +641,7 @@ export function PigActor({
     };
     raf = window.requestAnimationFrame(loop);
     return () => window.cancelAnimationFrame(raf);
-  }, [samplePosition]);
+  }, [samplePosition, following]);
 
   /*
    * 从"正在走动"切到"停下"时，把**采样到的真实位置**钉住。
@@ -378,63 +658,208 @@ export function PigActor({
 
     playerRef.current?.cancel();
     playerRef.current = null;
+    segRef.current = null;
     // 用采样值（最后一帧的真实位置），而不是可能已失效的样式读数
-    const settled = clampToRange(livePosRef.current, cfgRef.current.leftLimit, cfgRef.current.roamMax);
-    posRef.current = settled;
-    livePosRef.current = settled;
-    walker.style.left = `${settled}px`;
+    const settledX = clampToRange(livePosRef.current, cfgRef.current.leftLimit, cfgRef.current.roamMax);
+    const feet = feetRange();
+    const settledB = clampToRange(liveBottomRef.current, feet.min, feet.max);
+    posRef.current = settledX;
+    livePosRef.current = settledX;
+    liveBottomRef.current = settledB;
+    walker.style.left = `${settledX}px`;
+    walker.style.bottom = `${settledB}px`;
   }, [walking]);
 
+  /**
+   * 出生点零散化：场地尺寸就绪后**随机落位一次**（不依赖是否在走——
+   * 空降入场也要落在随机点，落地后就在这个点开始活动）。
+   * 跟随模式（访客端）则用房主的第一帧权威位置当出生点——空降落在
+   * 全房一致的位置上。
+   */
+  useEffect(() => {
+    const walker = walkerRef.current;
+    if (spawnedRef.current || !walker || stageWidth <= 0) return;
+    if (following) return; // 跟随模式的首帧落位由 rAF 插值循环负责
+    const { x, b } = pickSpreadSpawn();
+    spawnedRef.current = true;
+    livePosRef.current = x;
+    liveBottomRef.current = b;
+    posRef.current = x;
+    walker.style.left = `${x}px`;
+    walker.style.bottom = `${b}px`;
+  }, [stageWidth, following, pickSpreadSpawn]);
+
   /*
-   * 空闲漫步：在活动范围里往返。
+   * 房主权威位置的平滑跟随（访客端）。
    *
-   * 关键：**起点永远取采样到的当前位置**，而不是"上一趟的起点"。
-   * 之前只在"走→停"跳变时把位置写回 posRef，而 effect 因依赖变化自己重跑
-   * （例如 resizable 的场地宽度、歇息计时器）并不会产生这种跳变，
-   * 于是 from 一直是旧值、to 又按中点规则算回同一点，distance≈0，
-   * 结果就是 animation 被 cancel 后再也起不来、猪卡在起点（实测抓到的就是这样）。
+   * - 数据：pen-follow store 按需读取（不进 React，避免 20Hz 渲染风暴）；
+   * - 推进：统一走 pen-follow 的共享推进器——前台 rAF 每帧、后台
+   *   Worker 计时器 100ms 小步（后台不节流），回来不跳变；
+   * - 平滑：指数逼近，时间常数 ≈170ms。广播 600ms 一条，
+   *   这个常数让猪始终"在路上"，看起来是连续散步而不是一格一格挪。
    *
-   * 现在每次重跑都用 livePosRef 当前值作为起点，顺便把它同步进 posRef。
+   * ⚠ 分工（不会与"分散算法"冲突，别在这里加走位随机）：
+   * - 房主端：分散算法产生权威位置并广播，**从不 follow**；
+   * - 访客端：只 follow，本地漫步/分散算法整体被 !following 关掉。
+   */
+  /** 空降入场期间先别被跟随推进器挪走（落地后自然接上）。 */
+  const enteringForFollowRef = useRef(entering);
+  enteringForFollowRef.current = entering;
+  const followStateRef = useRef({
+    last: 0,
+    moving: false,
+    facingDir: 1 as 1 | -1,
+    facingAt: 0,
+  });
+  const rootCacheRef = useRef<{ rect: DOMRect | null; at: number }>({ rect: null, at: 0 });
+
+  const stepFollow = useCallback(
+    (now: number) => {
+      const walker = walkerRef.current;
+      if (!walker || enteringForFollowRef.current) return;
+      const pose = latestPenPose(actorId);
+      if (!pose) return;
+      const cfg = cfgRef.current;
+      const state = followStateRef.current;
+      const dt = state.last > 0 ? Math.min(200, Math.max(8, now - state.last)) : 16;
+      state.last = now;
+
+      // 舞台几何缓存 1s 一刷新（窗口 resize 会触发重渲染 + effect 重启）
+      const cache = rootCacheRef.current;
+      if (!cache.rect || now - cache.at > 1000) {
+        const root = (stageRef.current?.closest(".vx-stage") ??
+          stageRef.current) as HTMLElement | null;
+        rootCacheRef.current = { rect: root ? root.getBoundingClientRect() : null, at: now };
+      }
+      const rootRect = rootCacheRef.current.rect;
+      if (!rootRect) return;
+      const ih = window.innerHeight;
+      const gap = ih - rootRect.bottom;
+      const feet = feetRange();
+      const desiredX = clampToRange(pose.x * cfg.stageWidth - cfg.half, cfg.leftLimit, cfg.roamMax);
+      const desiredB = clampToRange(feetViewportPx(pose.lane, ih) - gap, feet.min, feet.max);
+
+      // 首帧：直接落在权威位置上（空降入场也从这个点落）
+      if (!spawnedRef.current) {
+        spawnedRef.current = true;
+        livePosRef.current = desiredX;
+        liveBottomRef.current = desiredB;
+        posRef.current = desiredX;
+        walker.style.left = `${desiredX}px`;
+        walker.style.bottom = `${desiredB}px`;
+        return;
+      }
+
+      let curX = livePosRef.current;
+      let curB = liveBottomRef.current;
+      const dist = Math.hypot(desiredX - curX, desiredB - curB);
+      const dxBefore = desiredX - curX;
+      if (dist > 320) {
+        // 极端跳变（长时间后台 + 广播间断）：吸附，别冲刺
+        curX = desiredX;
+        curB = desiredB;
+      } else if (dist > 0.4) {
+        const k = 1 - Math.exp(-dt / 170);
+        curX += (desiredX - curX) * k;
+        curB += (desiredB - curB) * k;
+      }
+      livePosRef.current = curX;
+      liveBottomRef.current = curB;
+      posRef.current = curX;
+      walker.style.left = `${curX}px`;
+      walker.style.bottom = `${curB}px`;
+
+      /*
+       * 朝向：带迟滞。微小位移里的噪声不能让猪"倒着走"：
+       * 位移超过 4px、且距上次翻转 ≥300ms，才认这个方向。
+       */
+      const movingNow = dist > 3.5;
+      if (movingNow) {
+        const dir: 1 | -1 = dxBefore > 0 ? 1 : -1;
+        if (dir !== state.facingDir && Math.abs(dxBefore) > 4 && now - state.facingAt > 300) {
+          state.facingDir = dir;
+          state.facingAt = now;
+          setFacing(dir === -1);
+        }
+      }
+      if (movingNow !== state.moving) {
+        state.moving = movingNow;
+        setRemoteMoving(movingNow);
+      }
+    },
+    [actorId, setFacing, feetRange],
+  );
+
+  useEffect(() => {
+    if (!following || stageWidth <= 0) return;
+    followStateRef.current.last = 0;
+    return registerPigFollower(actorId, stepFollow);
+  }, [following, stageWidth, actorId, stepFollow]);
+
+  /*
+   * 自由漫步：每次随机挑一个离当前位置足够远的点（四面八方都可能），
+   * 两段坐标（left / bottom）一起线性挪过去，到了就地歇一会儿再挑下一个。
+   *
+   * 关键：**起点永远取采样到的当前位置**——动画被 cancel 后读样式
+   * 只能读到旧起点（历史 bug），采样循环维护的 live 值才是真相。
    */
   useEffect(() => {
     const walker = walkerRef.current;
     if (!walker || !walking || stageWidthRef.current <= 0) return;
 
     const { leftLimit: lo, roamMax: hi } = cfgRef.current;
-    // 以"此刻真实站的地方"为起点
-    const from = clampToRange(livePosRef.current, lo, hi);
-    posRef.current = from;
-    const to =
-      Math.abs(from - lo) < 4 ? hi : Math.abs(from - hi) < 4 ? lo : from < (lo + hi) / 2 ? hi : lo;
-    const distance = Math.abs(to - from);
+    const { min: bLo, max: bHi } = feetRange();
+    // 以"此刻真实站的地方"为起点（空降落地后就是落点）
+    const fromX = clampToRange(livePosRef.current, lo, hi);
+    const fromB = clampToRange(liveBottomRef.current, bLo, bHi);
+    posRef.current = fromX;
 
-    if (distance < 4) {
-      // 真的没地方可走（场地太窄）：歇一下再看，别空转
+    // 目标：随机一点，既要离自己够远，也尽量别贴着别的猪（试 8 次取最优）
+    const others = otherCenters();
+    let toX = fromX;
+    let toB = fromB;
+    for (let tries = 0; tries < 8; tries += 1) {
+      toX = lo + Math.random() * Math.max(1, hi - lo);
+      toB = bLo + Math.random() * Math.max(1, bHi - bLo);
+      const awayFromSelf = Math.hypot(toX - fromX, (toB - fromB) * 1.6) > Math.max(80, (hi - lo) * 0.22);
+      const awayFromOthers = others.every(
+        (o) => Math.hypot(o.x - toX, (o.b - toB) * 1.6) >= 110,
+      );
+      if (awayFromSelf && awayFromOthers) break;
+    }
+    const distance = Math.hypot(toX - fromX, (toB - fromB) * 1.6);
+
+    if (distance < 8) {
+      // 真的没地方可走（场地太小）：歇一下再看，别空转
       const idle = window.setTimeout(() => setRestKey((n) => n + 1), 1200);
       return () => window.clearTimeout(idle);
     }
 
     // 慢悠悠：约 70px/s
-    const ms = Math.max(3000, (distance / 70) * 1000);
-    if (flipRef.current) {
-      const facingLeft = to < from;
-      flipRef.current.style.scale = facingLeft ? "-1 1" : "1 1";
-      flipRef.current.classList.toggle("vx-pig-flip-l", facingLeft);
-    }
+    const ms = Math.max(2600, (distance / 70) * 1000);
+    setFacing(toX < fromX);
 
     const anim = walker.animate(
-      [{ left: `${from}px` }, { left: `${to}px` }],
+      [
+        { left: `${fromX}px`, bottom: `${fromB}px` },
+        { left: `${toX}px`, bottom: `${toB}px` },
+      ],
       { duration: ms, easing: "linear", fill: "forwards" },
     );
     playerRef.current = anim;
+    segRef.current = { fromX, fromB, toX, toB, player: anim };
     let restTimer = 0;
     anim.onfinish = () => {
-      posRef.current = to;
-      livePosRef.current = to;
-      if (walkerRef.current) walkerRef.current.style.left = `${to}px`;
+      livePosRef.current = toX;
+      liveBottomRef.current = toB;
+      if (walkerRef.current) {
+        walkerRef.current.style.left = `${toX}px`;
+        walkerRef.current.style.bottom = `${toB}px`;
+      }
       playerRef.current = null;
+      segRef.current = null;
       // 各头猪歇的时长不同，看起来才不像排队
-      const rest = 1500 + ((index * 733) % 2800);
+      const rest = 1400 + Math.random() * 3000;
       restTimer = window.setTimeout(() => setRestKey((n) => n + 1), rest);
     };
 
@@ -442,75 +867,89 @@ export function PigActor({
       window.clearTimeout(restTimer);
       anim.cancel();
       playerRef.current = null;
+      segRef.current = null;
       /*
        * 这里**不要**去读样式来恢复位置：
        * 动画一被 cancel，计算值立刻回落到 inline 的旧值（也就是起点），
-       * 读出来的必然是错的（上一版就是这么错的）。
-       * 正确的位置由采样循环持续维护在 livePosRef 里，下一次 effect 会用它当起点。
+       * 读出来的必然是错的。正确位置由采样循环维护在 live refs 里。
        */
     };
-    // walking 与 restKey 是唯一的开关；index 只影响歇息时长
-  }, [walking, restKey, index]);
+    // walking 与 restKey 是唯一的开关
+  }, [walking, restKey, setFacing, otherCenters]);
 
   /*
-   * 窗口缩放时把猪钳回新的活动范围。
-   * 猪的横向位置是 px 值，且走动动画只在出发那一刻算一次边界；窗口缩小后
-   * 旧位置可能超出新的右边界，采样循环虽然会把 livePos 钳到新值，但只改数字
-   * 不移动 DOM，于是猪还停在画面外（实测"调窗口大小猪走没了"）。
+   * 窗口缩放时把猪钳回新的活动范围（横向 + 纵深）。
+   * 走动动画只在出发那一刻算一次边界；窗口缩小后旧位置可能越界，
+   * 采样循环只改数字不移动 DOM，所以要在这里把 DOM 一并拽回来。
    */
-  const prevWidthRef = useRef(stageWidth);
+  const prevSizeRef = useRef({ width: stageWidth, height: stageHeight });
   useEffect(() => {
-    if (prevWidthRef.current === stageWidth) return;
-    prevWidthRef.current = stageWidth;
+    const prev = prevSizeRef.current;
+    if (prev.width === stageWidth && prev.height === stageHeight) return;
+    prevSizeRef.current = { width: stageWidth, height: stageHeight };
     const walker = walkerRef.current;
     if (!walker) return;
     const { leftLimit: lo, roamMax: hi } = cfgRef.current;
-    const p = clampToRange(livePosRef.current, lo, hi);
-    livePosRef.current = p;
-    posRef.current = p;
+    const feetBand = feetRange();
+    const px = clampToRange(livePosRef.current, lo, hi);
+    const pb = clampToRange(liveBottomRef.current, feetBand.min, feetBand.max);
+    livePosRef.current = px;
+    liveBottomRef.current = pb;
+    posRef.current = px;
     playerRef.current?.cancel();
     playerRef.current = null;
-    walker.style.left = `${p}px`;
+    segRef.current = null;
+    walker.style.left = `${px}px`;
+    walker.style.bottom = `${pb}px`;
     if (walking) setRestKey((n) => n + 1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stageWidth]);
+  }, [stageWidth, stageHeight, feetRange]);
 
-  // 走向蔬菜：按住当前位置，再用 5 秒挪到菜跟前
+  // 跑向蔬菜：横向对准菜，纵深也挪到菜落的那个深度，5 秒内赶到正好开吃
   useEffect(() => {
     const walker = walkerRef.current;
     if (!walker || action !== "eat" || phase !== "approach") return;
-    if (targetX === undefined || stageWidth <= 0) return;
+    if (!targetX || stageWidth <= 0) return;
 
-    const target = Math.max(
-      leftLimit,
-      Math.min(rightLimit, targetX * stageWidth - half),
-    );
-    const from = Math.max(leftLimit, Math.min(rightLimit, posRef.current));
+    const cfg = cfgRef.current;
+    const targetXpx = clampToRange(targetX.x * stageWidth - cfg.half, cfg.leftLimit, cfg.rightLimit);
+    const feetNow = feetRange();
+    const targetB = clampToRange(targetX.bottomPx - 4, feetNow.min, feetNow.max);
+    const fromX = clampToRange(livePosRef.current, cfg.leftLimit, cfg.rightLimit);
+    const fromB = clampToRange(liveBottomRef.current, feetNow.min, feetNow.max);
     playerRef.current?.cancel();
+    segRef.current = null;
 
-    if (flipRef.current) {
-      const facingLeft = target < from;
-      flipRef.current.style.scale = facingLeft ? "-1 1" : "1 1";
-      flipRef.current.classList.toggle("vx-pig-flip-l", facingLeft);
-    }
+    setFacing(targetXpx < fromX);
 
     // 剩下的时间刚好用掉"走向蔬菜"那一段，于是走到时正好开始吃
     const remain = EAT_APPROACH_MS;
     const anim = walker.animate(
-      [{ left: `${from}px` }, { left: `${target}px` }],
+      [
+        { left: `${fromX}px`, bottom: `${fromB}px` },
+        { left: `${targetXpx}px`, bottom: `${targetB}px` },
+      ],
       { duration: remain, easing: "ease-in-out", fill: "forwards" },
     );
     playerRef.current = anim;
+    segRef.current = { fromX, fromB, toX: targetXpx, toB: targetB, player: anim };
     anim.onfinish = () => {
-      posRef.current = target;
-      if (walkerRef.current) walkerRef.current.style.left = `${target}px`;
+      livePosRef.current = targetXpx;
+      liveBottomRef.current = targetB;
+      posRef.current = targetXpx;
+      if (walkerRef.current) {
+        walkerRef.current.style.left = `${targetXpx}px`;
+        walkerRef.current.style.bottom = `${targetB}px`;
+      }
       playerRef.current = null;
+      segRef.current = null;
     };
     return () => {
       anim.cancel();
       playerRef.current = null;
+      segRef.current = null;
     };
-  }, [action, phase, targetX, stageWidth, leftLimit, rightLimit, half]);
+  }, [action, phase, targetX, stageWidth, setFacing, feetRange]);
 
   // 位置上报已经并进上面的采样循环（每帧一次，比原来的 1.5 秒轮询准确得多），
   // 这里不再需要单独一套。
@@ -519,13 +958,13 @@ export function PigActor({
     () =>
       ({
         "--vx-pig-size": `${size}px`,
-        "--vx-pig-bottom": `${Math.round(laneBottom)}px`,
+        // 纵向位置完全由 JS 控制 walker.bottom，槽位本身不再额外垫高
+        "--vx-pig-bottom": "0px",
         "--vx-pig-fallback-x": `${(0.14 + 0.1 / Math.max(1, total)).toFixed(4)}`,
-        "--vx-lane-ratio": laneRatio.toFixed(3),
         "--vx-depth": depth.toFixed(3),
         "--vx-tag-top": `${Math.round(52 + size * 0.06)}%`,
       }) as CSSProperties,
-    [size, laneBottom, total, laneRatio, depth],
+    [size, total, depth],
   );
 
   return (
@@ -537,23 +976,46 @@ export function PigActor({
         title={`${label} — 点击调整音量`}
         aria-label={label}
       >
-        <div className="vx-pig-walker" ref={walkerRef} style={{ left: `${leftLimit}px` }}>
+        <div className="vx-pig-walker" ref={walkerRef} style={{ left: `${leftLimit}px`, bottom: `${laneBottom}px` }}>
           <div className="vx-pig-flip" ref={flipRef}>
             {/* 落地阴影跟着猪走 */}
             <span className="vx-pig-shadow" aria-hidden="true" />
 
             <div
               ref={bumpRef}
-              className={`vx-pig${walking ? " vx-pig-walking" : ""}${frontPose ? " vx-pig-speaking" : ""}${sleeping ? " vx-pig-sleeping" : ""}${busy ? ` vx-pig-action-${action} vx-pig-phase-${phase}` : ""}`}
+              className={`vx-pig${entering ? " vx-pig-entering" : ""}${reaction?.kind === "hoist" ? " vx-pig-hoisted" : ""}${walking ? " vx-pig-walking" : ""}${frontPose ? " vx-pig-speaking" : ""}${sleeping && !reacting ? " vx-pig-sleeping" : ""}${busy ? ` vx-pig-action-${action} vx-pig-phase-${phase}` : ""}`}
             >
-              <Pig
-                color={color}
-                pose={frontPose ? "front" : "side"}
-                talking={frontPose}
-                action={action}
-                phase={phase}
-                uid={uid}
-              />
+              {/*
+                精灵状态机（优先级从上到下）：
+                空降入圈 → 吊起来 → 互动反应 → 吃/拉的动作分段 → 睡觉 → 蹦迪（说话）
+                → 走路 → 待机。素材都是 3D 模型生成的绿幕序列帧，抠好底、
+                统一 256px；单次动作靠状态窗口（约 3.2s）截断循环播放时长。
+                下落/吊起动画挂在容器（.vx-pig）上：名字牌跟着飞、
+                影子留在地上（"离地感"的来源）。
+              */}
+              {entering ? (
+                <img src={pigJoinUrl} className="vx-pig-sprite" alt="" aria-hidden="true" />
+              ) : reaction?.kind === "hoist" ? (
+                <img src={pigHoistUrl} className="vx-pig-sprite" alt="" aria-hidden="true" />
+              ) : reaction && REACT_SRC[reaction.kind] ? (
+                <img src={REACT_SRC[reaction.kind]} className="vx-pig-sprite" alt="" aria-hidden="true" />
+              ) : action === "eat" ? (
+                phase === "approach" ? (
+                  // 跑向食物：快跑猪冲刺
+                  <img src={pigRunUrl} className="vx-pig-sprite" alt="" aria-hidden="true" />
+                ) : (
+                  <img src={pigMunchUrl} className="vx-pig-sprite" alt="" aria-hidden="true" />
+                )
+              ) : sleeping ? (
+                <img src={pigSleepUrl} className="vx-pig-sprite" alt="" aria-hidden="true" />
+              ) : frontPose ? (
+                // 说话：蹦迪猪上线（谁的猪在跳舞，谁就在说话）
+                <img src={pigDanceUrl} className="vx-pig-sprite" alt="" aria-hidden="true" />
+              ) : walking || remoteMoving ? (
+                <img src={pigWalkUrl} className="vx-pig-sprite" alt="" aria-hidden="true" />
+              ) : (
+                <img src={pigIdleUrl} className="vx-pig-sprite" alt="" aria-hidden="true" />
+              )}
 
               {deafened ? (
                 <span
@@ -631,4 +1093,3 @@ export function PigActor({
   );
 }
 
-export { POOP_STRAIN_MS };

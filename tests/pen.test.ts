@@ -10,9 +10,7 @@ import {
   actionForActor,
   clampToRange,
   consumedVegetableIds,
-  parsePositionPx,
   eventTtl,
-  nearestActor,
   pruneEvents,
   randomVegetable,
   type PenEvent,
@@ -89,36 +87,15 @@ describe("猪圈导演", () => {
     expect(toss.id).toContain("toss-");
   });
 
-  it("间隔都在设定的区间里（偶尔来一次，不是刷屏）", () => {
-    const director = new PenDirector(seededRandom([0, 1]));
-    expect(director.nextTossDelay()).toBeGreaterThanOrEqual(55_000);
-    expect(director.nextTossDelay()).toBeLessThanOrEqual(150_000);
-    expect(director.nextPoopDelay()).toBeGreaterThanOrEqual(14_000);
-  });
-
-  it("吃 / 拉事件指向具体的那头猪", () => {
+  it("吃事件指向具体的那头猪", () => {
     const director = new PenDirector(seededRandom([0.5]));
     expect(director.produceEat(2000, "peer-a", "carrot")).toMatchObject({
       kind: "eat",
       actor: "peer-a",
       veg: "carrot",
     });
-    expect(director.producePoop(3000, "peer-b")).toMatchObject({
-      kind: "poop",
-      actor: "peer-b",
-    });
   });
 
-  it("挑离蔬菜最近的那头猪来吃", () => {
-    const actors = [
-      { id: "far", x: 0.1 },
-      { id: "near", x: 0.78 },
-      { id: "mid", x: 0.5 },
-    ];
-    expect(nearestActor(0.8, actors)).toBe("near");
-    expect(nearestActor(0.12, actors)).toBe("far");
-    expect(nearestActor(0.5, [])).toBeNull();
-  });
 });
 
 describe("哪些蔬菜被吃掉了", () => {
@@ -179,8 +156,8 @@ describe("哪些蔬菜被吃掉了", () => {
 
   it("过期事件被清掉，未过期的保留", () => {
     const entries = [
-      { event: { kind: "poop", id: "a", ts: 0, actor: "x" } as PenEvent, expiresAt: 100 },
-      { event: { kind: "poop", id: "b", ts: 0, actor: "y" } as PenEvent, expiresAt: 500 },
+      { event: { kind: "eat", id: "a", ts: 0, actor: "x", veg: "carrot" } as PenEvent, expiresAt: 100 },
+      { event: { kind: "eat", id: "b", ts: 0, actor: "y", veg: "apple" } as PenEvent, expiresAt: 500 },
     ];
     const kept = pruneEvents(entries, 200);
     expect(kept).toHaveLength(1);
@@ -190,7 +167,7 @@ describe("哪些蔬菜被吃掉了", () => {
   it("每种事件都有存活时长", () => {
     expect(eventTtl({ kind: "toss", id: "t", ts: 0, npc: "DDY", veg: { kind: "corn", x: 0.5, lane: 0.5 } })).toBeGreaterThan(0);
     expect(eventTtl({ kind: "eat", id: "e", ts: 0, actor: "a", veg: "corn" })).toBeGreaterThan(0);
-    expect(eventTtl({ kind: "poop", id: "p", ts: 0, actor: "a" })).toBeGreaterThan(0);
+    expect(eventTtl({ kind: "eat", id: "p", ts: 0, actor: "a", veg: "carrot" })).toBeGreaterThan(0);
   });
 });
 
@@ -202,7 +179,7 @@ describe("某头猪此刻在干什么", () => {
     actor,
     veg: "carrot",
   });
-  const poopEvent = (actor: string): PenEvent => ({ kind: "poop", id: "p", ts: 1, actor });
+  const eatEventFor = (actor: string): PenEvent => ({ kind: "eat", id: "p", ts: 1, actor, veg: "carrot" });
 
   it("匹配到的猪才做动作", () => {
     expect(actionForActor([eatEvent("pig-a")], "pig-a")).toBe("eat");
@@ -210,11 +187,11 @@ describe("某头猪此刻在干什么", () => {
   });
 
   it("吃优先于拉", () => {
-    expect(actionForActor([poopEvent("pig-a"), eatEvent("pig-a")], "pig-a")).toBe("eat");
+    expect(actionForActor([eatEventFor("pig-a")], "pig-a")).toBe("eat");
   });
 
   it("通配符表示所有猪都做这个动作（调试用）", () => {
-    expect(actionForActor([poopEvent("*")], "任何猪")).toBe("poop");
+    expect(actionForActor([eatEventFor("*")], "任何猪")).toBe("eat");
   });
 });
 
@@ -276,12 +253,6 @@ describe("走动位置的记录", () => {
     expect(clampToRange(Number.POSITIVE_INFINITY, 40, 900)).toBe(40);
   });
 
-  it("能从 CSS 的 left 值解析出像素数", () => {
-    expect(parsePositionPx("123.5px")).toBe(123.5);
-    expect(parsePositionPx("40px")).toBe(40);
-    expect(parsePositionPx("auto")).toBeNull();
-    expect(parsePositionPx("")).toBeNull();
-  });
 
   /*
    * 回归测试：说话导致走动被打断时，位置必须记在"当时站的地方"，
@@ -302,7 +273,7 @@ describe("线上收到的猪圈事件校验", () => {
     expect(parsePenEventSafe(null)).toBeNull();
     expect(parsePenEventSafe({ kind: "toss" })).toBeNull();
     expect(parsePenEventSafe({ kind: "toss", id: "x", ts: 1, veg: { kind: "石头", x: 0.5 } })).toBeNull();
-    expect(parsePenEventSafe({ kind: "poop", id: "x", ts: 1 })).toBeNull();
+    expect(parsePenEventSafe({ kind: "poop", id: "x", ts: 1 })).toBeNull(); // 已删除的事件类型：解析直接拒绝
     expect(parsePenEventSafe({ kind: "炸圈", id: "x", ts: 1 })).toBeNull();
   });
 

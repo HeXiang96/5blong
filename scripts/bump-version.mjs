@@ -71,6 +71,18 @@ for (const rel of ["src-tauri/Cargo.toml", "src-tauri/Cargo.lock"]) {
   console.log(`${rel} → ${version}`);
 }
 
+// 发版提醒：首页公告栏"最新更新"的数据源是 src/client/voice/changelog.ts，
+// 发版前应在数组顶部补一条本版本的简洁条目（首页会自动显示）。
+try {
+  const changelog = readFileSync(path.join(root, "src/client/voice/changelog.ts"), "utf8");
+  if (!changelog.includes(`"${version}"`)) {
+    console.log(`\n⚠️  提醒：src/client/voice/changelog.ts 里还没有 v${version} 的条目——`);
+    console.log(`    它是首页公告栏"最新更新"的数据源（版本号 + 最多 4 条短句），建议先补上再继续。`);
+  }
+} catch {
+  /* changelog.ts 不存在就算了（老版本仓库兼容） */
+}
+
 run("git add -A");
 run(`git commit -m "release: v${version}"`);
 run(`git tag app-v${version}`);

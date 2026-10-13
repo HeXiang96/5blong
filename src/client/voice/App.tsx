@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 
+import { preloadRnnoise } from "./engine";
 import { useVoice } from "./use-voice";
 import { ConfirmView, LandingView } from "./components/pages";
 import { RoomView } from "./components/RoomView";
@@ -8,6 +9,14 @@ import { Banner } from "./components/ui";
 
 export function App() {
   const voice = useVoice();
+
+  /*
+   * 打开页面就预热 AI 降噪（RNNoise）的 wasm/worklet 资源：
+   * 不需要麦克风权限，进房开启智能降噪时秒生效。
+   */
+  useEffect(() => {
+    preloadRnnoise();
+  }, []);
 
   /*
    * 把标签页可见性同步到 <html data-vx-hidden>，供样式表停掉挂机时的循环动画。

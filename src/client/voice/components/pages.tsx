@@ -1,13 +1,14 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Copy, Download, LogIn, Plus, Settings as SettingsIcon } from "lucide-react";
 import { getVersion } from "@tauri-apps/api/app";
+import { latestChangelog } from "../changelog";
 
 import { AVATAR_COLORS, initials, type Identity } from "../identity";
 import { CODE_HINT, CODE_PLACEHOLDER, JOIN_PARSE_ERROR, ROOM_CODE_LEN } from "../protocol";
 import { saveIdentity } from "../identity";
 import { Avatar, Toggle } from "./ui";
 import { PenFrame } from "./PigPen";
-import { Pig } from "./Pig";
+import landingPigUrl from "../assets/landing-pig.gif?url";
 
 /** 由 ID 稳定推导一个颜色：同一个房间码每次都显示同一种颜色，便于口头对号。 */
 export function colorForId(id: string): string {
@@ -43,6 +44,8 @@ export function LandingView({
   onSettings: () => void;
   onCopyId: () => void;
 }) {
+  /** 首页公告栏的更新内容：单一数据源见 ../changelog.ts（发版时只改那里）。 */
+  const latest = latestChangelog();
   const [joinOpen, setJoinOpen] = useState(false);
   const [joinText, setJoinText] = useState("");
   const [joinError, setJoinError] = useState<string | null>(null);
@@ -118,7 +121,7 @@ export function LandingView({
 
       <main className="vx-landing-main">
         <div className="vx-landing-mascot" aria-hidden="true">
-          <Pig color={identity.color} pose="front" uid="landing" />
+          <img src={landingPigUrl} alt="" width={512} height={512} draggable={false} />
         </div>
         <div className="vx-hero">
           <h1>开个语音房，把链接丢给朋友</h1>
@@ -200,6 +203,23 @@ export function LandingView({
           <li>少数严格网络下可能连不通</li>
         </ul>
       </main>
+
+      {/* 公告栏挂在页面根容器（贴场景右下角），不跟着居中的主内容列走 */}
+      <aside className="vx-landing-board" aria-label="最新更新">
+        <div className="vx-landing-board-face">
+          <b className="vx-landing-board-title">
+            最新更新
+            {latest ? <span className="vx-landing-board-ver">v{latest.version}</span> : null}
+          </b>
+          <ul>
+            {(latest?.lines ?? []).map((line) => (
+              <li key={line}>{line}</li>
+            ))}
+          </ul>
+        </div>
+        <span className="vx-landing-board-post vx-landing-board-post-l" aria-hidden="true" />
+        <span className="vx-landing-board-post vx-landing-board-post-r" aria-hidden="true" />
+      </aside>
 
       {joinOpen ? (
         <div className="vx-modal-backdrop" onClick={() => setJoinOpen(false)}>

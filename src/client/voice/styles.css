@@ -55,6 +55,91 @@ html[data-theme="light"] {
   color-scheme: light;
 }
 
+/*
+ * UI 跟随一天四段光照（与场景同一个时段开关，挂在 <html data-daypart>）。
+ * 只覆盖浅色主题：深色主题本来就是夜里，不动。
+ * 白天（day）不写覆盖 —— 用上面 light 主题的基准色。
+ */
+
+/* 清晨：粉金天光，UI 带一点玫瑰暖调 */
+html[data-theme="light"][data-daypart="morning"] {
+  --vx-bg: #fbf5ef;
+  --vx-surface-2: #f7ecdf;
+  --vx-line: #ead9c8;
+  --vx-accent: #bd7540;
+  --vx-accent-soft: rgba(189, 117, 64, 0.12);
+  --vx-accent-strong: #9d5a28;
+}
+
+/* 傍晚：橙金晚霞，UI 转琥珀 */
+html[data-theme="light"][data-daypart="dusk"] {
+  --vx-bg: #fbf2e4;
+  --vx-bg-2: #fefaf1;
+  --vx-surface: #fefaf1;
+  --vx-surface-2: #f7e8d0;
+  --vx-line: #e9d2b2;
+  --vx-accent: #c0671c;
+  --vx-accent-soft: rgba(192, 103, 28, 0.14);
+  --vx-accent-strong: #9c4d0c;
+  --vx-shadow: 0 16px 40px rgba(122, 74, 20, 0.16);
+}
+
+/*
+ * 夜晚（浅色主题到点自动入夜）：
+ * 整套 UI 色板切成夜间模式——设置页、弹窗、聊天气泡等所有通用面板
+ * 全部入夜，不再是"场景黑了、面板还是白天"的精神分裂。
+ * 页面底和面板用偏暖的夜色（跟场景的木质感对得上）。
+ */
+html[data-theme="light"][data-daypart="night"] {
+  --vx-bg: #211d1a;
+  --vx-bg-2: #272320;
+  --vx-surface: #2b2622;
+  --vx-surface-2: #352f2a;
+  --vx-line: #484038;
+  --vx-text: #f2ece1;
+  --vx-text-dim: #b7a894;
+  --vx-text-faint: #877a69;
+  --vx-accent: #cf9650;
+  --vx-accent-soft: rgba(207, 150, 80, 0.16);
+  --vx-accent-strong: #e0ad6c;
+  --vx-plate-badge-bg: rgba(207, 150, 80, 0.22);
+  --vx-plate-badge-fg: #e8c894;
+  --vx-live: #2ad4a8;
+  --vx-live-soft: rgba(42, 212, 168, 0.16);
+  --vx-danger: #ff6b6b;
+  --vx-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
+  --vx-muted-bg: #453b31;
+}
+
+/*
+ * 首页"直接压在夜景上"的文字再补一层描边影（色板已翻成奶油色，
+ * 描边影让文字从夜空里再浮出来一点）。
+ */
+html[data-theme="light"][data-daypart="night"] .vx-landing .vx-hero h1,
+html[data-theme="light"][data-daypart="night"] .vx-landing .vx-hero p,
+html[data-theme="light"][data-daypart="night"] .vx-landing .vx-facts,
+html[data-theme="light"][data-daypart="night"] .vx-landing-top {
+  text-shadow: 0 1px 3px rgba(16, 13, 24, 0.55);
+}
+
+/* 夜晚场景上的幽灵按钮（下载客户端）：描边和底色换成暗夜可读的一套 */
+html[data-theme="light"][data-daypart="night"] .vx-landing .vx-btn-ghost {
+  color: #f4ecd9;
+  border-color: rgba(244, 236, 217, 0.45);
+  background: rgba(22, 20, 34, 0.35);
+  text-shadow: 0 1px 2px rgba(16, 13, 24, 0.5);
+}
+
+html[data-theme="light"][data-daypart="night"] .vx-landing .vx-btn-ghost:hover {
+  background: rgba(22, 20, 34, 0.52);
+}
+
+/* 房间里的空圈提示同样是直接压在场景上的文字，夜晚加描边影 */
+html[data-theme="light"][data-daypart="night"] .vx-empty p,
+html[data-theme="light"][data-daypart="night"] .vx-empty span {
+  text-shadow: 0 1px 3px rgba(16, 13, 24, 0.55);
+}
+
 * {
   box-sizing: border-box;
 }
@@ -439,6 +524,137 @@ select {
   padding: 22px clamp(16px, 5vw, 48px) 40px;
 }
 
+/*
+ * 插在草地上的木制公告栏（最新更新）。
+ * 用**文档流内**布局（页面底部的 flex 子项、右对齐），而不是绝对定位：
+ * - 任何窗口宽度都在，不会被"窄屏隐藏"或和居中主列重叠；
+ * - 窗口太矮时随页面滚动，不会被裁掉；
+ * - 两根木柱照旧"扎"在草地（页面底部就是草地）。
+ */
+.vx-landing-board {
+  align-self: flex-end;
+  position: relative;
+  z-index: 3;
+  width: min(268px, calc(100vw - 44px));
+  margin: 20px clamp(16px, 5vw, 48px) 34px 0;
+  transform: rotate(-1.6deg);
+  pointer-events: none;
+  filter: drop-shadow(0 10px 16px rgba(70, 44, 14, 0.25));
+}
+
+.vx-landing-board-face {
+  position: relative;
+  z-index: 2;
+  padding: 14px 16px 12px;
+  border-radius: 12px;
+  background:
+    linear-gradient(180deg, rgba(255, 246, 222, 0.5) 0%, rgba(255, 246, 222, 0) 30%),
+    repeating-linear-gradient(92deg, rgba(122, 82, 38, 0.08) 0 2px, rgba(122, 82, 38, 0) 2px 9px),
+    linear-gradient(180deg, #eed3a0 0%, #ddb478 55%, #c99a58 100%);
+  border: 1px solid rgba(120, 78, 34, 0.5);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.5) inset,
+    0 -2px 0 rgba(120, 78, 34, 0.24) inset;
+}
+
+/* 公告栏标题旁的小版本号：标明"最新更新"是哪一版 */
+.vx-landing-board-ver {
+  margin-left: 6px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  opacity: 0.6;
+}
+
+.vx-landing-board-title {
+  display: inline-block;
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  color: #5b3d18;
+  text-shadow: 0 1px 0 rgba(255, 245, 220, 0.6);
+  border-bottom: 1px dashed rgba(120, 78, 34, 0.35);
+  padding-bottom: 5px;
+  margin-bottom: 7px;
+}
+
+.vx-landing-board ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 5px;
+}
+
+.vx-landing-board li {
+  position: relative;
+  padding-left: 14px;
+  font-size: 12.5px;
+  color: #5b3d18;
+  text-shadow: 0 1px 0 rgba(255, 245, 220, 0.45);
+}
+
+.vx-landing-board li::before {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: 7px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgba(120, 78, 34, 0.55);
+}
+
+/* 两根立柱：往下扎进草地 */
+.vx-landing-board-post {
+  position: absolute;
+  bottom: -30px;
+  width: 12px;
+  height: 52px;
+  border-radius: 3px;
+  background: linear-gradient(180deg, #b98a4e 0%, #a5773f 60%, #8a6132 100%);
+  border: 1px solid rgba(110, 70, 30, 0.45);
+}
+
+.vx-landing-board-post-l {
+  left: 26px;
+}
+
+.vx-landing-board-post-r {
+  right: 26px;
+}
+
+/* 深色主题：木色压深一档，文字换成奶油色 */
+html[data-theme="dark"] .vx-landing-board-face {
+  background:
+    linear-gradient(180deg, rgba(255, 246, 222, 0.22) 0%, rgba(255, 246, 222, 0) 30%),
+    repeating-linear-gradient(92deg, rgba(0, 0, 0, 0.12) 0 2px, rgba(0, 0, 0, 0) 2px 9px),
+    linear-gradient(180deg, #8d6538 0%, #7a552c 55%, #654522 100%);
+  border-color: rgba(52, 33, 14, 0.7);
+}
+
+html[data-theme="dark"] .vx-landing-board-title,
+html[data-theme="dark"] .vx-landing-board li {
+  color: #f6e3bd;
+  text-shadow: 0 1px 0 rgba(40, 24, 8, 0.5);
+}
+
+html[data-theme="dark"] .vx-landing-board li::before {
+  background: rgba(246, 227, 189, 0.55);
+}
+
+html[data-theme="dark"] /* 公告栏标题旁的小版本号：标明"最新更新"是哪一版 */
+.vx-landing-board-ver {
+  margin-left: 6px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  opacity: 0.6;
+}
+
+.vx-landing-board-title {
+  border-bottom-color: rgba(246, 227, 189, 0.3);
+}
+
 .vx-landing-top {
   position: relative;
   z-index: 5;
@@ -462,15 +678,18 @@ select {
   padding: 24px 0;
 }
 
-/* 吉祥物：一只静态微笑的正面小猪 */
+/* 首页吉祥物：用户提供的透明小猪 GIF，保持原比例与原始动画。 */
 .vx-landing-mascot {
-  width: 108px;
-  height: 96px;
+  width: 124px;
+  height: 124px;
+  flex-shrink: 0;
 }
 
-.vx-landing-mascot .vx-pig-svg {
+.vx-landing-mascot img {
+  display: block;
   width: 100%;
   height: 100%;
+  object-fit: contain;
 }
 
 .vx-hero {
@@ -489,29 +708,43 @@ select {
   color: var(--vx-text-dim);
 }
 
+/*
+ * 首页身份铭牌（昵称 + 个人 ID）：
+ * 与房间公告牌同一套木板做法——木纹 + 上缘高光 + 暖棕描边，
+ * 不再是一块突兀的通用白面板。
+ */
 .vx-identity {
   display: flex;
   align-items: center;
   gap: 12px;
   width: 100%;
   padding: 12px 14px;
-  border-radius: var(--vx-radius);
-  background: var(--vx-surface);
-  border: 1px solid var(--vx-line);
+  border-radius: 14px;
+  background:
+    linear-gradient(180deg, rgba(255, 246, 222, 0.55) 0%, rgba(255, 246, 222, 0) 26%),
+    repeating-linear-gradient(92deg, rgba(122, 82, 38, 0.08) 0 2px, rgba(122, 82, 38, 0) 2px 9px),
+    linear-gradient(180deg, #eed3a0 0%, #ddb478 52%, #c99a58 100%);
+  border: 1px solid rgba(120, 78, 34, 0.5);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.5) inset,
+    0 -2px 0 rgba(120, 78, 34, 0.24) inset,
+    0 4px 10px rgba(70, 44, 14, 0.22);
 }
 
 .vx-identity-name {
   border: 0;
   background: none;
-  font-weight: 600;
+  font-weight: 700;
   font-size: 15.5px;
+  color: #5b3d18;
+  text-shadow: 0 1px 0 rgba(255, 245, 220, 0.6);
   cursor: pointer;
-  padding: 2px 4px;
+  padding: 2px 6px;
   border-radius: 8px;
 }
 
 .vx-identity-name:hover {
-  background: var(--vx-surface-2);
+  background: rgba(255, 246, 222, 0.45);
 }
 
 .vx-name-input {
@@ -519,12 +752,62 @@ select {
   min-width: 0;
   padding: 6px 8px;
   border-radius: 8px;
-  border: 1px solid var(--vx-accent);
-  background: var(--vx-bg-2);
+  border: 1px solid rgba(120, 78, 34, 0.55);
+  background: #fdf6e4;
+  color: #5b3d18;
 }
 
+/* 个人 ID：木牌上钉一块小铜牌（与房间圈号牌子同款做法） */
 .vx-identity .vx-link-btn {
   margin-left: auto;
+  padding: 4px 10px;
+  border-radius: 9px;
+  background: linear-gradient(180deg, #fdf6e4 0%, #f0e0be 100%);
+  border: 1px solid rgba(120, 78, 34, 0.55);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8), 0 1px 2px rgba(70, 45, 15, 0.22);
+  color: #5b3d18;
+  font-weight: 700;
+}
+
+.vx-identity .vx-link-btn:hover {
+  background: linear-gradient(180deg, #fffaf0 0%, #f6e8cd 100%);
+}
+
+html[data-theme="dark"] .vx-identity {
+  background:
+    linear-gradient(180deg, rgba(255, 236, 200, 0.14) 0%, rgba(255, 236, 200, 0) 26%),
+    repeating-linear-gradient(92deg, rgba(255, 226, 170, 0.05) 0 2px, rgba(255, 226, 170, 0) 2px 9px),
+    linear-gradient(180deg, #6d5531 0%, #5a4323 52%, #453218 100%);
+  border-color: rgba(255, 226, 170, 0.28);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.12) inset,
+    0 -2px 0 rgba(0, 0, 0, 0.25) inset,
+    0 4px 10px rgba(0, 0, 0, 0.35);
+}
+
+html[data-theme="dark"] .vx-identity-name {
+  color: #f4e4c2;
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.35);
+}
+
+html[data-theme="dark"] .vx-identity-name:hover {
+  background: rgba(255, 236, 200, 0.14);
+}
+
+html[data-theme="dark"] .vx-name-input {
+  background: #3a2c15;
+  border-color: rgba(255, 226, 170, 0.3);
+  color: #f4e4c2;
+}
+
+html[data-theme="dark"] .vx-identity .vx-link-btn {
+  background: linear-gradient(180deg, #4a3a1e 0%, #3a2c15 100%);
+  border-color: rgba(255, 226, 170, 0.3);
+  color: #f4e4c2;
+}
+
+html[data-theme="dark"] .vx-identity .vx-link-btn:hover {
+  background: linear-gradient(180deg, #55421f 0%, #453418 100%);
 }
 
 .vx-actions {
@@ -1894,12 +2177,24 @@ html[data-theme="dark"] .vx-voice-panel {
   position: fixed;
   z-index: 60;
   width: 240px;
+  max-width: calc(100vw - 24px);
+  max-height: calc(100dvh - 24px);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
   padding: 13px;
   border-radius: 15px;
   background: var(--vx-surface);
   border: 1px solid var(--vx-line);
   box-shadow: var(--vx-shadow);
-  animation: vx-pop 0.14s ease;
+  /* 只渐显，不平移，避免进入动画暂时越过已计算好的窗口边界。 */
+  animation: vx-menu-appear 0.14s ease;
+}
+
+@keyframes vx-menu-appear {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 .vx-member-menu-head {
@@ -1910,6 +2205,8 @@ html[data-theme="dark"] .vx-voice-panel {
 }
 
 .vx-member-menu-head strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
   font-size: 13.5px;
   font-weight: 600;
 }
@@ -2117,7 +2414,17 @@ html[data-theme="dark"] .vx-sign-lock-on {
   background: linear-gradient(180deg, #f7ecd6 0%, #eedfc0 100%);
 }
 
-html[data-theme="dark"] .vx-settings {
+/* 清晨/傍晚：羊皮纸底色轻微跟着走（设置页是整页底色，不需要大改） */
+html[data-theme="light"][data-daypart="morning"] .vx-settings {
+  background: linear-gradient(180deg, #f9edd9 0%, #f0dec3 100%);
+}
+
+html[data-theme="light"][data-daypart="dusk"] .vx-settings {
+  background: linear-gradient(180deg, #f8e9cb 0%, #eed7ab 100%);
+}
+
+/* 夜晚：与深色主题共用同一套"深木夜色"（时段到点自动入夜） */
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-settings {
   background: linear-gradient(180deg, #3a2f1c 0%, #2e2516 100%);
 }
 
@@ -2129,7 +2436,7 @@ html[data-theme="dark"] .vx-settings {
     linear-gradient(180deg, #ecc78d 0%, #d8a866 50%, #bd8b4b 100%);
 }
 
-html[data-theme="dark"] .vx-settings .vx-settings-top {
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-settings .vx-settings-top {
   border-bottom-color: rgba(255, 226, 170, 0.22);
   background:
     linear-gradient(180deg, rgba(255, 236, 200, 0.14) 0%, rgba(255, 236, 200, 0) 26%),
@@ -2149,7 +2456,7 @@ html[data-theme="dark"] .vx-settings .vx-settings-top {
     0 6px 16px rgba(70, 44, 14, 0.12);
 }
 
-html[data-theme="dark"] .vx-settings .vx-card {
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-settings .vx-card {
   border-color: rgba(255, 226, 170, 0.22);
   background:
     linear-gradient(180deg, rgba(255, 236, 200, 0.1) 0%, rgba(255, 236, 200, 0) 30%),

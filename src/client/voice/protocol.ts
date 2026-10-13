@@ -82,11 +82,6 @@ export function parsePenEvent(input: unknown): PenEvent | null {
     };
   }
 
-  if (kind === "poop") {
-    const actor = typeof raw["actor"] === "string" ? raw["actor"].slice(0, 64) : "";
-    return actor ? { kind: "poop", id, ts, actor } : null;
-  }
-
   return null;
 }
 
@@ -355,6 +350,9 @@ export const INTERACT_KINDS = [
   "hug",
   "boo",
   "cheer",
+  // 后加的"吊起来"：把对方的猪用绳子吊到半空晃悠。新版本追加在末尾，
+  // 旧版本解析时整条互动被安全忽略（不崩、只是看不到效果）。
+  "hoist",
 ] as const;
 export type InteractKind = (typeof INTERACT_KINDS)[number];
 
@@ -425,9 +423,27 @@ export type HostMessage =
   | { t: "peer-leave"; id: string }
   | { t: "speaking"; id: string; speaking: boolean }
   | { t: "pen"; event: PenEvent }
+  /*
+   * 房主权威猪位：每 ~600ms 一条，把每头猪的横向（0~1）与纵深（0~1）
+   * 播给访客。访客的猪据此平滑跟随，两端看到的是同一片猪圈，
+   * 而不是各自随机散步（旧版本收到未知类型会安全忽略）。
+   */
+  | { t: "pen-poses"; ts: number; poses: PenPose[] }
   | { t: "sound"; event: SoundEvent }
   | { t: "ping"; ts: number }
   | { t: "pong"; ts: number };
+
+/** 一头猪的权威位置快照（房主模拟，全房一致）。 */
+export interface PenPose {
+  /** 成员 id。 */
+  id: string;
+  /** 横向 0~1（猪中心 / 场地宽）。 */
+  x: number;
+  /** 纵深 0（最远）~1（最近）。 */
+  lane: number;
+  /** 朝向（1=面右 -1=面左），那一坨落在屁股后面用。 */
+  facing?: 1 | -1;
+}
 
 export type WireMessage = GuestMessage | HostMessage;
 
@@ -570,6 +586,27 @@ export function parseHostMessage(data: unknown): HostMessage | null {
     case "pen": {
       const event = parsePenEvent(msg["event"]);
       return event ? { t: "pen", event } : null;
+    }
+    case "pen-poses": {
+      const ts = num(msg["ts"]);
+      const raw = msg["poses"];
+      if (ts === null || !Array.isArray(raw) || raw.length === 0 || raw.length > 16) return null;
+      const poses: PenPose[] = [];
+      for (const item of raw) {
+        if (typeof item !== "object" || item === null) continue;
+        const record = item as Record<string, unknown>;
+        const id = str(record["id"], 64);
+        const x = num(record["x"]);
+        const lane = num(record["lane"]);
+        if (!id || x === null || lane === null) continue;
+        poses.push({
+          id,
+          x: Math.min(1, Math.max(0, x)),
+          lane: Math.min(1, Math.max(0, lane)),
+          facing: num(record["facing"]) === -1 ? -1 : 1,
+        });
+      }
+      return poses.length > 0 ? { t: "pen-poses", ts, poses } : null;
     }
     case "sound": {
       const event = parseSoundEvent(msg["event"]);

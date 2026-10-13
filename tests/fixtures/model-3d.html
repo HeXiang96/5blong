@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>3D 模型渲染器（素材管线用）</title>
+  <style>html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }</style>
+  <script type="importmap">
+    { "imports": { "three": "/node_modules/three/build/three.module.js" } }
+  </script>
+  <script>
+    window.__errors = [];
+    window.addEventListener("error", (e) => window.__errors.push(String(e.message)));
+    window.addEventListener("unhandledrejection", (e) => window.__errors.push(String(e.reason)));
+  </script>
+</head>
+<body>
+  <pre id="status" style="position:fixed;left:8px;top:8px;z-index:9;font:12px monospace;color:#333;background:#fff8">loading…</pre>
+  <script type="module">
+    /*
+     * 渲染 /3d.glb（业主提供的静态小猪模型）。
+     * URL 参数：
+     *   yaw=<度>     相机水平角度（0=正侧朝左，90=正面）
+     *   pitch=<度>   俯仰角
+     *   size=<px>    画布边长
+     *   clear=<hex>  背景色（默认透明）
+     * 渲染完成后把 window.__renderReady 置为 true（截图脚本据此等待）。
+     */
+    import * as THREE from "three";
+    import { GLTFLoader } from "/node_modules/three/examples/jsm/loaders/GLTFLoader.js";
+
+    const params = new URLSearchParams(location.search);
+    const yawDeg = Number(params.get("yaw") ?? 20);
+    const pitchDeg = Number(params.get("pitch") ?? 8);
+    const size = Number(params.get("size") ?? 640);
+    const clear = params.get("clear") ?? null;
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+    renderer.setSize(size, size);
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    if (clear) {
+      renderer.setClearColor(new THREE.Color(`#${clear}`), 1);
+    } else {
+      renderer.setClearColor(0x000000, 0);
+    }
+    document.body.appendChild(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    /*
+     * 三点光 + 半球环境光。
+     * 亮度对齐业主参考截图：中调玫粉 (~235,185,155)，高光不爆白——
+     * 所以主光别太猛、环境光给足，让暗面也有颜色。
+     */
+    const hemi = new THREE.HemisphereLight(0xfff2fa, 0xffdbde, 1.05);
+    scene.add(hemi);
+    const key = new THREE.DirectionalLight(0xfff6ee, 2.45);
+    key.position.set(2, 3, 2);
+    scene.add(key);
+    const fill = new THREE.DirectionalLight(0xfff0fa, 1.65);
+    fill.position.set(-2, 1.2, 1);
+    scene.add(fill);
+    const rim = new THREE.DirectionalLight(0xf2f7ff, 0.9);
+    rim.position.set(0, 2, -2.5);
+    scene.add(rim);
+    scene.add(new THREE.AmbientLight(0xffeef8, 0.82));
+
+    const loader = new GLTFLoader();
+    const status = document.getElementById("status");
+    status.textContent = "fetching glb…";
+    const res = await fetch("/3d.glb");
+    if (!res.ok) {
+      status.textContent = `glb fetch FAIL: ${res.status}`;
+      throw new Error(`glb fetch ${res.status}`);
+    }
+    const buffer = await res.arrayBuffer();
+    status.textContent = `glb ${(buffer.byteLength / 1048576).toFixed(1)}MB, parsing…`;
+    loader.parse(
+      buffer,
+      "",
+      (gltf) => {
+        status.textContent = "loaded, rendering…";
+      const model = gltf.scene;
+      /*
+       * 肤色校色：模型贴图偏珊瑚橘，业主参考截图的皮肤是玫瑰粉，
+       * 用材质色按通道微调（R 略降、G/B 上抬）去对齐 (~240,187,157)。
+       */
+      model.traverse((obj) => {
+        const mat = obj.material;
+        if (mat && mat.map) {
+          mat.color.setRGB(1.04, 1.18, 1.22);
+        }
+      });
+      // 居中 + 缩放到单位盒
+      const box = new THREE.Box3().setFromObject(model);
+      const center = box.getCenter(new THREE.Vector3());
+      const dims = box.getSize(new THREE.Vector3());
+      const scale = 2.1 / Math.max(dims.x, dims.y, dims.z);
+      model.position.sub(center);
+      model.scale.setScalar(scale);
+      scene.add(model);
+
+      const camera = new THREE.PerspectiveCamera(32, 1, 0.1, 100);
+      const yaw = (yawDeg * Math.PI) / 180;
+      const pitch = (pitchDeg * Math.PI) / 180;
+      const dist = 4.7;
+      camera.position.set(
+        Math.sin(yaw) * Math.cos(pitch) * dist,
+        Math.sin(pitch) * dist,
+        Math.cos(yaw) * Math.cos(pitch) * dist,
+      );
+      camera.lookAt(0, 0, 0);
+
+      renderer.render(scene, camera);
+      // 渲染完成：状态栏淡出，不污染截图画
+      status.style.opacity = "0";
+      window.__renderReady = true;
+    },
+      undefined,
+      (err) => {
+        status.textContent = `parse ERROR: ${err}`;
+        window.__errors.push(String(err));
+      },
+    );
+  </script>
+</body>
+</html>

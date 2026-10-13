@@ -380,15 +380,15 @@ html[data-vx-hidden="1"] .vx-signboard * {
   animation-play-state: paused !important;
 }
 
-/* ============================================================ DDY 走到栏边丢菜 */
+/* ============================================================ DDY 应召走位 */
 
 /*
- * 出场时序（和 RoomView 里 npcActive 的时间窗对齐）：
- *   0      ~ 1.15s  从右侧栏外走进来
- *   1.15s  ~ 1.75s  停下、抬手丢菜（此刻正好是事件时间戳）
- *   1.75s  ~ 3.2s   站在原地挥挥手
- *   3.2s   ~ 4.4s   转身走回栏外
- * 动画是 both 填充，所以走完后停在栏外。
+ * 出场时序（和 RoomView 里 npcShow 的时间窗对齐）：
+ *   0      ~ 1.15s  从右侧画面外走到目标位置（蔬菜落点 / 被摸的猪身边）
+ *   1.15s  ~ 1.75s  停下、做手里那件事（丢菜 / 抚摸）
+ *   1.75s  ~ 3.2s   站在原地停一停
+ *   3.2s   ~ 4.4s   转身走回画面外
+ * 入场距离由 --vx-npc-enter（px）按目标落点算好传入；动画是 both 填充。
  */
 .vx-npc {
   position: absolute;
@@ -399,17 +399,20 @@ html[data-vx-hidden="1"] .vx-signboard * {
 
 .vx-npc-walker {
   position: absolute;
-  right: 14px;
-  bottom: 30px;
-  width: 74px;
-  height: 92px;
+  /* 横向中心由内联 left（%）指定，margin 自身宽度的一半居中 */
+  left: 85%;
+  /* 跟猪的体型对齐：比大猪略高一截（猪 132px 时代的身板） */
+  margin-left: -50px;
+  bottom: 40px;
+  width: 100px;
+  height: 124px;
   animation: vx-npc-visit 4.4s cubic-bezier(0.33, 0.9, 0.4, 1) both;
   will-change: transform;
 }
 
 @keyframes vx-npc-visit {
   0% {
-    transform: translateX(140%);
+    transform: translateX(var(--vx-npc-enter, 130px));
     opacity: 0;
   }
   6% {
@@ -428,7 +431,7 @@ html[data-vx-hidden="1"] .vx-signboard * {
     opacity: 1;
   }
   100% {
-    transform: translateX(140%);
+    transform: translateX(var(--vx-npc-enter, 130px));
     opacity: 0;
   }
 }
@@ -462,7 +465,7 @@ html[data-vx-hidden="1"] .vx-signboard * {
   }
 }
 
-/* 挥手的胳膊：只在中段抬手挥两下 */
+/* 挥手的胳膊：丢菜时在中段抬手抛出去 */
 .vx-npc-arm {
   transform-box: fill-box;
   transform-origin: 20% 90%;
@@ -474,14 +477,47 @@ html[data-vx-hidden="1"] .vx-signboard * {
   28% {
     rotate: 0deg;
   }
-  44%,
+  40% {
+    rotate: -78deg;
+  }
+  46% {
+    rotate: -96deg;
+  }
+  54% {
+    rotate: -70deg;
+  }
+  62%,
   70% {
     rotate: -78deg;
   }
-  52%,
-  62% {
-    rotate: -58deg;
+  100% {
+    rotate: 0deg;
   }
+}
+
+/* 抚摸的胳膊：摸一摸时弯腰朝猪背上轻挠两下 */
+.vx-npc-mission-pat .vx-npc-arm {
+  animation: vx-npc-pat-arm 4.4s ease-in-out both;
+}
+
+@keyframes vx-npc-pat-arm {
+  0%,
+  30% {
+    rotate: 0deg;
+  }
+  40% {
+    rotate: -104deg;
+  }
+  48% {
+    rotate: -84deg;
+  }
+  56% {
+    rotate: -104deg;
+  }
+  64% {
+    rotate: -84deg;
+  }
+  72%,
   100% {
     rotate: 0deg;
   }
@@ -534,7 +570,7 @@ html[data-theme="dark"] .vx-npc-name {
   .vx-npc-walker {
     width: 56px;
     height: 70px;
-    right: 10px;
+    margin-left: -28px;
     bottom: 26px;
   }
 

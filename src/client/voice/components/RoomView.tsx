@@ -8,6 +8,7 @@ import {
   type FormEvent,
   type MouseEvent as ReactMouseEvent,
 } from "react";
+import { createPortal } from "react-dom";
 import {
   Ban,
   Carrot,
@@ -21,6 +22,7 @@ import {
   HeartHandshake,
   Check,
   Copy as CopyIcon,
+  ArrowUpFromLine,
   Laugh,
   Lock,
   LockOpen,
@@ -55,11 +57,18 @@ const INTERACT_ACTIONS: ReadonlyArray<{ kind: InteractKind; label: string; Icon:
   { kind: "hug", label: "抱一抱", Icon: HeartHandshake },
   { kind: "boo", label: "吓一跳", Icon: Ghost },
   { kind: "cheer", label: "撒个花", Icon: PartyPopper },
+  { kind: "hoist", label: "吊起来", Icon: ArrowUpFromLine },
 ];
 import { Banner, Spinner, Toggle } from "./ui";
-import { PigActor, PenFrame, PenScatter, useElementSize } from "./PigPen";
+import { ViewportPopover } from "./ViewportPopover";
+import { PigActor, PenFrame, PenScatter, useElementSize, ENTRY_TOTAL_MS } from "./PigPen";
 import { NpcVisitor, PenPropsLayer, type PenPropEntry } from "./PenProps";
-import { NPC_NAME, phaseForActor } from "../pen";
+import { NPC_NAME, feetViewportPx, phaseForActor } from "../pen";
+import pigJoinUrl from "../assets/pig-join.webp?url";
+import pigHoistUrl from "../assets/pig-hoist.webp?url";
+import pigDanceUrl from "../assets/pig-dance.webp?url";
+import pigIdleUrl from "../assets/pig-idle.webp?url";
+import pigWalkUrl from "../assets/pig-walk.webp?url";
 
 interface AudioMenuState {
   peerId: string;
@@ -159,10 +168,11 @@ export function RoomView({
   ) => void;
   /** 猪圈事件（房主广播下来，各端同步播放）。 */
   penEvents: PenPropEntry[];
-  /** 猪把横向位置报给引擎。 */
-  onReportPenActor: (id: string, x: number) => void;
-  /** 取某头猪最近上报的横向位置，用来把那一坨放在它脚边。 */
+  /** 猪把当前位置报给引擎（横向 0~1 + 纵深 0~1）。 */
+  onReportPenActor: (id: string, x: number, lane: number) => void;
+  /** 取某头猪最近上报的横向位置，用来把"摸一摸"的互动对准它。 */
   getPenPosition: (id: string) => number | undefined;
+  /** 取某头猪最近上报的纵深（0=最远 1=最近）。 */
   /** 对方的音频被浏览器拦下了（用户听不见别人说话）。 */
   audioBlocked: boolean;
   /** 借一次点击恢复远端音频播放。 */
@@ -186,29 +196,54 @@ export function RoomView({
   const self = members.find((member) => member.local) ?? null;
   const muted = self?.muted ?? true;
   const [copied, setCopied] = useState<"code" | "invite" | null>(null);
+
+  /*
+   * 成员第一次出现在名册的时刻：新成员入圈要播"空降入场"。
+   * 关键规则：
+   * - 首次渲染时名册里**已经在房**的成员（房主等）不播——对进房的
+   *   客人来说，"房主本来就在"，不该跟着一起空降；
+   * - 自己（本端用户）首次进房要播——"我来了"的仪式感；
+   * - 之后再出现的新成员（后续进房的人）都要播。
+   * 成员离开就清掉记录——断线重连回来会再空降一次，算是意外之喜。
+   */
+  const joinAtRef = useRef(new Map<string, number>());
+  const seededRef = useRef(false);
+  const joinAt = useMemo(() => {
+    const map = joinAtRef.current;
+    const now = Date.now();
+    /*
+     * 种子时刻 = 名册"首次非空"的那一帧（握手期间名册可能先空后满，
+     * 不能用空名册那一帧当种子，否则房主随后的出现会被误判成新成员）。
+     */
+    const firstRoster = !seededRef.current && members.length > 0;
+    if (members.length > 0) seededRef.current = true;
+    for (const member of members) {
+      if (map.has(member.id)) continue;
+      map.set(member.id, firstRoster && !member.local ? -ENTRY_TOTAL_MS : now);
+    }
+    for (const id of [...map.keys()]) {
+      if (!members.some((member) => member.id === id)) map.delete(id);
+    }
+    return new Map(map);
+  }, [members]);
+
+  // 预加载核心状态素材（入圈/吊起来/蹦迪/待机/走路），避免状态切换时白屏等图。
+  useEffect(() => {
+    for (const url of [pigJoinUrl, pigHoistUrl, pigDanceUrl, pigIdleUrl, pigWalkUrl]) {
+      const img = new Image();
+      img.src = url;
+    }
+  }, []);
+
   const speakingSet = useMemo(() => new Set(speaking), [speaking]);
   const { ref: stageRef, width: stageWidth, height: stageHeight } = useElementSize<HTMLElement>();
 
-  /**
-   * 跑道分配（0=最远，1=最近），必须和 PigActor 内部算法一致，
-   * 否则那一坨会拉在错误的深度上。
-   */
-  const laneByActor = useMemo(() => {
-    const map = new Map<string, number>();
-    const groundTop = Math.round(stageHeight * 0.13);
-    const groundHeight = Math.max(0, stageHeight - groundTop - 8);
-    const actors = members.map((member, index) => ({ member, index }));
-    for (const { member, index } of actors) {
-      const crowd = members.length > 5 ? 0.68 : members.length > 3 ? 0.8 : members.length > 1 ? 0.92 : 1;
-      const size = Math.round((member.isHost ? 132 : 88) * crowd);
-      const lanes = Math.max(1, Math.min(3, Math.floor(groundHeight / (size * 0.8)) || 1));
-      const lane = index % lanes;
-      map.set(member.id, lanes === 1 ? 0.5 : lane / Math.max(1, lanes - 1));
-    }
-    return map;
-  }, [members, stageHeight]);
-
-  const laneOf = useCallback((actorId: string) => laneByActor.get(actorId) ?? 0.5, [laneByActor]);
+  /** 舞台底边到视口底部的距离（px）：视口脚部带 → 舞台内 bottom 的换算用。 */
+  const stageBottomGap = useMemo(() => {
+    const rect = stageRef.current?.getBoundingClientRect();
+    return rect ? Math.max(0, window.innerHeight - rect.bottom) : 0;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stageWidth, stageHeight]);
 
   /*
    * 动作阶段（走过去 / 正在吃 / 使劲 / 闻一闻）是按时间戳推算的，
@@ -222,20 +257,31 @@ export function RoomView({
   }, [penEvents.length]);
 
   /**
-   * DDY 正在出场吗。
-   * 出场动画是"走过来 1.2s → 丢菜 → 挥挥手 → 走回去 1.2s"，
-   * 所以从最近一次丢菜往前多留 1.2s、往后留 4.2s。
+   * DDY 这次出场要做什么。
+   *
+   * - "feed"：最近的 DDY 丢菜事件（定时丢菜，或成员点"投喂"）——走到蔬菜
+   *   落点旁把菜抛出去。出场窗口与 4.4s 的走位动画对齐（前留 1.2s 入场）。
+   * - "pat"：最近的"摸一摸"互动——走到目标猪身边弯腰摸两下，窗口同样是 4.4s。
+   * 两者同时发生时取较晚的那个。
    */
-  const npcActive = useMemo(() => {
+  const npcShow = useMemo(() => {
+    let best: { mission: "feed" | "pat"; ts: number; x: number } | null = null;
     for (const entry of penEvents) {
       const event = entry.event;
-      if (event.kind !== "toss") continue;
-      // 成员投喂的菜 npc 为空，不该把 DDY 引出来。
-      if (event.npc !== NPC_NAME) continue;
-      if (now >= event.ts - 1200 && now <= event.ts + 4200) return true;
+      if (event.kind !== "toss" || event.npc !== NPC_NAME) continue;
+      if (now < event.ts - 1200 || now > event.ts + 4200) continue;
+      if (!best || event.ts > best.ts) best = { mission: "feed", ts: event.ts, x: event.veg.x };
     }
-    return false;
-  }, [penEvents, now]);
+    for (const item of interactions) {
+      if (item.event.kind !== "pat") continue;
+      const ts = item.event.ts;
+      if (now < ts || now > ts + 4400) continue;
+      const px = getPenPosition(item.event.to);
+      if (px === undefined) continue;
+      if (!best || ts > best.ts) best = { mission: "pat", ts, x: px };
+    }
+    return best;
+  }, [penEvents, interactions, now, getPenPosition]);
 
   /** 每头猪最近一次"冲着它来"的互动（戳/打招呼/投喂），用于头顶气泡。 */
   const reactionByActor = useMemo(() => {
@@ -244,9 +290,9 @@ export function RoomView({
     return map;
   }, [interactions]);
 
-  /** 该猪此刻要吃的那棵菜在哪儿（0~1）；没有就返回 undefined。 */
-  const eatTargetX = useCallback(
-    (actorId: string): number | undefined => {
+  /** 该猪此刻要吃的那棵菜在哪（横向 0~1 + 落地高度 px）；没有就返回 undefined。 */
+  const eatTarget = useCallback(
+    (actorId: string): { x: number; bottomPx: number } | undefined => {
       // 最近一次"这头猪吃"发生在什么时候：比它早的菜都已经吃掉了
       let lastEatAt = 0;
       for (const entry of penEvents) {
@@ -257,7 +303,7 @@ export function RoomView({
         }
       }
       // 取还没被吃掉的那棵（最新的）
-      let best: number | undefined;
+      let best: { x: number; bottomPx: number } | undefined;
       let bestTs = -1;
       for (const entry of penEvents) {
         const event = entry.event;
@@ -265,12 +311,16 @@ export function RoomView({
         if (event.ts <= lastEatAt) continue;
         if (event.ts > bestTs) {
           bestTs = event.ts;
-          best = event.veg.x;
+          // 与 PenPropsLayer 的蔬菜定位完全一致（视口脚部带 8%~50%）
+          best = {
+            x: event.veg.x,
+            bottomPx: feetViewportPx(event.veg.lane, window.innerHeight) - stageBottomGap,
+          };
         }
       }
       return best;
     },
-    [penEvents],
+    [penEvents, stageHeight],
   );
   const listRef = useRef<HTMLDivElement | null>(null);
   const [draft, setDraft] = useState("");
@@ -415,24 +465,23 @@ export function RoomView({
 
   return (
     <div className="vx-page vx-room">
-      {audioMenu || voiceOpen ? (
+      {audioMenu || voiceOpen ? createPortal(
         <div
           className="vx-menu-backdrop"
           onClick={() => {
             closeAudioMenu();
             setVoiceOpen(false);
           }}
-        />
+        />,
+        document.body,
       ) : null}
       {audioMenu ? (
         <>
-          <div
-            className="vx-member-menu"
-            style={{
-              left: Math.min(Math.max(audioMenu.x - 120, 8), window.innerWidth - 256),
-              top: Math.min(audioMenu.y + 12, window.innerHeight - 200),
-            }}
-            onClick={(event) => event.stopPropagation()}
+          <ViewportPopover
+            key={audioMenu.peerId}
+            x={audioMenu.x}
+            y={audioMenu.y}
+            label={audioMenu.self ? "麦克风音量" : `${audioMenu.name}的音量与互动`}
           >
             <div className="vx-member-menu-head">
               {audioMenu.self ? (
@@ -526,7 +575,7 @@ export function RoomView({
                 ) : null}
               </>
             )}
-          </div>
+          </ViewportPopover>
         </>
       ) : null}
       {/*
@@ -670,6 +719,7 @@ export function RoomView({
           );
           return (
             <PigActor
+              actorId={member.id}
               key={member.id}
               index={index}
               total={members.length}
@@ -683,11 +733,13 @@ export function RoomView({
               label={label}
               action={action}
               phase={phase}
-              targetX={eatTargetX(member.id)}
-              laneRatio={laneByActor.get(member.id) ?? 0.5}
+              targetX={eatTarget(member.id)}
               mediaState={member.local ? undefined : mediaStates[member.id]}
               reaction={reactionByActor.get(member.id)}
-              onReportPosition={(x) => onReportPenActor(member.id, x)}
+              entryAt={joinAt.get(member.id)}
+              followEnabled={!isHost}
+              feedCount={member.local ? 0 : feedCounts[member.personId] ?? 0}
+              onReportPosition={(x, lane) => onReportPenActor(member.id, x, lane)}
               badges={
                 <>
                   {member.isHost ? <b>房主</b> : null}
@@ -704,17 +756,17 @@ export function RoomView({
         {/* 地面点缀放在猪之后：这样猪在草地"后面"走动，而不是盖在草上 */}
         <PenScatter seed={invite ? invite.code.length * 7 + invite.code.charCodeAt(0) : 3} />
 
-        {/* 道具层：DDY 丢的蔬菜、猪拉的那一坨 */}
-        <PenPropsLayer
-          entries={penEvents}
-          laneOf={laneOf}
-          xOf={getPenPosition}
-          fallbackX={0.14 + 0.1 / Math.max(1, members.length)}
-          now={now}
-        />
+        {/* 道具层：投喂落下的蔬菜 */}
+        <PenPropsLayer entries={penEvents} stageBottomGap={stageBottomGap} now={now} />
 
-        {/* DDY 本尊：从右侧栏外走过来、在栏边丢菜、再走回去 */}
-        <NpcVisitor name={NPC_NAME} active={npcActive} />
+        {/* DDY 本尊：从右侧走进来，到目标位置丢菜或抚摸，再走回去 */}
+        <NpcVisitor
+          name={NPC_NAME}
+          active={npcShow !== null}
+          mission={npcShow?.mission ?? "feed"}
+          targetX={npcShow?.x ?? 0.8}
+          stageWidth={stageWidth}
+        />
 
         {invite && members.length === 1 ? (
           <div className="vx-empty vx-empty-pen">
@@ -941,7 +993,7 @@ export function RoomView({
   );
 }
 
-/** 空圈等待示意用的小猪头（与真猪同配色，仅作装饰，不代表已有成员）。 */
+/** 空圈等待示意用的小猪头（业主点名保留的原版，不要动它）。 */
 function WaitingPigHead() {
   return (
     <svg viewBox="0 0 64 58" aria-hidden="true">

@@ -489,3 +489,31 @@ describe("wire message parsing", () => {
     expect(welcome && "locked" in welcome ? welcome.locked : false).toBe(true);
   });
 });
+
+describe("pen-poses（房主权威猪位）", () => {
+  it("解析合法快照并夹取越界值", () => {
+    const parsed = parseHostMessage({
+      t: "pen-poses",
+      ts: 123,
+      poses: [
+        { id: "a", x: 0.42, lane: 0.7, facing: -1 },
+        { id: "b", x: 1.8, lane: -0.5 },
+      ],
+    });
+    expect(parsed).toEqual({
+      t: "pen-poses",
+      ts: 123,
+      poses: [
+        { id: "a", x: 0.42, lane: 0.7, facing: -1 },
+        { id: "b", x: 1, lane: 0, facing: 1 },
+      ],
+    });
+  });
+
+  it("非法输入整体丢弃（旧端收到也不崩）", () => {
+    expect(parseHostMessage({ t: "pen-poses", ts: 1, poses: [] })).toBeNull();
+    expect(parseHostMessage({ t: "pen-poses", ts: 1, poses: [{ id: "a" }] })).toBeNull();
+    expect(parseHostMessage({ t: "pen-poses", poses: [{ id: "a", x: 0, lane: 0 }] })).toBeNull();
+    expect(parseHostMessage({ t: "pen-poses", ts: 1, poses: "nope" })).toBeNull();
+  });
+});

@@ -35,16 +35,12 @@ import {
   type HostMessage,
   type InteractEvent,
   type InteractKind,
+  type PenPose,
   type WireMember,
 } from "./protocol";
 import { sessionScopedId, type Identity } from "./identity";
-import {
-  PenDirector,
-  VEGETABLE_KINDS,
-  isPenFast,
-  nearestActor,
-  type PenEvent,
-} from "./pen";
+import { NPC_NAME, PenDirector, VEGETABLE_KINDS, type PenEvent } from "./pen";
+import { readPenSnapshots } from "./pen-registry";
 import {
   SOUND_NOTES,
   shouldPlaySound,
@@ -159,6 +155,8 @@ export interface EngineEvents {
   ready: (invite: Invite) => void;
   /** 猪圈里发生了一件事（房主广播，含房主自己）。 */
   pen: (event: PenEvent) => void;
+  /** 房主广播的权威猪位快照（访客据此平滑跟随；房主端不会收到）。 */
+  penPoses?: (poses: PenPose[], ts: number) => void;
   /** 房间标志变化（例如是否上锁）。 */
   roomFlags: (flags: { locked: boolean }) => void;
   /** 成员间的小猪互动（戳一戳 / 打招呼 / 投喂）。 */
@@ -206,6 +204,48 @@ const SPEAKING_POLL_MS = 50;
 /** 收音上报的最小间隔，避免闪烁把动画打得乱跳；起音不节流。 */
 const SPEAKING_EMIT_MS = 100;
 
+let rnnoiseWarmed = false;
+/**
+ * 预热 AI 降噪（RNNoise）的 worklet/wasm 资源：App 一打开就静默预取
+ * （不需要麦克风权限），进房开启智能降噪时秒生效，不用现场下 ~300KB。
+ * 采集约束（回声消除/自动增益）按 Web 标准只能在采集激活时生效，
+ * 无法在页面打开时"预设"——这个预热只管降噪资源本身。
+ */
+export function preloadRnnoise(): void {
+  if (rnnoiseWarmed || typeof fetch === "undefined") return;
+  rnnoiseWarmed = true;
+  void fetch(rnnoiseWasmUrl, { cache: "force-cache" }).catch(() => {});
+  void fetch(rnnoiseSimdWasmUrl, { cache: "force-cache" }).catch(() => {});
+  void fetch(rnnoiseWorkletUrl, { cache: "force-cache" }).catch(() => {});
+}
+
+/*
+ * 猪位广播用 Worker 计时：浏览器会把后台标签页的 setInterval 节流到
+ * 一分钟一次（5 分钟后），而 Worker 的计时器不受节流——房主切后台，
+ * 访客依然每 600ms 收到猪位，画面不会冻结。
+ */
+let stopPoseTicker: (() => void) | null = null;
+function startPoseTicker(onTick: () => void): void {
+  stopPoseTicker?.();
+  if (typeof Worker === "undefined") {
+    // 单测 / 无 Worker 环境：退化为普通定时器
+    const id = setInterval(onTick, 50);
+    stopPoseTicker = () => clearInterval(id);
+    return;
+  }
+  const source =
+    "let t=null;onmessage=(e)=>{if(e.data==='start'&&!t)t=setInterval(()=>postMessage(0),600);" +
+    "if(e.data==='stop'&&t){clearInterval(t);t=null;}}";
+  const worker = new Worker(URL.createObjectURL(new Blob([source], { type: "text/javascript" })));
+  worker.onmessage = () => onTick();
+  worker.postMessage("start");
+  stopPoseTicker = () => worker.terminate();
+}
+function stopPoseTickerFn(): void {
+  stopPoseTicker?.();
+  stopPoseTicker = null;
+}
+
 export class VoiceMesh {
   private peer: Peer | null = null;
   private localStream: MediaStream | null = null;
@@ -245,6 +285,8 @@ export class VoiceMesh {
   private readonly pen = new PenDirector();
   /** 各端上报的猪的横向位置（0~1），用来挑最近的猪去吃菜。 */
   private penActorX = new Map<string, number>();
+  /** 各猪最近上报的纵深（0=最远 1=最近），仅本机视图用。 */
+  private penActorLane = new Map<string, number>();
   /**
    * 等待 welcome 的超时定时器。
    * 必须在收到 welcome 时清掉：否则进房成功 8 秒后它照样触发，
@@ -327,6 +369,12 @@ export class VoiceMesh {
   async host(identity: Identity, settings: VoiceSettings, muted: boolean): Promise<void> {
     if (this.destroyed) return;
     this.hosting = true;
+    /*
+     * 房主权威猪位广播：房主本地在模拟所有猪（每个 PigActor 都在上报），
+     * 定期把这些位置播给访客，让全房看到的是同一片猪圈。
+     * 用 Worker 计时驱动（后台不被节流）。
+     */
+    startPoseTicker(() => this.broadcastPoses());
     // 这里仍在用户点击的手势里，趁机解锁音频（否则远端流到达时会被自动播放策略拦下）
     this.unlockAudio();
     this.events.status("preparing");
@@ -369,7 +417,6 @@ export class VoiceMesh {
           this.startSpeakingLoop();
         }
         this.startHeartbeat();
-        this.startPenDirector();
         this.joined = true;
 
         this.emitMembers();
@@ -500,6 +547,7 @@ export class VoiceMesh {
   destroy(): void {
     if (this.destroyed) return;
     this.destroyed = true;
+    stopPoseTickerFn();
 
     this.timers.clear();
     this.welcomeDeadline = 0;
@@ -941,17 +989,22 @@ export class VoiceMesh {
     const now = Date.now();
     const baseX = this.penActorX.get(to) ?? 0.5;
     const x = Math.min(0.94, Math.max(0.06, baseX + (Math.random() < 0.5 ? -0.06 : 0.06)));
+    // 纵深跟目标猪当前所在对齐：菜落在它脚边那个深度，而不是永远落同一条道
+    const lane = this.penActorLane.get(to) ?? 0.5;
     const kind = VEGETABLE_KINDS[Math.floor(Math.random() * VEGETABLE_KINDS.length)]!;
     const toss: Extract<PenEvent, { kind: "toss" }> = {
       kind: "toss",
       id: `feed-${now}-${Math.floor(Math.random() * 1e6)}`,
       ts: now,
-      // 成员投喂不是 DDY 丢的，npc 留空（界面据此不放出 DDY）。
-      npc: "",
-      veg: { kind, x: Number(x.toFixed(3)), lane: 0.5 },
+      /*
+       * 成员投喂也走 DDY 应召：npc 标成 DDY，前端据此让饲养员走到目标猪
+       * 面前把菜抛出来（此前是凭空刷菜）。只是数据语义变化，线上格式没变。
+       */
+      npc: NPC_NAME,
+      veg: { kind, x: Number(x.toFixed(3)), lane: Number(lane.toFixed(3)) },
     };
     this.emitPen(toss);
-    this.timers.after(3000, () => {
+    this.timers.after(3600, () => {
       if (this.destroyed || !this.hosting || !this.members.has(to)) return;
       this.emitPen(this.pen.produceEat(Date.now(), to, kind));
     });
@@ -959,61 +1012,48 @@ export class VoiceMesh {
 
   // ------------------------------------------------------------------ 猪圈导演
 
-  /** 更新某头猪的横向位置（0~1），供"挑最近的猪去吃菜"使用。 */
-  reportPenActor(id: string, x: number): void {
+  /** 更新某头猪的横向位置（0~1）与纵深（0=最远 1=最近），供挑猪吃菜与蔬菜落点对位。 */
+  reportPenActor(id: string, x: number, lane = 0.5): void {
     if (!Number.isFinite(x)) return;
     this.penActorX.set(id, Math.min(1, Math.max(0, x)));
+    if (Number.isFinite(lane)) this.penActorLane.set(id, Math.min(1, Math.max(0, lane)));
   }
 
-  /** 开始让 DDY 偶尔丢蔬菜。 */
-  private startPenDirector(): void {
-    if (!this.hosting) return;
-    this.scheduleToss();
-  }
-
-  /**
-   * 排下一次丢蔬菜。
-   * 刻意在"有客人/没客人"上不做区分：自己一个人在圈里也会偶尔有菜丢进来。
-   */
-  private scheduleToss(): void {
-    // 调试用（?pen=fast，且已开启调试）把间隔压到几秒，方便人工确认动画
-    const fast = typeof location !== "undefined" ? isPenFast(location.search) : false;
-    const delay = fast ? 4000 : this.pen.nextTossDelay();
-    this.timers.after(delay, () => {
-      if (this.destroyed || !this.hosting) return;
-
-      const now = Date.now();
-      const toss = this.pen.produceToss(now, Math.max(1, this.penActorX.size || this.members.size));
-      this.emitPen(toss);
-
-      // 挑最近的猪来吃
-      const actors = Array.from(this.penActorX, ([id, x]) => ({ id, x }));
-      const actor = nearestActor(toss.veg.x, actors);
-      if (actor) {
-        const eatDelay = fast ? 2000 : this.pen.nextEatDelay();
-        this.timers.after(eatDelay, () => {
-          if (this.destroyed || !this.hosting) return;
-
-          const eatNow = Date.now();
-          this.emitPen(this.pen.produceEat(eatNow, actor, toss.veg.kind));
-
-          // 吃完过一会儿拉一泡
-          const poopDelay = fast ? 2500 : this.pen.nextPoopDelay();
-          this.timers.after(poopDelay, () => {
-            if (this.destroyed || !this.hosting) return;
-            this.emitPen(this.pen.producePoop(Date.now(), actor));
-          });
-        });
-      }
-
-      this.scheduleToss();
-    });
+  /** 某头猪最近上报的纵深（0=最远 1=最近）；没有上报过就 undefined。 */
+  getPenLane(id: string): number | undefined {
+    return this.penActorLane.get(id);
   }
 
   /** 广播一个猪圈事件；房主自己也当场播动画。 */
   private emitPen(event: PenEvent): void {
     this.broadcastHost({ t: "pen", event });
     this.events.pen(event);
+  }
+
+  /**
+   * 把每头猪的当前位播给访客（房主权威猪位，600ms 一次）。
+   * 位置优先从 pen-registry 的解析式快照读——不依赖 rAF，
+   * 房主切后台时访客看到的猪照样在走，而不是全房冻结。
+   */
+  private broadcastPoses(): void {
+    if (!this.hosting || this.guests.size === 0) return;
+    const snaps = readPenSnapshots();
+    const ids = new Set<string>([...this.penActorX.keys(), ...snaps.keys()]);
+    if (ids.size === 0) return;
+    const poses: PenPose[] = [];
+    for (const id of ids) {
+      const snap = snaps.get(id);
+      const x = snap ? snap.x : this.penActorX.get(id);
+      if (x === undefined) continue;
+      const lane = snap ? snap.lane : (this.penActorLane.get(id) ?? 0.5);
+      poses.push({
+        id,
+        x: Number(x.toFixed(3)),
+        lane: Number(lane.toFixed(2)),
+      });
+    }
+    if (poses.length === 0) return;
+    this.broadcastHost({ t: "pen-poses", ts: Date.now(), poses });
   }
 
   /**
@@ -1433,6 +1473,18 @@ export class VoiceMesh {
       }
       case "pen": {
         this.events.pen(message.event);
+        break;
+      }
+      case "pen-poses": {
+        /*
+         * 访客端：把权威位置写进本地地图（吃菜挑最近、蔬菜落点对位都读它），
+         * 再交给界面做平滑跟随。
+         */
+        for (const pose of message.poses) {
+          this.penActorX.set(pose.id, pose.x);
+          this.penActorLane.set(pose.id, pose.lane);
+        }
+        this.events.penPoses?.(message.poses, message.ts);
         break;
       }
       case "sound": {

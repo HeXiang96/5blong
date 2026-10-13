@@ -37,13 +37,6 @@ export type PenEvent =
       /** 吃菜的猪（成员 id）。 */
       actor: string;
       veg: VegetableKind;
-    }
-  | {
-      kind: "poop";
-      id: string;
-      ts: number;
-      /** 拉屎的猪（成员 id）。 */
-      actor: string;
     };
 
 /** NPC 管理员的名字，按需求固定。 */
@@ -58,9 +51,6 @@ export const VEGETABLE_LABEL: Record<VegetableKind, string> = {
   corn: "玉米",
   apple: "苹果",
 };
-
-/** DDY 丢蔬菜的间隔：偶尔来一次，别太频繁。 */
-export const TOSS_INTERVAL_MS = { min: 55_000, max: 150_000 };
 
 /**
  * 调试开关（正式包里默认关闭）。
@@ -93,33 +83,19 @@ export function isPenFast(search: string): boolean {
   return isPenDebug(search) && search.includes("pen=fast");
 }
 
-/** 从 `?pen=pose:eat|poop` 里取出要强制摆出的动作（仅调试可用）。 */
-export function debugPoseFrom(search: string): "eat" | "poop" | null {
+/** 从 `?pen=pose:eat` 里取出要强制摆出的动作（仅调试可用）。 */
+export function debugPoseFrom(search: string): "eat" | null {
   if (!isPenDebug(search)) return null;
-  const match = /pose:(eat|poop)/.exec(search);
-  return match ? (match[1] as "eat" | "poop") : null;
+  const match = /pose:(eat)/.exec(search);
+  return match ? (match[1] as "eat") : null;
 }
-
-/** 蔬菜落地到被吃掉之间的等待。 */
-export const EAT_DELAY_MS = { min: 6_000, max: 16_000 };
-
-/** 吃完到拉屎之间的间隔。 */
-export const POOP_DELAY_MS = { min: 14_000, max: 40_000 };
-
-/** 猪自己偶尔也会拉一次（跟吃没吃无关）。 */
-export const IDLE_POOP_MS = { min: 90_000, max: 260_000 };
 
 /** 一次事件在画面上保留多久。 */
 export const EVENT_TTL_MS = {
   toss: 40_000,
   /** 吃是"正在发生"的动作，短一点，别让猪看起来一直在嚼。 */
   eat: 2_400,
-  /** 那一坨留久一点，但下面还限制了最多同时显示几坨。 */
-  poop: 26_000,
 };
-
-/** 地上最多同时留几坨，免得越积越多看着像垃圾场。 */
-export const MAX_POOP_PILES = 3;
 
 export interface Random {
   (): number;
@@ -157,35 +133,15 @@ export function randomVegetable(
 }
 
 /**
- * 猪圈导演。房主持有一个实例，定时产出事件。
+ * 猪圈导演。房主持有一个实例，按需产出事件。
  *
- * 用法：调用 nextDelay() 拿到下次该等多久；到点后调用 produce()（丢菜）
- * 或 producePoop(actor)，把返回的事件广播出去。
+ * 现在的职责很薄：投喂链路里的 eat 事件仍走 produceEat；
+ * 定时刷食物已按需求移除（食物只能靠投喂）。
  */
 export class PenDirector {
   private lastVegX: number | undefined;
 
   constructor(private readonly random: Random = Math.random) {}
-
-  /** 下一次丢蔬菜要等多久。 */
-  nextTossDelay(): number {
-    return randomBetween(this.random, TOSS_INTERVAL_MS.min, TOSS_INTERVAL_MS.max);
-  }
-
-  /** 距离吃完还有多久。 */
-  nextEatDelay(): number {
-    return randomBetween(this.random, EAT_DELAY_MS.min, EAT_DELAY_MS.max);
-  }
-
-  /** 吃完之后多久拉屎。 */
-  nextPoopDelay(): number {
-    return randomBetween(this.random, POOP_DELAY_MS.min, POOP_DELAY_MS.max);
-  }
-
-  /** 猪自己闲得无聊拉一泡。 */
-  nextIdlePoopDelay(): number {
-    return randomBetween(this.random, IDLE_POOP_MS.min, IDLE_POOP_MS.max);
-  }
 
   /** 生成"DDY 丢蔬菜"。只有一头猪时收窄落点，避开右侧的邀请提示。 */
   produceToss(now: number, pigCount = 2): Extract<PenEvent, { kind: "toss" }> {
@@ -205,11 +161,6 @@ export class PenDirector {
   produceEat(now: number, actor: string, veg: VegetableKind): Extract<PenEvent, { kind: "eat" }> {
     return { kind: "eat", id: `eat-${now}-${actor}`, ts: now, actor, veg };
   }
-
-  /** 生成"某头猪拉屎"。 */
-  producePoop(now: number, actor: string): Extract<PenEvent, { kind: "poop" }> {
-    return { kind: "poop", id: `poop-${now}-${actor}`, ts: now, actor };
-  }
 }
 
 /** 事件过期时间：到点就从画面上撤掉。 */
@@ -225,14 +176,26 @@ export function pruneEvents(
   return events.filter((entry) => entry.expiresAt > now);
 }
 
+/**
+ * 纵深（lane 0~1）↔ 视口脚部带。
+ *
+ * 草坡背景是 fixed 到视口的，所以猪/菜的纵深必须按**视口高度**归一：
+ * 脚只允许落在视口高度的 [8%, 50%] 区间内（上不越过天际线，下不踩进控制栏）。
+ * 这也是跨分辨率同步的基础——同一 lane 在任何窗口高度都落在同一视口高度。
+ */
+export const FEET_MIN_VH = 0.08;
+export const FEET_MAX_VH = 0.5;
+
+/** lane（0=最远 1=最近）→ 脚部距视口底部的像素。 */
+export function feetViewportPx(lane: number, innerHeight: number): number {
+  const l = Math.min(1, Math.max(0, lane));
+  return innerHeight * (FEET_MIN_VH + (FEET_MAX_VH - FEET_MIN_VH) * l);
+}
+
 /** 猪走向蔬菜要多久。 */
 export const EAT_APPROACH_MS = 5_000;
 /** 走到之后低头吃多久（吃完菜才消失）。 */
 export const EAT_MUNCH_MS = 3_200;
-/** 蹲着使劲多久（那一坨在这段时间里从屁股后面冒出来落地）。 */
-export const POOP_STRAIN_MS = 2_600;
-/** 拉完回过头闻一闻多久。 */
-export const POOP_SNIFF_MS = 2_600;
 
 /**
  * 把横向位置夹回允许范围。
@@ -248,27 +211,17 @@ export function clampToRange(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
-/** 从 CSS 的 left 值里解析出像素数；解析不出来返回 null。 */
-export function parsePositionPx(left: string): number | null {
-  const value = Number.parseFloat(left);
-  return Number.isFinite(value) ? value : null;
-}
-
 export type PenActionPhase =
   | "none"
   /** 正在走向蔬菜 */
   | "approach"
   /** 已走到蔬菜前，低头在吃 */
-  | "munch"
-  /** 蹲下使劲，那一坨正冒出来 */
-  | "strain"
-  /** 闻一闻自己刚拉的 */
-  | "sniff";
+  | "munch";
 
 /**
  * 某头猪此刻的动作阶段。
  *
- * 吃分两段（走过去 → 低头吃），拉分两段（使劲 → 闻一闻）。
+ * 吃分两段（走过去 → 低头吃）。
  * 用 `now` 与事件时间戳推算，所以同一份事件在任何端都会得到一致的画面，
  * 不需要额外广播"进行到第几段"。
  */
@@ -276,25 +229,13 @@ export function phaseForActor(
   events: readonly PenEvent[],
   actorId: string,
   now: number,
-): { action: "none" | "eat" | "poop"; phase: PenActionPhase } {
+): { action: "none" | "eat"; phase: PenActionPhase } {
   const matches = (actor: string) => actor === actorId || actor === "*";
-  let result: { action: "none" | "eat" | "poop"; phase: PenActionPhase } = {
+  let result: { action: "none" | "eat"; phase: PenActionPhase } = {
     action: "none",
     phase: "none",
   };
 
-  // 先算拉（优先级低，会被吃覆盖）
-  for (const event of events) {
-    if (event.kind !== "poop" || !matches(event.actor)) continue;
-    const elapsed = now - event.ts;
-    if (elapsed < 0 || elapsed > POOP_STRAIN_MS + POOP_SNIFF_MS) continue;
-    result =
-      elapsed < POOP_STRAIN_MS
-        ? { action: "poop", phase: "strain" }
-        : { action: "poop", phase: "sniff" };
-  }
-
-  // 再算吃（覆盖拉的显示）
   for (const event of events) {
     if (event.kind !== "eat" || !matches(event.actor)) continue;
     const elapsed = now - event.ts;
@@ -312,40 +253,17 @@ export function phaseForActor(
 export function actionForActor(
   events: readonly PenEvent[],
   actorId: string,
-): "none" | "eat" | "poop" {
-  let action: "none" | "eat" | "poop" = "none";
+): "none" | "eat" {
+  let action: "none" | "eat" = "none";
   for (const event of events) {
     // actor 为 "*" 表示调试用的"所有猪都做这个动作"
     if (event.kind === "eat" && (event.actor === actorId || event.actor === "*")) {
       action = "eat";
-    } else if (
-      event.kind === "poop" &&
-      (event.actor === actorId || event.actor === "*") &&
-      action === "none"
-    ) {
-      action = "poop";
     }
   }
   return action;
 }
 
-/** 挑选一头离蔬菜最近的猪来吃（按跑道横向位置近似）。 */
-export function nearestActor(
-  x: number,
-  actors: { id: string; x: number }[],
-): string | null {
-  if (actors.length === 0) return null;
-  let best = actors[0]!;
-  let bestDistance = Math.abs(best.x - x);
-  for (const actor of actors.slice(1)) {
-    const distance = Math.abs(actor.x - x);
-    if (distance < bestDistance) {
-      best = actor;
-      bestDistance = distance;
-    }
-  }
-  return best.id;
-}
 
 /**
  * 算出哪些蔬菜已经被吃掉了（返回被吃掉的蔬菜 id）。

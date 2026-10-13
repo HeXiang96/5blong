@@ -1,11 +1,9 @@
-import { MAX_POOP_PILES, POOP_STRAIN_MS, VEGETABLE_LABEL, EAT_APPROACH_MS, consumedVegetableIds, type PenEvent } from "../pen";
+import { VEGETABLE_LABEL, EAT_APPROACH_MS, feetViewportPx, consumedVegetableIds, type PenEvent } from "../pen";
 import { Vegetable } from "./Vegetable";
 
 /**
- * 猪圈里的道具层：DDY 丢进来的蔬菜、以及猪拉在地上的那一坨。
- *
- * 蔬菜用百分比横向定位，窗口尺寸变化时仍落在原处；
- * 那一坨按猪的跑道对齐，看起来就是它刚拉在那儿。
+ * 猪圈里的道具层：投喂时 DDY 丢进来的蔬菜。
+ * 蔬菜用百分比横向定位，窗口尺寸变化时仍落在原处。
  */
 
 export interface PenPropEntry {
@@ -15,17 +13,13 @@ export interface PenPropEntry {
 
 interface PenPropsLayerProps {
   entries: PenPropEntry[];
-  /** 成员 id → 跑道纵向比例（0=最远，1=最近）。 */
-  laneOf: (actorId: string) => number;
-  /** 成员 id → 最新上报的横向位置（0~1）；没有就返回 undefined。 */
-  xOf: (actorId: string) => number | undefined;
-  /** 兜底横向位置（例如调试用的通配符没有真实位置）。 */
-  fallbackX: number;
+  /** 舞台底边到视口底部的距离（px）：把"视口脚部带"换算成舞台内 bottom 用。 */
+  stageBottomGap: number;
   /** 当前时间，用来判断吃进行到哪一段。 */
   now: number;
 }
 
-export function PenPropsLayer({ entries, laneOf, xOf, fallbackX, now }: PenPropsLayerProps) {
+export function PenPropsLayer({ entries, stageBottomGap, now }: PenPropsLayerProps) {
   // 哪些蔬菜已经被吃掉（配对规则见 pen.ts，那里有单测覆盖）。
   // 注意：吃分两段，猪要先走过去——所以只有进入"低头吃"才算真吃掉。
   const munching = entries.filter(
@@ -37,15 +31,6 @@ export function PenPropsLayer({ entries, laneOf, xOf, fallbackX, now }: PenProps
     (entry): entry is PenPropEntry & { event: Extract<PenEvent, { kind: "toss" }> } =>
       entry.event.kind === "toss" && !consumed.has(entry.event.id),
   );
-  const piles = entries
-    .filter(
-      (entry): entry is PenPropEntry & { event: Extract<PenEvent, { kind: "poop" }> } =>
-        entry.event.kind === "poop",
-    )
-    // 只留最近几坨，否则地上会越积越多
-    .sort((a, b) => b.event.ts - a.event.ts)
-    .slice(0, MAX_POOP_PILES);
-
   return (
     <div className="vx-pen-props" aria-hidden="true">
       {veggies.map(({ event }) => (
@@ -54,9 +39,16 @@ export function PenPropsLayer({ entries, laneOf, xOf, fallbackX, now }: PenProps
           className="vx-veg"
           style={{
             left: `${(event.veg.x * 100).toFixed(2)}%`,
-            // 纵向和猪的跑道同一套映射（6%~68%），看起来就落在某条跑道上
-            bottom: `calc(6% + ${(event.veg.lane * 62).toFixed(1)}%)`,
-            animationDelay: "0s",
+            // 纵向与猪的脚部带同一套视口映射（8%~50%），菜落在猪的活动带里
+            bottom: `${(
+              feetViewportPx(event.veg.lane, window.innerHeight) - stageBottomGap
+            ).toFixed(1)}px`,
+            /*
+             * 等 DDY 走到猪跟前再把菜"抛"出来：入场走位约占 4.4s 动画的
+             * 前 1.1s，所以延迟 1.1s 落下（vx-veg-toss 是 both 填充，
+             * 延迟期间保持 0% 帧 = 透明，不会提前冒出来）。
+             */
+            animationDelay: "1.1s",
           }}
         >
           <i className="vx-veg-shadow" />
@@ -64,37 +56,46 @@ export function PenPropsLayer({ entries, laneOf, xOf, fallbackX, now }: PenProps
         </span>
       ))}
 
-      {piles.map(({ event }) => (
-        <span
-          key={event.id}
-          className="vx-poop"
-          style={{
-            // 横向优先用猪当时站的位置，这样那一坨就落在它脚边；
-            // 没有位置上报（例如调试通配符）就退回场地里一个偏左的位置。
-            left: `${((xOf(event.actor) ?? fallbackX) * 100).toFixed(2)}%`,
-            bottom: `${24 + laneOf(event.actor) * 84}px`,
-            // 从屁股后面冒出来需要一点时间，这之前先别显示
-            animationDelay: `${event.ts + POOP_STRAIN_MS * 0.35 - now}ms`,
-          }}
-        >
-          <Pile />
-        </span>
-      ))}
+
     </div>
   );
 }
 
 /**
- * DDY 本尊：会从右侧栏外走过来、在栏边停下丢菜、再走回去。
+ * DDY 本尊：从右侧走进来、走到目标位置（丢菜/抚摸）、再走回去。
  *
- * 之前只弹个名牌，人物不存在。现在由 `active` 控制出场，
- * 丢菜的时刻（`ts`）和 CSS 动画里的时间点对齐（见 styles.css 的 vx-npc-visit）。
+ * `mission` 决定表演内容：
+ * - "feed"：走到蔬菜落点旁，抬手把菜抛出去（定时丢菜与成员投喂共用）；
+ * - "pat"：走到目标猪身边，弯腰摸两下（成员点"摸一摸"）。
+ * 横向位置 `targetX`（0~1）由 RoomView 按事件算好传入；
+ * 入场距离 `stageWidth` 换算成 CSS 变量，让"从右缘外走进来"对任意落点都成立。
  */
-export function NpcVisitor({ name, active }: { name: string; active: boolean }) {
+export function NpcVisitor({
+  name,
+  active,
+  mission = "feed",
+  targetX = 0.8,
+  stageWidth = 0,
+}: {
+  name: string;
+  active: boolean;
+  mission?: "feed" | "pat";
+  targetX?: number;
+  stageWidth?: number;
+}) {
   if (!active) return null;
+  const clamped = Math.min(0.86, Math.max(0.1, targetX));
+  // 从右缘外走到落点需要的位移：落点越靠左，入场距离越长
+  const enterPx = Math.max(90, Math.round(stageWidth * (1 - clamped) + 70));
   return (
     <div className="vx-npc" aria-hidden="true">
-      <div className="vx-npc-walker">
+      <div
+        className={`vx-npc-walker vx-npc-mission-${mission}`}
+        style={{
+          left: `${(clamped * 100).toFixed(2)}%`,
+          ["--vx-npc-enter" as string]: `${enterPx}px`,
+        }}
+      >
         <div className="vx-npc-body">
           <DdyFigure />
         </div>
@@ -104,77 +105,56 @@ export function NpcVisitor({ name, active }: { name: string; active: boolean }) 
   );
 }
 
-/** DDY 的形象：戴草帽的饲养员，手里拎一篮菜。 */
+/** DDY 的形象：戴草帽的饲养员，手里拎一篮菜（扁平风，与猪同一画风）。 */
 function DdyFigure() {
   return (
-    <svg viewBox="0 0 74 92" className="vx-npc-svg">
-      <defs>
-        <linearGradient id="ddy-shirt" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="#7fb3d9" />
-          <stop offset="100%" stopColor="#568cb5" />
-        </linearGradient>
-        <linearGradient id="ddy-hat" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="#f0d79a" />
-          <stop offset="100%" stopColor="#d3ac63" />
-        </linearGradient>
-        <linearGradient id="ddy-pants" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="#5e6b7d" />
-          <stop offset="100%" stopColor="#3f4a58" />
-        </linearGradient>
-      </defs>
+    <svg viewBox="0 0 76 94" className="vx-npc-svg">
+      {/* 腿：背带裤裤腿 */}
+      <rect className="vx-npc-leg vx-npc-leg-a" x="27" y="58" width="10" height="26" rx="5" fill="#7b9ec9" />
+      <rect className="vx-npc-leg vx-npc-leg-b" x="41" y="58" width="10" height="26" rx="5" fill="#7b9ec9" />
+      <ellipse cx="32" cy="87" rx="7" ry="3.6" fill="#8a6b4a" />
+      <ellipse cx="46" cy="87" rx="7" ry="3.6" fill="#8a6b4a" />
 
-      {/* 腿 */}
-      <rect className="vx-npc-leg vx-npc-leg-a" x="26" y="62" width="9" height="26" rx="4" fill="url(#ddy-pants)" />
-      <rect className="vx-npc-leg vx-npc-leg-b" x="39" y="62" width="9" height="26" rx="4" fill="url(#ddy-pants)" />
-      <ellipse cx="30.5" cy="89" rx="7" ry="3.4" fill="#6b5236" />
-      <ellipse cx="43.5" cy="89" rx="7" ry="3.4" fill="#6b5236" />
+      {/* 身体：背带裤 + 衬衫肩背 */}
+      <path d="M25 44 C25 35 31 30 39 30 C47 30 53 35 53 44 L53 62 C53 66 49 68 39 68 C29 68 25 66 25 62 Z" fill="#7b9ec9" />
+      <path d="M27 42 C27 34 32 30 39 30 C46 30 51 34 51 40 L51 46 C46 49 32 49 27 46 Z" fill="#cfe0af" />
+      {/* 背带 */}
+      <rect x="30" y="30" width="4.4" height="14" rx="2.2" fill="#6a8cb8" />
+      <rect x="44" y="30" width="4.4" height="14" rx="2.2" fill="#6a8cb8" />
 
-      {/* 身体 */}
-      <path d="M22 40 C22 32 30 28 37 28 C44 28 52 32 52 40 L52 64 C52 68 48 70 37 70 C26 70 22 68 22 64 Z" fill="url(#ddy-shirt)" />
-      {/* 挽起的袖子 / 手臂 */}
+      {/* 挽起的袖子 / 手臂（这只手负责丢菜、抚摸） */}
       <g className="vx-npc-arm">
-        <rect x="48" y="36" width="8" height="22" rx="4" fill="#6ba1c9" transform="rotate(-38 52 40)" />
-        <circle cx="57" cy="31" r="5" fill="#f2c9a0" />
+        <rect x="49" y="38" width="8" height="20" rx="4" fill="#cfe0af" transform="rotate(-32 53 42)" />
+        <circle cx="58" cy="35" r="4.6" fill="#f7c79e" />
       </g>
-      <rect x="18" y="36" width="8" height="22" rx="4" fill="#6ba1c9" />
-      <circle cx="22" cy="58" r="5" fill="#f2c9a0" />
+      <rect x="20" y="38" width="8" height="20" rx="4" fill="#cfe0af" />
+      <circle cx="24" cy="59" r="4.6" fill="#f7c79e" />
 
       {/* 一篮菜（挂在另一只手上） */}
       <g className="vx-npc-basket">
-        <path d="M12 62 L30 62 L27 76 L15 76 Z" fill="#c08a4a" />
-        <path d="M12 62 L30 62" stroke="#9a6a34" strokeWidth="2" />
-        <path d="M15 62 L17 76 M21 62 L21 76 M27 62 L25 76" stroke="#9a6a34" strokeWidth="1.2" />
-        <ellipse cx="17" cy="61" rx="4.6" ry="4" fill="#7fb551" />
-        <ellipse cx="24" cy="60" rx="4.2" ry="3.6" fill="#93c765" />
-        <ellipse cx="21" cy="57" rx="3.4" ry="3" fill="#e08a3c" />
+        <path d="M11 60 L31 60 L28 74 L14 74 Z" fill="#c9955c" />
+        <path d="M11 60 L31 60" stroke="#a8763f" strokeWidth="2" />
+        <path d="M14.5 60 L16 74 M21 60 L21 74 M27.5 60 L26 74" stroke="#a8763f" strokeWidth="1.2" />
+        <ellipse cx="16.5" cy="59" rx="4.4" ry="3.8" fill="#8fbf63" />
+        <ellipse cx="24" cy="58" rx="4" ry="3.4" fill="#a3cf7a" />
+        <ellipse cx="20.5" cy="55.4" rx="3.2" ry="2.8" fill="#ef8933" />
       </g>
 
       {/* 脖子 + 头 */}
-      <rect x="33" y="22" width="8" height="8" rx="3" fill="#e8b98d" />
-      <circle cx="37" cy="16" r="12" fill="#f6cfa6" />
-      <circle cx="33" cy="15" r="1.8" fill="#4a3626" />
-      <circle cx="41" cy="15" r="1.8" fill="#4a3626" />
-      <path d="M34 21 C36 23 38 23 40 21" fill="none" stroke="#a5704a" strokeWidth="1.6" strokeLinecap="round" />
+      <rect x="35" y="24" width="8" height="8" rx="3" fill="#eeb086" />
+      <circle cx="39" cy="17" r="12" fill="#f7c79e" />
+      {/* 头发：一撮压在帽檐下 */}
+      <path d="M28 14 C29 8 34 5 39 5 C44 5 49 8 50 14 C45 11 33 11 28 14 Z" fill="#6b4a2e" />
+      <circle cx="35" cy="16" r="1.8" fill="#33323d" />
+      <circle cx="43" cy="16" r="1.8" fill="#33323d" />
+      <path d="M36 22 C38 24 40 24 42 22" fill="none" stroke="#b5703f" strokeWidth="1.6" strokeLinecap="round" />
+      <ellipse cx="31.4" cy="20" rx="2.4" ry="1.6" fill="#ef7cba" opacity="0.45" />
+      <ellipse cx="46.6" cy="20" rx="2.4" ry="1.6" fill="#ef7cba" opacity="0.45" />
 
-      {/* 草帽 */}
-      <ellipse cx="37" cy="10" rx="22" ry="5.6" fill="url(#ddy-hat)" />
-      <path d="M25 10 C25 1 49 1 49 10 Z" fill="url(#ddy-hat)" />
-      <path d="M25 9.4 C25 6 49 6 49 9.4" fill="none" stroke="#b8914d" strokeWidth="2.4" />
+      {/* 草帽：帽檐 + 帽顶 + 品红帽带（与小猪耳朵同色，全场景呼应） */}
+      <ellipse cx="39" cy="10" rx="21" ry="5.4" fill="#f2ce7b" />
+      <path d="M27 10 C27 2 51 2 51 10 Z" fill="#f6d98d" />
+      <path d="M27 9.4 C27 6.4 51 6.4 51 9.4" fill="none" stroke="#e23f9c" strokeWidth="2.6" />
     </svg>
-  );
-}
-
-/** 那一坨：分层画，带一点高光和两只飘起来的小虫，不至于是一块纯色。 */
-function Pile() {
-  return (
-    <span className="vx-poop-pile">
-      <i className="vx-poop-layer vx-poop-layer-1" />
-      <i className="vx-poop-layer vx-poop-layer-2" />
-      <i className="vx-poop-layer vx-poop-layer-3" />
-      <span className="vx-poop-stink">
-        <em />
-        <em />
-      </span>
-    </span>
   );
 }

@@ -1,4 +1,4 @@
-/* ============================================== 猪圈道具：蔬菜、那一坨、NPC */
+/* ============================================== 猪圈道具：蔬菜、NPC */
 
 .vx-pen-props {
   position: absolute;
@@ -53,107 +53,6 @@
   100% {
     opacity: 1;
     transform: translate(0, 0) rotate(0deg) scale(1);
-  }
-}
-
-/* ---------------------------------------------------------------- 那一坨 */
-
-.vx-poop {
-  position: absolute;
-  left: 50%;
-  width: 40px;
-  height: 30px;
-  translate: -50% 0;
-}
-
-.vx-poop-pile {
-  position: relative;
-  display: block;
-  width: 100%;
-  height: 100%;
-  /* 刚拉出来时"啪"一下 */
-  animation: vx-poop-drop 420ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
-}
-
-@keyframes vx-poop-drop {
-  0% {
-    transform: translateY(-24px) scale(0.4, 0.5);
-    opacity: 0;
-  }
-  60% {
-    transform: translateY(0) scale(1.1, 0.9);
-    opacity: 1;
-  }
-  100% {
-    transform: translateY(0) scale(1, 1);
-    opacity: 1;
-  }
-}
-
-.vx-poop-layer {
-  position: absolute;
-  left: 50%;
-  translate: -50% 0;
-  border-radius: 50% 50% 42% 42%;
-  background: linear-gradient(180deg, #a9764a 0%, #8a5c34 60%, #6f4826 100%);
-  box-shadow: inset -2px -2px 0 rgba(0, 0, 0, 0.12), inset 1px 1px 0 rgba(255, 255, 255, 0.18);
-}
-
-.vx-poop-layer-1 {
-  bottom: 0;
-  width: 34px;
-  height: 12px;
-}
-
-.vx-poop-layer-2 {
-  bottom: 8px;
-  width: 24px;
-  height: 10px;
-}
-
-.vx-poop-layer-3 {
-  bottom: 15px;
-  width: 13px;
-  height: 9px;
-}
-
-.vx-poop-stink {
-  position: absolute;
-  left: 60%;
-  bottom: 18px;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.vx-poop-stink em {
-  display: block;
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: #9aa7a0;
-  opacity: 0;
-  animation: vx-stink 2.4s ease-out infinite;
-}
-
-.vx-poop-stink em:nth-child(2) {
-  animation-delay: 0.7s;
-  width: 4px;
-  height: 4px;
-  margin-left: 3px;
-}
-
-@keyframes vx-stink {
-  0% {
-    opacity: 0;
-    transform: translate(0, 0) scale(0.6);
-  }
-  25% {
-    opacity: 0.75;
-  }
-  100% {
-    opacity: 0;
-    transform: translate(6px, -20px) scale(1.2);
   }
 }
 
@@ -227,32 +126,10 @@ html[data-theme="dark"] .vx-npc-badge {
   animation: none;
 }
 
-/* 拉：后腿微蹲、身体发一下力 */
-.vx-pig-action-poop {
-  animation: vx-pig-strain 1.1s ease-in-out infinite;
-}
-
-@keyframes vx-pig-strain {
-  0%,
-  100% {
-    transform: translateY(0) scaleY(0.94);
-  }
-  50% {
-    transform: translateY(1px) scaleY(1);
-  }
-}
-
-.vx-pig-action-poop .vx-pig-leg {
-  animation: none;
-}
-
 @media (prefers-reduced-motion: reduce) {
   .vx-veg,
-  .vx-poop-pile,
-  .vx-poop-stink em,
   .vx-npc-badge,
-  .vx-pig-action-eat,
-  .vx-pig-action-poop {
+  .vx-pig-action-eat {
     animation: none !important;
   }
 }
@@ -261,28 +138,6 @@ html[data-theme="dark"] .vx-npc-badge {
   .vx-veg {
     width: 30px;
     height: 30px;
-  }
-
-  .vx-poop {
-    width: 30px;
-    height: 24px;
-  }
-
-  .vx-poop-layer-1 {
-    width: 26px;
-    height: 10px;
-  }
-
-  .vx-poop-layer-2 {
-    bottom: 6px;
-    width: 18px;
-    height: 8px;
-  }
-
-  .vx-poop-layer-3 {
-    bottom: 11px;
-    width: 10px;
-    height: 7px;
   }
 
   .vx-npc-badge {
@@ -310,7 +165,7 @@ html[data-theme="dark"] .vx-npc-badge {
 }
 
 /* 鼻头高光轻微呼吸，像湿润的猪鼻 */
-.vx-pig-svg ellipse[fill="#ffffff"] {
+.vx-pig-snout-glow {
   animation: vx-snout-sheen 3.6s ease-in-out infinite;
 }
 
@@ -325,7 +180,7 @@ html[data-theme="dark"] .vx-npc-badge {
 }
 
 /* 眼睛高光眨一下：整只眼珠极短地压扁，比真的做眼睑省事且不唐突 */
-.vx-pig-svg ellipse[fill="#4a2b34"] {
+.vx-pig-eye {
   animation: vx-blink 5.4s ease-in-out infinite;
   transform-box: fill-box;
   transform-origin: 50% 50%;
@@ -379,8 +234,8 @@ html[data-theme="dark"] .vx-npc-badge {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .vx-pig-svg ellipse[fill="#ffffff"],
-  .vx-pig-svg ellipse[fill="#4a2b34"],
+  .vx-pig-snout-glow,
+  .vx-pig-eye,
   .vx-pig-heart,
   .vx-pig-speaking .vx-pig-body-group {
     animation: none !important;
@@ -389,44 +244,10 @@ html[data-theme="dark"] .vx-npc-badge {
 
 /* ------------------------------------------------------- 走路时的腿与起伏 */
 
-.vx-pig-walking .vx-pig-leg-a,
-.vx-pig-walking .vx-pig-leg-c {
-  animation: vx-leg-swing 2.6s ease-in-out infinite;
-}
-
-.vx-pig-walking .vx-pig-leg-b,
-.vx-pig-walking .vx-pig-leg-d {
-  animation: vx-leg-swing 2.6s ease-in-out infinite;
-  animation-delay: -1.3s;
-}
-
-.vx-pig:not(.vx-pig-walking) .vx-pig-leg {
-  animation: none;
-}
-
-@keyframes vx-leg-swing {
-  0%,
-  100% {
-    rotate: 6deg;
-  }
-  50% {
-    rotate: -6deg;
-  }
-}
-
-.vx-pig-walking {
-  animation: vx-pig-bob 2.6s ease-in-out infinite;
-}
-
-@keyframes vx-pig-bob {
-  0%,
-  100% {
-    transform: translateY(0);
-  }
-  50% {
-    transform: translateY(-2px);
-  }
-}
+/*
+ * 走路周期统一在 pen-scene.css 定义（1.05s，与 70px/s 的漫步速度匹配），
+ * 这里不再重复覆盖（历史上两处 1.4s / 2.6s 互相打架，后加载的赢了）。
+ */
 
 /* ------------------------------------------------------------- 吃：咀嚼 */
 
@@ -484,124 +305,6 @@ html[data-theme="dark"] .vx-npc-badge {
 .vx-pig-phase-approach .vx-pig-leg {
   animation: none;
 }
-
-/* ------------------------------------------------- 拉：蹲下使劲 → 闻一闻 */
-
-/* 使劲：后腿下沉、身体压低发抖 */
-.vx-pig-phase-strain {
-  animation: vx-pig-strain 0.7s ease-in-out infinite;
-}
-
-@keyframes vx-pig-strain {
-  0%,
-  100% {
-    transform: translateY(1px) scaleY(0.93);
-  }
-  35% {
-    transform: translateY(2px) scaleY(0.9);
-  }
-  70% {
-    transform: translateY(0) scaleY(0.96);
-  }
-}
-
-.vx-pig-phase-strain .vx-pig-leg {
-  animation: none;
-  rotate: 20deg;
-}
-
-/* 闻一闻：头绕脖子上抬、轻点两下（头的旋转在 SVG 里设，这里加幅度） */
-.vx-pig-phase-sniff {
-  animation: vx-pig-sniff 1.3s ease-in-out infinite;
-}
-
-@keyframes vx-pig-sniff {
-  0%,
-  100% {
-    transform: translateY(0);
-  }
-  50% {
-    transform: translateY(1.5px);
-  }
-}
-
-.vx-pig-phase-sniff .vx-pig-head {
-  animation: vx-sniff-nod 1.3s ease-in-out infinite;
-  transform-box: fill-box;
-}
-
-@keyframes vx-sniff-nod {
-  0%,
-  100% {
-    rotate: 0deg;
-  }
-  50% {
-    rotate: 5deg;
-  }
-}
-
-.vx-pig-phase-sniff .vx-pig-leg {
-  animation: none;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .vx-pig-phase-approach,
-  .vx-pig-phase-munch,
-  .vx-pig-phase-strain,
-  .vx-pig-phase-sniff,
-  .vx-pig-phase-munch .vx-pig-chomp,
-  .vx-pig-phase-sniff .vx-pig-head {
-    animation: none !important;
-  }
-}
-
-/* ------------------------------------------- 那一坨：从猪屁股后面冒出来落地 */
-
-/*
- * 猪朝右走，屁股在左后方，所以那一坨从定位点往左下偏一点出现，
- * 先小后大、先高后低，看起来是掉下来的而不是凭空出现。
- */
-.vx-poop {
-  position: absolute;
-  left: 50%;
-  width: 40px;
-  height: 30px;
-  translate: -84% 0;
-  transform-origin: 84% 100%;
-}
-
-.vx-poop-pile {
-  position: relative;
-  display: block;
-  width: 100%;
-  height: 100%;
-  animation: vx-poop-emerge 620ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
-}
-
-@keyframes vx-poop-emerge {
-  0% {
-    opacity: 0;
-    transform: translate(2px, -20px) scale(0.3, 0.35);
-  }
-  45% {
-    opacity: 1;
-    transform: translate(1px, -4px) scale(0.8, 0.9);
-  }
-  75% {
-    transform: translate(0, 0) scale(1.12, 0.88);
-  }
-  100% {
-    opacity: 1;
-    transform: translate(0, 0) scale(1, 1);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .vx-poop-pile {
-    animation: none !important;
-  }
-}
-
 
 /* ================================================== 谁在说话：一眼看出来的特效 */
 
@@ -986,6 +689,91 @@ html[data-theme="dark"] .vx-npc-badge {
   }
 }
 
+/* ============================================ 精灵猪状态机（3D 模型生成的素材） */
+
+/*
+ * 猪形象统一用 3D 模型生成的绿幕序列帧（抠底后的动画 WebP，256px）。
+ * 状态机在 PigPen.tsx 里按优先级切 <img src>，这里只负责摆放和公共观感：
+ * - 2.5D：贴地投影（.vx-pig-shadow）+ 猪身 drop-shadow；
+ * - 素材原生朝向与参考图一致（头朝左），统一 scaleX(-1) 镜像成"原生面右"，
+ *   这样 walker 的左右转向逻辑不用改（容器 scale -1 时正好面左）。
+ */
+.vx-pig-sprite {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  object-position: bottom;
+  pointer-events: none;
+  transform: scaleX(-1);
+  filter: drop-shadow(0 3px 3px rgba(70, 45, 15, 0.22));
+}
+
+/*
+ * 空降入圈：精灵只含"伞张开悬停"的循环，真正的下落由 CSS 演——
+ * 从画面上方稳稳垂降、落地轻弹一下，随后状态机切回待机。
+ * 动画挂在整只猪的容器上（名字牌跟着飞，影子留在原地）。
+ */
+.vx-pig.vx-pig-entering {
+  animation: vx-join-descend 2.1s cubic-bezier(0.45, 0.05, 0.55, 0.95) both;
+}
+
+/*
+ * 空降精灵的画布含上方伞面，猪身只占画布 49%（普通素材 74%），
+ * contain 缩放后猪身会明显偏小；放大 1.53 倍并锚定底部，
+ * 让"空中降落的猪"和"落地站立的猪"一样大。
+ */
+.vx-pig-entering .vx-pig-sprite {
+  transform: scaleX(-1) scale(1.53);
+  transform-origin: 50% 100%;
+}
+
+@keyframes vx-join-descend {
+  0% {
+    transform: translateY(-62vh);
+  }
+  68% {
+    transform: translateY(0);
+  }
+  80% {
+    transform: translateY(-14px);
+  }
+  90% {
+    transform: translateY(0);
+  }
+  100% {
+    transform: translateY(0);
+  }
+}
+
+/* 吊起来：整只猪被吊到半空，左右轻微摆荡（影子不跟着走，强化离地感） */
+.vx-pig.vx-pig-hoisted {
+  transform: translateY(-42%);
+  transform-origin: 50% 0;
+  animation: vx-hoist-sway 2.2s ease-in-out infinite;
+}
+
+@keyframes vx-hoist-sway {
+  0%,
+  100% {
+    transform: translateY(-42%) rotate(-3.5deg);
+  }
+  50% {
+    transform: translateY(-42%) rotate(3.5deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vx-pig.vx-pig-entering {
+    animation: none;
+  }
+
+  .vx-pig.vx-pig-hoisted {
+    animation: none;
+  }
+}
+
 /* ----------------------------------------------------------- 闭听：戴耳罩 */
 
 .vx-pig-earmuff {
@@ -1029,16 +817,16 @@ html[data-theme="dark"] .vx-npc-badge {
   box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.5);
 }
 
-/* 正面：两只耳罩分别盖住左右耳朵 */
+/* 正面：两只耳罩分别盖住左右耳朵（按素材猪头部位置定位） */
 .vx-pig-earmuff-front .vx-pig-em-l {
-  left: 24%;
-  top: 33%;
+  left: 32%;
+  top: 12%;
   translate: -50% -50%;
 }
 
 .vx-pig-earmuff-front .vx-pig-em-r {
-  left: 75%;
-  top: 33%;
+  left: 68%;
+  top: 12%;
   translate: -50% -50%;
 }
 
@@ -1053,16 +841,16 @@ html[data-theme="dark"] .vx-npc-badge {
 }
 
 .vx-pig-earmuff-side .vx-pig-em-l {
-  left: 42%;
-  top: 27%;
+  left: 56%;
+  top: 11%;
   translate: -50% -50%;
 }
 
 .vx-pig-earmuff-side .vx-pig-em-band {
-  left: 32%;
-  right: 38%;
-  top: 7%;
-  height: 20%;
+  left: 36%;
+  right: 36%;
+  top: 1%;
+  height: 14%;
   border-width: 3px;
 }
 
