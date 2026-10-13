@@ -20,6 +20,16 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.0.5",
+    date: "2026-10-13",
+    lines: [
+      "修好：房主进设置不再冻结全房间的猪",
+      "更新时显示下载进度，小猪跑给你看",
+      "设置页新增「快捷方式」使用指南",
+      "首页布局优化，滚动条不再乱入",
+    ],
+  },
+  {
     version: "1.0.4",
     date: "2026-10-13",
     lines: [
