@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 import { CHANGELOG, latestChangelog } from "../src/client/voice/changelog";
 
@@ -12,6 +14,13 @@ describe("首页公告栏更新数据（changelog.ts）", () => {
       expect(entry.lines.length).toBeLessThanOrEqual(4);
       for (const line of entry.lines) expect(line.trim().length).toBeGreaterThan(0);
     }
+  });
+
+  it("CHANGELOG 首条版本号必须等于 package.json 版本号（发版一致性闸门）", () => {
+    const pkg = JSON.parse(
+      readFileSync(resolve(__dirname, "../package.json"), "utf-8"),
+    ) as { version: string };
+    expect(CHANGELOG[0].version).toBe(pkg.version);
   });
 
   it("latestChangelog 返回第一条有内容的记录", () => {

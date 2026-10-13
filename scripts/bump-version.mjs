@@ -71,16 +71,42 @@ for (const rel of ["src-tauri/Cargo.toml", "src-tauri/Cargo.lock"]) {
   console.log(`${rel} → ${version}`);
 }
 
-// 发版提醒：首页公告栏"最新更新"的数据源是 src/client/voice/changelog.ts，
-// 发版前应在数组顶部补一条本版本的简洁条目（首页会自动显示）。
+/*
+ * 公告栏 changelog 版本号自动同步（根治"公告栏版本号与客户端不同步"）：
+ * 规则：CHANGELOG 首条必须是正在发布的版本——
+ *   - 手动写过这个版本的条目（有内容）→ 保持不动；
+ *   - 没有 → 自动插入空条目（公告栏回落到上一条有内容版本 = 纯修复版不上公告栏）。
+ * 由此"忘记改 changelog"在流程上不可能发生。
+ */
+const changelogPath = path.join(root, "src/client/voice/changelog.ts");
 try {
-  const changelog = readFileSync(path.join(root, "src/client/voice/changelog.ts"), "utf8");
-  if (!changelog.includes(`"${version}"`)) {
-    console.log(`\n⚠️  提醒：src/client/voice/changelog.ts 里还没有 v${version} 的条目——`);
-    console.log(`    它是首页公告栏"最新更新"的数据源（版本号 + 最多 4 条短句），建议先补上再继续。`);
+  const changelogSrc = readFileSync(changelogPath, "utf-8");
+  const head = changelogSrc.match(/CHANGELOG: ChangelogEntry\[\] = \[\s*\{\s*version: "([^"]+)"/);
+  if (!head) {
+    console.error("changelog.ts 结构异常：找不到 CHANGELOG 首条，中止发版。");
+    process.exit(1);
   }
-} catch {
-  /* changelog.ts 不存在就算了（老版本仓库兼容） */
+  if (head[1] !== version) {
+    const today = new Date().toISOString().slice(0, 10);
+    const marker = "export const CHANGELOG: ChangelogEntry[] = [";
+    const insertAt = changelogSrc.indexOf(marker) + marker.length;
+    const entry = [
+      "",
+      "  {",
+      "    // bump 自动插入（发版时保证首条 = 本次版本）；内容按需补充，留空 = 公告栏展示上一条有内容版本",
+      `    version: "${version}",`,
+      `    date: "${today}",`,
+      "    lines: [],",
+      "  },",
+    ].join("\n");
+    writeFileSync(changelogPath, changelogSrc.slice(0, insertAt) + entry + changelogSrc.slice(insertAt));
+    console.log(`changelog.ts → 已自动插入 v${version} 条目（空内容 = 公告栏展示上一条有内容版本）`);
+  } else {
+    console.log(`changelog.ts 首条已是 v${version}（手动维护的内容保留）`);
+  }
+} catch (e) {
+  console.error(`读取 changelog.ts 失败：${e}`);
+  process.exit(1);
 }
 
 run("git add -A");
