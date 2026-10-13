@@ -10,11 +10,12 @@
 //
 // 做四件事：
 //   1. 构建网页产物 dist-web（已存在且传了 --no-build 则跳过）；
-//   2. 从 GitHub Release 下载 5blong_<v>_x64-setup.exe / .sig / latest.json
+//   2. 组装 dist-deploy/（dist-web + desktop/），并从 GitHub Release 下载
+//      5blong_<v>_x64-setup.exe / .sig / latest.json 放进 desktop/
 //      （直连失败自动改走本机 FlClash 代理 127.0.0.1:7890）；
 //   3. 改写 latest.json 里各平台的下载地址 → Pages 域名
 //      （minisign 签名校验的是安装包内容，与下载地址无关，改 URL 不影响验签）；
-//   4. 组装 dist-deploy/（网页 + desktop/），复用 deploy-pages.mjs 一次部署上线。
+//   4. 复用 deploy-pages.mjs 把整个目录一次部署上线。
 //
 // 注意：Pages 的部署是整站替换（manifest 定义全部文件），所以每次发布都会把
 // 当时版本的网页和桌面端产物一起重新上线；旧版本安装包会从线上消失（更新器
@@ -91,14 +92,19 @@ async function main() {
     throw new Error(`${distWeb} 缺少 index.html——先跑 npm run build:web:pages`);
   }
 
-  // 2. 从 GitHub Release 下载桌面端产物
+  // 2. 组装 dist-deploy/：先复制网页产物，desktop/ 随后单独填入。
+  //    注意顺序：必须先 rmSync + cpSync 再下载，否则下载的产物会被重组步骤删掉。
+  rmSync(distDeploy, { recursive: true, force: true });
+  cpSync(distWeb, distDeploy, { recursive: true });
   mkdirSync(desktopDir, { recursive: true });
+
+  // 3. 从 GitHub Release 下载桌面端产物
   const latestJsonPath = path.join(desktopDir, "latest.json");
   fetchTo(`${releaseBase}/${exeName}`, path.join(desktopDir, exeName));
   fetchTo(`${releaseBase}/${sigName}`, path.join(desktopDir, sigName));
   fetchTo(`${releaseBase}/latest.json`, latestJsonPath);
 
-  // 3. 改写 latest.json：下载地址换成 Pages，签名原样保留
+  // 4. 改写 latest.json：下载地址换成 Pages，签名原样保留
   const manifest = JSON.parse(readFileSync(latestJsonPath, "utf8"));
   if (manifest.version !== version) {
     throw new Error(`latest.json 版本（${manifest.version}）与参数（${version}）不一致，检查 Release 是否发对`);
@@ -113,10 +119,14 @@ async function main() {
   writeFileSync(latestJsonPath, JSON.stringify(manifest, null, 2) + "\n");
   log("rewrite", `下载地址 → ${pagesUrl}`);
 
-  // 4. 组装 dist-deploy/ 并复用现有部署脚本上线
-  rmSync(distDeploy, { recursive: true, force: true });
-  cpSync(distWeb, distDeploy, { recursive: true });
-  log("stage", `dist-deploy/ = dist-web + desktop/${exeName}`);
+  // 5. 部署前的硬校验：产物必须真的在部署目录里（防止"部署成功但文件缺失"）。
+  for (const name of [exeName, sigName, "latest.json"]) {
+    const full = path.join(desktopDir, name);
+    if (!existsSync(full) || statSync(full).size === 0) {
+      throw new Error(`部署目录缺少 ${name}——中断发布，不要把空 desktop/ 推上线`);
+    }
+  }
+  log("stage", `dist-deploy/ = dist-web + desktop/{${exeName}, .sig, latest.json}`);
 
   execSync(`node scripts/deploy-pages.mjs dist-deploy ${project} ${branch}`, {
     cwd: root,

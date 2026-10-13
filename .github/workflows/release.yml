@@ -5,6 +5,11 @@ name: Release
 #   2. 在 GitHub Actions 页面手动 Run workflow（不出 Release，仅验证构建）。
 on:
   workflow_dispatch:
+    inputs:
+      publish_desktop:
+        description: '把最新 Release 的更新源发布到 Pages（不出新包）'
+        type: boolean
+        default: true
   push:
     tags:
       - 'app-v*'
@@ -24,9 +29,11 @@ jobs:
           cache: npm
 
       - name: Install Rust stable
+        if: startsWith(github.ref, 'refs/tags/app-v')
         uses: dtolnay/rust-toolchain@stable
 
       - name: Rust cache
+        if: startsWith(github.ref, 'refs/tags/app-v')
         uses: swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
@@ -37,7 +44,9 @@ jobs:
       # tauri-action：构建 NSIS 安装包 + 更新产物（*.exe.zip + .sig + latest.json），
       # 签名用仓库 Secrets 里的 TAURI_SIGNING_PRIVATE_KEY（密码为空串），
       # 全部资产连同 latest.json 一起发布到 GitHub Releases。
+      # 仅 tag 推送时出包；手动触发（dispatch）时跳过，直接复用最新 Release。
       - name: Build and release
+        if: startsWith(github.ref, 'refs/tags/app-v')
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -58,13 +67,23 @@ jobs:
       #   CLOUDFLARE_API_TOKEN：权限 Account → Cloudflare Pages → Edit。
       # 未配置该 Secret 时跳过（可之后在本机手动 npm run publish:desktop）。
       - name: Publish desktop assets to Pages
-        if: startsWith(github.ref, 'refs/tags/app-v')
+        if: ${{ startsWith(github.ref, 'refs/tags/app-v') || inputs.publish_desktop == true }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
           if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
             echo "未配置 CLOUDFLARE_API_TOKEN，跳过 Pages 发布（可本机手动 npm run publish:desktop）"
             exit 0
           fi
-          node scripts/publish-desktop.mjs "${GITHUB_REF_NAME#app-v}"
+          if [[ "$GITHUB_REF_NAME" == app-v* ]]; then
+            VERSION="${GITHUB_REF_NAME#app-v}"
+          else
+            # 手动触发：复用最新 Release 的版本号
+            VERSION=$(curl -sS -H "Authorization: Bearer $GITHUB_TOKEN" \
+              "https://api.github.com/repos/${{ github.repository }}/releases/latest" \
+              | grep -m1 '"tag_name"' | sed 's/.*app-v//;s/".*//')
+          fi
+          echo "发布版本: $VERSION"
+          node scripts/publish-desktop.mjs "$VERSION"
