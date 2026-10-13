@@ -186,6 +186,18 @@ export function useVoice() {
           ...pruneEvents(prev, now),
           { event, expiresAt: now + eventTtl(event) },
         ]);
+        // "吃掉才长"：eat 事件到达后等走过去的时间（approach 5s），
+        // 猪开始低头嚼的那一刻体型 +1，因果顺序才对（之前投喂瞬间就涨）。
+        if (event.kind === "eat" && event.actor !== "*") {
+          const actor = event.actor;
+          window.setTimeout(() => {
+            setFeedCounts((prev) => {
+              const next = { ...prev, [actor]: (prev[actor] ?? 0) + 1 };
+              writeJson(FEED_STORAGE_KEY, next);
+              return next;
+            });
+          }, 5200);
+        }
       },
       /*
        * 房主权威猪位（只有访客会收到）：写进模块级 store，各猪的
@@ -308,7 +320,7 @@ export function useVoice() {
     setInvite(null);
     setView("room");
     const engine = startEngine();
-    await engine.host(identityRef.current, settings, settings.joinMuted);
+    await engine.host(identityRef.current, settings, true);
   }, [resetRoom, settings, startEngine]);
 
   const joinRoom = useCallback(
@@ -413,6 +425,8 @@ export function useVoice() {
       if (engine) {
         void engine.updateAudioSettings(settingsToSave);
         engine.applySpeaker(settingsToSave);
+        // 昵称/头像/颜色改动立即同步运行中的会话（铭牌不再停留在旧名字）
+        engine.updateIdentity(nextIdentity);
         // 设置页保存后同步一下采集参数的真实状态，供房间面板显示。
         void engine
           .applyCaptureProcessing(settingsToSave.processing)
@@ -569,7 +583,7 @@ export function useVoice() {
         return true;
       }
       // 只输房间码：房主 ID 由房间码推导，直接进房。
-      void joinRoom(target, settings.joinMuted);
+      void joinRoom(target, true);
       return true;
     },
     [joinRoom, settings.joinMuted],
@@ -639,15 +653,10 @@ export function useVoice() {
     engine.setLockedRoom(!engine.isLocked);
   }, []);
 
-  const interact = useCallback((peerId: string, personId: string, kind: InteractKind) => {
+  const interact = useCallback((peerId: string, _personId: string, kind: InteractKind) => {
     engineRef.current?.interactWith(peerId, kind);
-    if (kind === "feed" && personId) {
-      setFeedCounts((prev) => {
-        const next = { ...prev, [personId]: (prev[personId] ?? 0) + 1 };
-        writeJson(FEED_STORAGE_KEY, next);
-        return next;
-      });
-    }
+    // 注意：喂食计数在猪**真的吃掉**时才 +1（见下方 pen 事件处理），
+    // 之前是投喂瞬间就涨——猪还没动体型先变大，观感很怪。
   }, []);
 
   return {

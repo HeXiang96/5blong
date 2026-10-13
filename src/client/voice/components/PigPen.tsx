@@ -86,6 +86,7 @@ function useDaypart(): Daypart {
       const value = compute();
       setDaypart(value);
       document.documentElement.dataset.daypart = value;
+      syncTitlebar(value);
     };
     update();
     const timer = window.setInterval(update, 60_000);
@@ -93,6 +94,26 @@ function useDaypart(): Daypart {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   return daypart;
+}
+
+/*
+ * 桌面客户端的窗口标题栏颜色跟随时段天空色：
+ * 之前标题栏是系统默认的白色，夜里一个白条压在深色场景上非常突兀。
+ * 各时段取天空渐变的顶部色（与 .vx-pen-frame-sky 保持一致）。
+ */
+const TITLEBAR_COLORS: Record<Daypart, string> = {
+  morning: '#f9e9e3',
+  day: '#f7e9d4',
+  dusk: '#f8e3c8',
+  night: '#171c2c',
+};
+
+function syncTitlebar(daypart: Daypart): void {
+  const isDesktop = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+  if (!isDesktop) return;
+  void import('@tauri-apps/api/core')
+    .then(({ invoke }) => invoke('set_window_bg', { color: TITLEBAR_COLORS[daypart] }))
+    .catch(() => {});
 }
 
 /**

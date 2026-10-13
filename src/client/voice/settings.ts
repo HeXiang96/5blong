@@ -64,7 +64,7 @@ export function defaultSettings(): VoiceSettings {
       noiseSuppression: true,
       autoGainControl: true,
     },
-    joinMuted: false,
+    joinMuted: true,
     micVolume: 1,
     peerVolumes: {},
     peerMuted: {},
@@ -86,6 +86,7 @@ export function loadSettings(): VoiceSettings {
     micDeviceId: typeof stored.micDeviceId === "string" ? stored.micDeviceId : fallback.micDeviceId,
     speakerDeviceId:
       typeof stored.speakerDeviceId === "string" ? stored.speakerDeviceId : fallback.speakerDeviceId,
+    // 进房默认静音（2026-10-13 业主决定）；此字段暂无 UI，留作后续开关
     joinMuted: stored.joinMuted === true,
     micVolume,
     peerVolumes:

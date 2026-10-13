@@ -605,13 +605,13 @@ html[data-theme="dark"] .vx-star,
 }
 
 .vx-pig-tag-face b.vx-plate-quiet {
-  background: rgba(110, 120, 135, 0.2);
-  color: #5b6472;
+  background: rgba(74, 82, 96, 0.9);
+  color: #f2f4f8;
 }
 
 .vx-pig-tag-face b.vx-plate-deaf {
-  background: rgba(116, 108, 146, 0.22);
-  color: #565070;
+  background: rgba(86, 80, 112, 0.9);
+  color: #f0eef8;
 }
 
 /*

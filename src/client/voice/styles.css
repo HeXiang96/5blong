@@ -20,8 +20,8 @@
   --vx-accent-soft: rgba(207, 150, 80, 0.16);
   --vx-accent-strong: #e0ad6c;
   /* 名字牌徽章（房主 / 我）用的底色与文字色，深色主题另有覆盖 */
-  --vx-plate-badge-bg: rgba(176, 122, 52, 0.2);
-  --vx-plate-badge-fg: #7a4f12;
+  --vx-plate-badge-bg: rgba(122, 79, 18, 0.92);
+  --vx-plate-badge-fg: #ffefd0;
   --vx-live: #2ad4a8;
   --vx-live-soft: rgba(42, 212, 168, 0.16);
   --vx-danger: #ff6b6b;
@@ -45,8 +45,8 @@ html[data-theme="light"] {
   --vx-accent: #b07a34;
   --vx-accent-soft: rgba(176, 122, 52, 0.12);
   --vx-accent-strong: #965f1f;
-  --vx-plate-badge-bg: rgba(176, 122, 52, 0.18);
-  --vx-plate-badge-fg: #6b4410;
+  --vx-plate-badge-bg: rgba(122, 79, 18, 0.92);
+  --vx-plate-badge-fg: #ffefd0;
   --vx-live: #0fae87;
   --vx-live-soft: rgba(15, 174, 135, 0.14);
   --vx-danger: #c2410c;
@@ -102,8 +102,8 @@ html[data-theme="light"][data-daypart="night"] {
   --vx-accent: #cf9650;
   --vx-accent-soft: rgba(207, 150, 80, 0.16);
   --vx-accent-strong: #e0ad6c;
-  --vx-plate-badge-bg: rgba(207, 150, 80, 0.22);
-  --vx-plate-badge-fg: #e8c894;
+  --vx-plate-badge-bg: rgba(122, 79, 18, 0.92);
+  --vx-plate-badge-fg: #ffefd0;
   --vx-live: #2ad4a8;
   --vx-live-soft: rgba(42, 212, 168, 0.16);
   --vx-danger: #ff6b6b;

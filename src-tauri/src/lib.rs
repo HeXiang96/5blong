@@ -172,6 +172,19 @@ fn update_message_blocking(app: &tauri::AppHandle, title: &str, text: String) {
     dialog.blocking_show();
 }
 
+/// 窗口底色跟随时段天空色（前端每次时段变化时调用），
+/// 让系统标题栏不再是一块突兀的白条。
+#[tauri::command]
+fn set_window_bg(app: tauri::AppHandle, color: String) {
+    use std::str::FromStr;
+    let Ok(parsed) = tauri::utils::config::Color::from_str(&color) else {
+        return;
+    };
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.set_background_color(Some(parsed));
+    }
+}
+
 /// Windows/WebView2：自动放行页面的权限请求（主要是麦克风）。
 ///
 /// 语义等价于浏览器扩展式的"一律允许"：getUserMedia 无需用户手动确认，
@@ -215,6 +228,7 @@ fn grant_webview2_permissions(app: &tauri::AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .invoke_handler(tauri::generate_handler![set_window_bg])
         // 单实例必须在其它插件 / WebView 初始化之前注册。
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             show_main(app);

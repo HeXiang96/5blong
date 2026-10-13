@@ -324,6 +324,7 @@ describe("wire message parsing", () => {
       avatar: "",
       color: "hsl(1 2% 3%)",
       hasMic: true,
+      muted: false,
       nonce: "n",
       proof: "p",
     });
@@ -335,6 +336,7 @@ describe("wire message parsing", () => {
       avatar: "",
       color: "hsl(1 2% 3%)",
       hasMic: true,
+      muted: false,
       nonce: "n",
       proof: "p",
     });

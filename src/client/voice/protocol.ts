@@ -400,7 +400,8 @@ export interface WireMember {
 
 /** 访客 → 房主。 */
 export type GuestMessage =
-  | { t: "hello"; personId: string; sessionId: string; name: string; avatar: string; color: string; hasMic: boolean; nonce: string; proof: string }
+  | { t: "hello"; personId: string; sessionId: string; name: string; avatar: string; color: string; hasMic: boolean; muted: boolean; nonce: string; proof: string }
+  | { t: "identity"; name: string; avatar: string; color: string }
   | { t: "joined" }
   | { t: "chat"; text: string }
   | { t: "muted"; muted: boolean; deafened?: boolean }
@@ -477,6 +478,7 @@ export function parseGuestMessage(data: unknown): GuestMessage | null {
         avatar: str(msg["avatar"], LIMITS.avatar),
         color: str(msg["color"], LIMITS.color),
         hasMic: msg["hasMic"] === true,
+        muted: msg["muted"] === true,
         nonce: str(msg["nonce"], 64),
         proof: str(msg["proof"], 128),
       };
@@ -512,9 +514,15 @@ export function parseGuestMessage(data: unknown): GuestMessage | null {
       const ts = num(msg["ts"]);
       return ts === null ? null : { t: "pong", ts };
     }
+    case "identity": {
+      const name = str(msg["name"], LIMITS.name) || "匿名";
+      const avatar = str(msg["avatar"], LIMITS.avatar);
+      const color = str(msg["color"], LIMITS.color);
+      if (!name || !color) return null;
+      return { t: "identity", name, avatar, color };
+    }
     default:
-      return null;
-  }
+      return null;  }
 }
 
 export function parseHostMessage(data: unknown): HostMessage | null {

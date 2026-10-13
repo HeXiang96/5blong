@@ -496,6 +496,33 @@ export class VoiceMesh {
     this.dialHost();
   }
 
+  /**
+   * 房间进行中更新自己的资料（设置页改昵称/头像/颜色）。
+   * 之前只写 localStorage，正在运行会话里的铭牌一直是旧名字——
+   * 这里改完立即更新成员记录并同步给全房。
+   */
+  updateIdentity(identity: Identity): void {
+    if (!this.me || this.destroyed) return;
+    this.me = {
+      ...this.me,
+      name: identity.name,
+      avatar: identity.avatar,
+      color: identity.color,
+    };
+    this.members.set(this.myId, this.me);
+    this.emitMembers();
+    if (this.hosting) {
+      this.broadcastHost({ t: "roster", members: this.roster() });
+    } else {
+      this.send(this.hostConn, {
+        t: "identity",
+        name: identity.name,
+        avatar: identity.avatar,
+        color: identity.color,
+      });
+    }
+  }
+
   setMuted(muted: boolean): void {
     // 被房主强制禁言期间，本人不能自行开麦（房主解禁后才可以）。
     if (!muted && this.me?.serverMuted) return;
@@ -744,6 +771,22 @@ export class VoiceMesh {
         this.events.chat({ id, name, text: message.text, ts: Date.now(), self: false });
         break;
       }
+      case "identity": {
+        // 访客在设置里改了资料：更新成员记录并重新广播名单
+        const guestRecord = this.guests.get(conn.peer);
+        const guestMember = guestRecord ? this.members.get(guestRecord.member.id) : null;
+        if (!guestMember || !guestRecord) break;
+        this.members.set(guestRecord.member.id, {
+          ...guestMember,
+          name: message.name,
+          avatar: message.avatar,
+          color: message.color,
+        });
+        this.emitMembers();
+        this.broadcastHost({ t: "roster", members: this.roster() });
+        break;
+      }
+
       case "muted": {
         // 被房主强制禁言的人不能自行开麦：忽略开麦请求，并把他压回静音。
         if (guest.member.serverMuted && !message.muted) {
@@ -831,7 +874,7 @@ export class VoiceMesh {
       name: message.name,
       avatar: message.avatar,
       color: message.color,
-      muted: true,
+      muted: message.muted ?? false,
       hasMic: message.hasMic,
       isHost: false,
       local: false,
@@ -1004,7 +1047,9 @@ export class VoiceMesh {
       veg: { kind, x: Number(x.toFixed(3)), lane: Number(lane.toFixed(3)) },
     };
     this.emitPen(toss);
-    this.timers.after(3600, () => {
+    // 菜 1.1s 后落地，猪 1.2s 就出发——立刻能看到"跑向食物"，
+    // 而不是站在原地好几秒没反应（业主实测反馈）。
+    this.timers.after(1200, () => {
       if (this.destroyed || !this.hosting || !this.members.has(to)) return;
       this.emitPen(this.pen.produceEat(Date.now(), to, kind));
     });
@@ -1304,6 +1349,7 @@ export class VoiceMesh {
       avatar: this.me.avatar,
       color: this.me.color,
       hasMic: this.me.hasMic,
+      muted: this.me.muted,
       nonce,
       proof,
     });
@@ -1344,10 +1390,18 @@ export class VoiceMesh {
           if (this.me) {
             this.me.serverMuted = member.serverMuted ?? false;
             this.me.deafened = member.deafened ?? this.deafened;
-            this.me.muted = member.muted;
-            if (this.localStream) {
-              for (const track of this.localStream.getAudioTracks()) {
-                track.enabled = !member.muted;
+            /*
+             * 自己的静音状态以**本地选择**为准（确认页的"先静音进入"）。
+             * 之前无条件照抄花名册的 muted——而房主侧把访客一律初始化为
+             * 静音，导致"取消静音进入"的访客在 welcome 一到就被静音。
+             * 花名册只负责恢复房主的强制禁言（serverMuted）。
+             */
+            if (this.me.serverMuted && !this.me.muted) {
+              this.me.muted = true;
+              if (this.localStream) {
+                for (const track of this.localStream.getAudioTracks()) {
+                  track.enabled = false;
+                }
               }
             }
           }
