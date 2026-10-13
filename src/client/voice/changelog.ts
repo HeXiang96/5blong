@@ -20,6 +20,11 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.0.9",
+    date: "2026-10-14",
+    lines: ["修好：启动时的更新提示不再挡屏"],
+  },
+  {
     version: "1.0.8",
     date: "2026-10-13",
     lines: [
