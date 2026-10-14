@@ -14,13 +14,31 @@
 >   生产 Worker 用全局 Durable Object），未登记的订阅一律 403。
 > - 画质档位落地：高清 HD 720p / 超清 1080p（均 60fps、10000 kbps），见共享菜单。
 > - 分辨率适配：幕布 ≤ 舞台宽 44% 且 ≤ 舞台高 52%，四档窗口实测（1920/1280/1024/820）。
+> - **生产接口已上线**：Pages 高级模式 `_worker.js` 提供同域 `/sfu/*`
+>   （2026-10-14 部署验证：sessions/new=201、未登记订阅 403）；
+>   桌面端 SFU_BASE 直连 `https://5blong.pages.dev/sfu`（v1.1.1 起）。
 >
-> 上线流程（发版时执行）：
-> 1. 本地先起 `node scripts/dev-sfu-server.mjs`（凭证在 `.dev-secrets.json`，已 gitignore）做日常验证；
-> 2. 上线前部署生产代理：`cd worker && wrangler secret put SFU_APP_ID / SFU_APP_SECRET && wrangler deploy`
->    （`worker/index.js` 与本地代理接口完全一致，含 Durable Object 登记表）；
-> 3. 发版：`npm run bump -- x.y.z`（版本号三处同步 + 公告栏条目 + 提交打标 + 推送触发 CI 云出包）；
-> 4. CI 出包完成后 `npm run publish:desktop -- x.y.z` 把更新源发到国内可直连 Pages。
+> 上线流程（**每次发版按此顺序**，全程自动）：
+> 1. 本地验证（可选）：`node scripts/dev-sfu-server.mjs` + `npm run dev`
+>    （凭证在 `.dev-secrets.json`，已 gitignore），浏览器开
+>    `/tests/fixtures/member-menu.html?tv=1`（全套动画目检）、
+>    `/tests/fixtures/sfu-loop.html`（SFU 回环）；
+> 2. 冒烟闸门：`npm run check`（typecheck + 全部单测 + 构建）；
+> 3. 发版一条命令：`npm run bump -- x.y.z`（版本号三处同步 + changelog 条目 +
+>    提交 + 打标 + 推送）→ 推送即触发 GitHub Actions 云出包；
+> 4. CI 出包成功后**自动**把网页 + 桌面更新源发布到 Cloudflare Pages
+>    （`CLOUDFLARE_API_TOKEN` Secret 已配置）；
+> 5. **/sfu 屏幕共享接口**由部署包里的 `_worker.js` 提供
+>    （`worker/_worker.pages.js`，部署脚本自动附带），
+>    SFU 凭证在 Pages 项目环境变量 `SFU_APP_ID` / `SFU_APP_SECRET`
+>    （本机发部署时自动从 `.dev-secrets.json` 写入，一次配置长期生效）。
+>    网页端（同域）与桌面端（`https://5blong.pages.dev/sfu`，见
+>    `screen-share.ts` 的 SFU_BASE 环境解析）都走它；CI 里没有
+>    `.dev-secrets.json` 也不影响——项目环境变量已持久化。
+>
+> 已知边界：macOS 桌面端采集未做（维持"仅观看"）；Pages 版登记表是
+> isolate 级内存账本（尽力而为），最强加固版见 `worker/index.js`
+> （Durable Object 账本，可部署到自定义域名）。
 
 是的，这个设计初衷和 Piik 是同一类：**共享的内容不是浮在屏幕角落的一块tile，而是空间里的一个"东西"**。猪看电视 = 把远程协作放回场景本体，电视有没有亮着本身就是房间状态。
 

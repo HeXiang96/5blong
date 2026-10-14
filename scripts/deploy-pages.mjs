@@ -223,6 +223,16 @@ async function main() {
     throw new Error(`${directory} 不像是构建产物（缺少 index.html），请先构建`);
   }
 
+  // 屏幕共享同域接口：把 worker/_worker.pages.js 作为 _worker.js 附到部署里
+  // （Pages 高级模式；非 /sfu 请求回落静态资源）。目录里没有就补一份。
+  const workerSource = path.join(root, "worker", "_worker.pages.js");
+  const workerTarget = path.join(directory, "_worker.js");
+  if (existsSync(workerSource) && !existsSync(workerTarget)) {
+    const { copyFileSync } = await import("node:fs");
+    copyFileSync(workerSource, workerTarget);
+    log("worker", "已附加 _worker.js（/sfu 屏幕共享接口）");
+  }
+
   const token = await getToken();
 
   const accounts = await api(token, "/accounts?per_page=50");
@@ -233,7 +243,45 @@ async function main() {
   const project = await api(token, `/accounts/${account.id}/pages/projects/${projectName}`);
   log("project", `${project.name} · 生产分支 ${project.production_branch}`);
 
-  const files = walk(directory).map((name) => {
+  // SFU 凭证 → Pages 项目环境变量（一次配置长期生效；CI 里没有 .dev-secrets.json，
+  // 靠这里的历史配置；本机发部署时若凭证有变化会自动更新）。
+  const secretsFile = path.join(root, ".dev-secrets.json");
+  if (existsSync(secretsFile)) {
+    try {
+      const secrets = JSON.parse(readFileSync(secretsFile, "utf8"));
+      const appId = secrets.sfuAppId ?? secrets.appId;
+      const appSecret = secrets.sfuAppSecret ?? secrets.appSecret;
+      if (appId && appSecret) {
+        const existing = project.deployment_configs?.production?.env_vars ?? {};
+        const same =
+          existing.SFU_APP_ID?.value === appId && existing.SFU_APP_SECRET?.value === appSecret;
+        if (!same) {
+          await api(token, `/accounts/${account.id}/pages/projects/${projectName}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              deployment_configs: {
+                production: {
+                  env_vars: {
+                    ...existing,
+                    SFU_APP_ID: { value: appId },
+                    SFU_APP_SECRET: { value: appSecret },
+                  },
+                },
+              },
+            }),
+          });
+          log("env", "SFU 凭证已写入 Pages 项目环境变量");
+        }
+      }
+    } catch (error) {
+      log("env", `环境变量写入跳过：${error.message}`);
+    }
+  }
+
+  const files = walk(directory)
+    .filter((name) => name !== "_worker.js") // _worker.js 不进静态清单，单独附到部署表单
+    .map((name) => {
     const full = path.join(directory, name);
     const size = statSync(full).size;
     if (size > MAX_ASSET_SIZE) throw new Error(`${name} 超过 Pages 单文件上限（25 MiB）`);
@@ -305,6 +353,16 @@ async function main() {
   const form = new FormData();
   form.set("manifest", JSON.stringify(manifest));
   form.set("branch", branch);
+  // 高级模式 Worker：与 wrangler pages deploy 一致，单独作为 _worker.js 字段提交
+  if (existsSync(workerTarget)) {
+    form.set(
+      "_worker.js",
+      new File([readFileSync(workerTarget, "utf8")], "_worker.js", {
+        type: "application/javascript+module",
+      }),
+    );
+    log("worker", "_worker.js 已附到部署请求");
+  }
   const deployment = await api(
     token,
     `/accounts/${account.id}/pages/projects/${projectName}/deployments`,

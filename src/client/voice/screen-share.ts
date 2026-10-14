@@ -17,7 +17,20 @@
 import { isPenDebug } from "./pen";
 
 /** SFU 代理的根路径（同源，vite 代理转发）。 */
-export const SFU_BASE = "/sfu";
+/**
+ * SFU 接口基址（按运行环境解析）：
+ * - 开发：/sfu → vite 代理到本机 scripts/dev-sfu-server.mjs；
+ * - 网页生产：/sfu → Pages 同域（_worker.js 提供，见 worker/_worker.pages.js）；
+ * - 桌面端（tauri.localhost）：没有同域服务端，直连 https://5blong.pages.dev/sfu。
+ */
+export const SFU_BASE = (() => {
+  if (import.meta.env.DEV) return "/sfu";
+  const host = typeof location !== "undefined" ? location.hostname : "";
+  if (host === "tauri.localhost" || host.endsWith(".tauri.localhost")) {
+    return "https://5blong.pages.dev/sfu";
+  }
+  return "/sfu";
+})();
 
 /** SFU 视频轨名（全房固定；订阅方按它拉流）。 */
 export const TRACK_VIDEO = "screen";
