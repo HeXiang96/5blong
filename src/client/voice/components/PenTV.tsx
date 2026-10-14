@@ -76,11 +76,13 @@ interface PenTVProps {
   stageWidth: number;
   stageHeight: number;
   stageBottomGap: number;
+  /** 放大灯箱打开时为 true：暂停小幕布的视频（省一路 1080p 解码，观众端不卡）。 */
+  paused?: boolean;
   /** 点击幕布（放大）。 */
   onExpand: () => void;
 }
 
-export function PenTV({ state, stream, stageWidth, stageHeight: stageH, stageBottomGap, onExpand }: PenTVProps) {
+export function PenTV({ state, stream, stageWidth, stageHeight: stageH, stageBottomGap, paused, onExpand }: PenTVProps) {
   const [phase, setPhase] = useState<TvPhase>("absent");
   /** 停播后先雪花一会儿再熄幕：用 leaving 前的缓冲表达"节目结束"。 */
   const [snowing, setSnowing] = useState(false);
@@ -123,17 +125,19 @@ export function PenTV({ state, stream, stageWidth, stageHeight: stageH, stageBot
     }
   }, [phase]);
 
-  // 画面流进 <video>
+  // 画面流进 <video>（paused：灯箱打开时暂停小幕布解码，省一路 1080p 解码）
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
-    if (stream) {
+    if (stream && !paused) {
       video.srcObject = stream;
       void video.play().catch(() => {/* 自动播放被拦时静音重试一次 */ video.muted = true; void video.play().catch(() => {}); });
+    } else if (paused) {
+      video.pause();
     } else {
       video.srcObject = null;
     }
-  }, [stream, phase]);
+  }, [stream, phase, paused]);
 
   if (stageWidth <= 0) return null;
 
@@ -242,15 +246,62 @@ interface PenTvLightboxProps {
   state: ScreenShareState;
   stream: MediaStream | null;
   sharerName: string;
+  /** 订阅端连接（观众用它拉 getStats 看链路数据；共享者本机为 null）。 */
+  pc?: RTCPeerConnection | null;
   onClose: () => void;
 }
 
 /** 点击幕布弹出的放大层：16:9 大画面 + 来源标签 + 音量（共享带声音时）。 */
-export function PenTvLightbox({ state, stream, sharerName, onClose }: PenTvLightboxProps) {
+export function PenTvLightbox({ state, stream, sharerName, pc, onClose }: PenTvLightboxProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   // 打开灯箱是用户点击手势，可以直接出声（默认开音量；场景里的小幕布保持静音防双声）
   const [muted, setMuted] = useState(false);
   const [volume, setVolume] = useState(1);
+  /** 观众端实时链路数据（每 2s 刷新）：一眼看清卡在编码、传输还是解码。 */
+  const [stats, setStats] = useState("");
+
+  useEffect(() => {
+    if (!pc) return;
+    let prevBytes = 0;
+    let prevTs = 0;
+    const timer = window.setInterval(async () => {
+      try {
+        const report = await pc.getStats();
+        let codec = "";
+        let res = "";
+        let fps = 0;
+        let kbps = 0;
+        report.forEach((entry) => {
+          if (entry.type === "inbound-rtp" && entry.kind === "video") {
+            const w = entry.frameWidth ?? 0;
+            const h = entry.frameHeight ?? 0;
+            if (w) res = `${w}×${h}`;
+            fps = Math.round(entry.framesPerSecond ?? 0);
+            const bytes = entry.bytesReceived ?? 0;
+            const ts = entry.timestamp ?? Date.now();
+            if (prevTs) kbps = Math.round(((bytes - prevBytes) * 8) / (ts - prevTs));
+            prevBytes = bytes;
+            prevTs = ts;
+          }
+          if (entry.type === "codec" && entry.payloadType && entry.mimeType) {
+            if (!codec || entry.codecId) {
+              if (String(entry.mimeType).toLowerCase().startsWith("video/")) {
+                codec = String(entry.mimeType).replace("video/", "") + (entry.sdpFmtpLine ? "" : "");
+              }
+            }
+          }
+        });
+        setStats(
+          [res || "?", `${fps || "?"} fps`, `${kbps || "?"} kbps`, codec || "编码器?"]
+            .filter(Boolean)
+            .join(" · "),
+        );
+      } catch {
+        /* 连接关闭后的取数失败，忽略 */
+      }
+    }, 2000);
+    return () => window.clearInterval(timer);
+  }, [pc]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -306,6 +357,7 @@ export function PenTvLightbox({ state, stream, sharerName, onClose }: PenTvLight
           )}
         </div>
         <footer className="vx-tv-bigfoot">
+          {stats ? <span className="vx-tv-stats">{stats}</span> : null}
           {stream ? (
             <>
               <button

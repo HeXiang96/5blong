@@ -118,6 +118,8 @@ export function useVoice() {
   });
   /** 订阅到的共享画面流（观看端；null = 雪花待机）。 */
   const [shareStream, setShareStream] = useState<MediaStream | null>(null);
+  /** 订阅端 RTCPeerConnection（观众放大层拉 getStats 显示链路数据用）。 */
+  const [sharePc, setSharePc] = useState<RTCPeerConnection | null>(null);
 
   const sharePubRef = useRef<ScreenPublication | null>(null);
   const shareSubRef = useRef<ScreenSubscription | null>(null);
@@ -129,6 +131,7 @@ export function useVoice() {
     sharePubRef.current = null;
     shareSubRef.current?.stop();
     shareSubRef.current = null;
+    setSharePc(null);
     for (const track of shareLocalStreamRef.current?.getTracks() ?? []) track.stop();
     shareLocalStreamRef.current = null;
     setShareStream(null);
@@ -349,6 +352,7 @@ export function useVoice() {
     if (!screenShare) {
       shareSubRef.current?.stop();
       shareSubRef.current = null;
+      setSharePc(null);
       setShareStream(null);
       return;
     }
@@ -377,6 +381,7 @@ export function useVoice() {
             return;
           }
           shareSubRef.current = sub;
+          setSharePc(sub.pc);
           setShareStream(sub.stream);
         })
         .catch(() => {
@@ -996,6 +1001,7 @@ export function useVoice() {
     // 屏幕共享（围炉看 TV）
     screenShare,
     shareStream,
+    sharePc,
     startScreenShare,
     stopScreenShare,
     shareQuality: settings.shareQuality,

@@ -140,6 +140,7 @@ export function RoomView({
   onInteract,
   screenShare,
   shareStream,
+  sharePc,
   onStartShare,
   onStopShare,
   shareQuality,
@@ -207,6 +208,8 @@ export function RoomView({
   screenShare: ScreenShareState | null;
   /** 电视正在播的画面流（观看端订阅 / 共享者本机采集）。 */
   shareStream: MediaStream | null;
+  /** 订阅端连接（观众放大层拉链路数据用；共享者本机为 null）。 */
+  sharePc?: RTCPeerConnection | null;
   /** 开播（参数为画质档位）。 */
   onStartShare: (quality: ShareQuality) => void;
   /** 停播。 */
@@ -852,6 +855,7 @@ export function RoomView({
           stageWidth={stageWidth}
           stageHeight={stageHeight}
           stageBottomGap={stageBottomGap}
+          paused={tvExpanded}
           onExpand={() => setTvExpanded(true)}
         />
 
@@ -859,6 +863,7 @@ export function RoomView({
           <PenTvLightbox
             state={screenShare}
             stream={shareStream}
+            pc={sharePc}
             sharerName={displayNames.get(screenShare.sharerId) ?? "成员"}
             onClose={() => setTvExpanded(false)}
           />
