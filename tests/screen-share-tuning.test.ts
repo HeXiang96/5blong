@@ -24,10 +24,13 @@ import {
   nearestLadderIndex,
   perViewerBitrate,
   preferCodecSdp,
+  formatScreenLayers,
   preferH264Sdp,
   preferredRidFor,
   screenHintFor,
   screenLinkStrained,
+  shouldUseSimulcast,
+  simulcastSubscribeConfig,
   simulcastLayerBitrates,
   simulcastLayerLabel,
   summarizeScreenStats,
@@ -98,11 +101,12 @@ describe("RESOLUTION_LADDER（降级阶梯）", () => {
 });
 
 describe("autoTransportFor（按人数自动选传输）", () => {
-  it("自动：1~2 位观众走直连，3 位及以上走 SFU", () => {
-    expect(autoTransportFor("auto", 1).transport).toBe("p2p");
-    expect(autoTransportFor("auto", 3).transport).toBe("p2p");
-    expect(autoTransportFor("auto", 4).transport).toBe("sfu");
-    expect(autoTransportFor("auto", 8).transport).toBe("sfu");
+  it("自动：观众 ≤4 走直连，5 位及以上走 SFU（2026-10-14 从 ≤2 上调）", () => {
+    expect(autoTransportFor("auto", 1).transport).toBe("p2p"); // 0 位观众
+    expect(autoTransportFor("auto", 3).transport).toBe("p2p"); // 2 位观众
+    expect(autoTransportFor("auto", 5).transport).toBe("p2p"); // 4 位观众
+    expect(autoTransportFor("auto", 6).transport).toBe("sfu"); // 5 位观众
+    expect(autoTransportFor("auto", 8).transport).toBe("sfu"); // 7 位观众
   });
 
   it("显式选择永远优先", () => {
@@ -111,8 +115,8 @@ describe("autoTransportFor（按人数自动选传输）", () => {
   });
 
   it("每种结果都给得出人话的理由", () => {
-    expect(autoTransportFor("auto", 4).reason).toContain("SFU");
-    expect(autoTransportFor("auto", 2).reason).toContain("直连");
+    expect(autoTransportFor("auto", 6).reason).toContain("SFU");
+    expect(autoTransportFor("auto", 3).reason).toContain("直连");
     expect(autoTransportFor("p2p", 2).reason.length).toBeGreaterThan(0);
   });
 });
@@ -630,5 +634,120 @@ describe("观众偏好聚合（多人共用一条轨时的取舍）", () => {
     expect(preferredRidFor("auto")).toBe("f");
     expect(preferredRidFor("detail")).toBe("f");
     expect(preferredRidFor("motion")).toBe("h");
+  });
+});
+
+describe("simulcast 与硬件编码互斥（1.4.2 修）：有硬编就不开多档", () => {
+  const probe = (h264: boolean, av1: boolean) => ({
+    h264,
+    av1,
+    decH264: false,
+    decAv1: false,
+    checked: true,
+  });
+
+  it("有硬编 + 请求多档 → 拒绝多档（Chrome 会强制软编，实测画面糊到 353×254）", () => {
+    expect(shouldUseSimulcast(true, probe(true, false))).toBe(false);
+    expect(shouldUseSimulcast(true, probe(false, true))).toBe(false);
+  });
+
+  it("没有硬编 + 请求多档 → 保留多档（反正软编，多档至少让弱网观众拿小层）", () => {
+    expect(shouldUseSimulcast(true, probe(false, false))).toBe(true);
+  });
+
+  it("没请求多档就永远单档", () => {
+    expect(shouldUseSimulcast(false, probe(false, false))).toBe(false);
+  });
+});
+
+describe("simulcastSubscribeConfig（订阅层配置）", () => {
+  it("默认：满档 f + **锁层**（不许 SFU 按自己的带宽估计擅自降层）", () => {
+    expect(simulcastSubscribeConfig({})).toEqual({
+      preferredRid: "f",
+      priorityOrdering: "none",
+      ridNotAvailable: "asciibetical",
+    });
+  });
+
+  it("观众主动选「流畅优先」时才放开自适应降层", () => {
+    const config = simulcastSubscribeConfig({ preferredRid: "h", adaptive: true });
+    expect(config.priorityOrdering).toBe("asciibetical");
+    expect(config.preferredRid).toBe("h");
+  });
+
+  it("锁层不等于死等：发布端停掉该层时仍按 f→h→q 退层", () => {
+    expect(simulcastSubscribeConfig({}).ridNotAvailable).toBe("asciibetical");
+  });
+});
+
+describe("三分档读数（不再随机显示某一层）", () => {
+  /** 造一条 simulcast 发送端 outbound-rtp。 */
+  const layer = (rid: string, w: number, h: number, fps: number, bytes: number, ts: number) => ({
+    id: `O-${rid}`,
+    type: "outbound-rtp" as const,
+    kind: "video",
+    rid,
+    frameWidth: w,
+    frameHeight: h,
+    framesPerSecond: fps,
+    bytesSent: bytes,
+    timestamp: ts,
+    encoderImplementation: "SimulcastEncoderAdapter",
+    powerEfficientEncoder: false,
+  });
+
+  it("代表条目取最高分辨率那层，码率是三档合计，并给出逐层读数", () => {
+    const first = summarizeScreenStats(
+      [
+        layer("q", 353, 254, 53, 100_000, 10_000),
+        layer("f", 1414, 1018, 53, 1_000_000, 10_000),
+        layer("h", 707, 509, 53, 400_000, 10_000),
+      ],
+      null,
+    );
+    // 第一次采样：主层 = 1414×1018（而不是报告里排第一的 q 层）
+    expect(first.width).toBe(1414);
+    expect(first.text).toContain("1414×1018（主层）");
+    expect(first.text).toContain("三层合计");
+    expect(first.layers.map((item) => item.rid)).toEqual(["f", "h", "q"]);
+
+    const second = summarizeScreenStats(
+      [
+        layer("q", 353, 254, 53, 200_000, 11_000),
+        layer("f", 1414, 1018, 53, 2_000_000, 11_000),
+        layer("h", 707, 509, 53, 800_000, 11_000),
+      ],
+      first.sample,
+    );
+    // 三档合计：(1500_000 - 1500_000)... 增量 100k+1M+400k = 1.5 MB*8/1000ms = 12000 kbps
+    expect(second.kbps).toBe(12000);
+    // 逐层：f 8000k、h 3200k、q 800k
+    const byRid = new Map(second.layers.map((item) => [item.rid, item.kbps]));
+    expect(byRid.get("f")).toBe(8000);
+    expect(byRid.get("h")).toBe(3200);
+    expect(byRid.get("q")).toBe(800);
+  });
+
+  it("单档保持原行为（layers 为空、文本不含「主层」）", () => {
+    // 真实单档发布没有 rid（Chrome 只在 simulcast 编码上带 rid）
+    const single = summarizeScreenStats(
+      [{ ...layer("f", 1920, 1080, 60, 500_000, 1_000), rid: undefined }],
+      null,
+    );
+    expect(single.layers).toEqual([]);
+    expect(single.text).not.toContain("主层");
+    expect(single.text).toContain("1920×1080");
+    expect(formatScreenLayers(single.layers)).toBe("");
+  });
+
+  it("formatScreenLayers 只对多档出文本", () => {
+    const summary = summarizeScreenStats(
+      [layer("q", 353, 254, 30, 10_000, 1_000), layer("f", 1414, 1018, 60, 90_000, 1_000)],
+      null,
+    );
+    const text = formatScreenLayers(summary.layers);
+    expect(text).toContain("f 1414×1018");
+    expect(text).toContain("q 353×254");
+    expect(text).toContain("@30");
   });
 });

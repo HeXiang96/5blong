@@ -5,10 +5,11 @@
 * 公网地址（任何网络可开）：[https://5blong.pages.dev](https://5blong.pages.dev)
 * 源码仓库：[https://github.com/HeXiang96/5blong](https://github.com/HeXiang96/5blong)
 * 单房建议 2–6 人，最多 8 人；音频在参与者之间点对点（P2P）直连。
-* **屏幕共享（围炉看投影）**：传输方式默认**自动**（1~2 位观众 P2P 直连、3 人及以上自动切
-  Cloudflare Realtime SFU 转发，免费额度），全房同看一块大幕布，与语音链路物理隔离；
+* **屏幕共享（围炉看投影）**：传输方式默认**自动**（**观众 ≤4 走 P2P 直连、5 位观众及以上
+  自动切 Cloudflare Realtime SFU 转发**，免费额度），全房同看一块大幕布，与语音链路物理隔离；
   详见 [SCREENSHARE-PLAN.md](./SCREENSHARE-PLAN.md) 与 [SCREENSHARE-OPT-PLAN.md](./SCREENSHARE-OPT-PLAN.md)。
-* 全程 0 成本：信令用免费公共 PeerJS 云，NAT 穿透用免费公共 STUN，不需要任何付费服务。
+* 全程 0 成本：信令用免费公共 PeerJS 云，NAT 穿透用免费公共 STUN +
+  **Cloudflare Realtime TURN**（服务端 `/ice` 现签短期凭据，1000 GB/月免费额度），不需要任何付费服务。
 
 > **✅ 前述缺陷已修复（2026-10-12）**：此前"访客用邀请链接能进房并看到房主，
 > 但房主看不到访客、访客约 12 秒后被断开"的问题，根因是 `onGuestData()` 里
@@ -77,7 +78,7 @@ Chrome / WebView2 WebRTC → Media Foundation 的 H.264 MFT → GPU 驱动 → �
 | `engine.ts` | P2P 画面连接挂**自适应调谐器**并真正下发档位（原 `peer.call()` 后无任何 `setParameters`）；`sdpTransform: preferH264Sdp`；抖动自愈 | 1–3 |
 | `protocol.ts` | `ScreenSharePublication` 增 `simulcast` 字段（向后兼容解析） | 2 |
 | `settings.ts` | 传输方式默认 `p2p` → **`auto`**；`settingsVersion = 2` 迁移旧配置 | 2 |
-| `use-voice.ts` | 传输决策（1~2 人 P2P / ≥3 人 SFU）、simulcast 开关、把发布对象存入 `sharePubRef`（原来**被丢弃**，停播时 SFU 连接不收口） | 2 |
+| `use-voice.ts` | 传输决策（观众 ≤4 走 P2P / ≥5 位观众切 SFU）、simulcast 开关、把发布对象存入 `sharePubRef`（原来**被丢弃**，停播时 SFU 连接不收口） | 2 |
 | `components/RoomView.tsx` | 传输选项加"自动"档 + 实时显示"本次将用 X：理由" | 2 |
 
 ### 四个批次
@@ -151,6 +152,10 @@ STUN 拿到公网映射地址才有打洞资格，而**对称 NAT / 公司网 / 
   首页启动即预热，进房路径最多再等 2.5 秒。
 * **铁律：拿不到 ICE 也必须能进房。** 拉取失败 / 超时一律退回纯 STUN 打洞，
   绝不为中继把进房卡住。
+* 静态兜底**只留实测活着的两家**（`stun.cloudflare.com` + `stun.chat.bilibili.com`）。
+  2026-10-14 UDP 实探：`stun.miwifi.com`（小米）已无响应、`stun.l.google.com` 大陆问不到。
+  STUN 只负责「问出自己的公网映射地址」，多配几家并不提升穿透率（那是 TURN 的活），
+  留着死地址只会误导日后排查。
 
 ### 需要配的两样（一次性）
 
@@ -295,6 +300,7 @@ TURN key 与 SFU 的 appId/secret **是两套**，分别创建：
   > ⚠️ **2026-10-14 深夜订正**：OpenRelay 已**整体关停**（`openrelay.metered.ca` 现在解析到
   > `192.0.2.1`，RFC 5737 的黑洞地址），上面这条结论当时就已经不成立了——中继不通，
   > 跨网一律进不去。现已改为由服务端 `/ice` 签发 Cloudflare Realtime TURN 短期凭据，
+  > 静态兜底也精简为 Cloudflare + B站两家实测可用的（小米已死、Google 大陆问不到），
   > 详见上面「跨网进不去房间？先看这一节」。
 
 **小猪全面重做（3D 质感与生活感）**

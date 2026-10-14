@@ -19,15 +19,17 @@
  *    TURN key 本体留在 Worker 的 secret 里。
  */
 
-/** 公共 STUN 兜底（无 TURN）。中外各两个，单个服务挂掉不至于全盲。 */
+/**
+ * 公共 STUN 兜底（无 TURN）。**只留实测活着的两家**。
+ *
+ * 2026-10-14 UDP 实探：`stun.miwifi.com`（小米）无响应、`stun.l.google.com` 大陆问不到；
+ * `stun.cloudflare.com` 与 `stun.chat.bilibili.com` 正常。
+ * 说明：STUN 只负责"问出自己的公网映射地址"，两边各问一次就够——
+ * 多配几家**并不提升穿透率**（那是 TURN 的活），留着两条死地址只会误导日后排查。
+ */
 const FALLBACK: RTCIceServer[] = [
   {
-    urls: [
-      "stun:stun.cloudflare.com:3478",
-      "stun:stun.miwifi.com:3478",
-      "stun:stun.chat.bilibili.com:3478",
-      "stun:stun.l.google.com:19302",
-    ],
+    urls: ["stun:stun.cloudflare.com:3478", "stun:stun.chat.bilibili.com:3478"],
   },
 ];
 

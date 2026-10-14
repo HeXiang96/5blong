@@ -411,6 +411,10 @@ export function useVoice() {
       void subscribeScreen(screenShare.sessionId, trackNames, {
         simulcast: screenShare.simulcast === true,
         preferredRid: preferredRidFor(settings.shareViewMode),
+        // 默认锁住所选的层（业主口径："默认就是最高的来"）——不许 SFU 按它自己的
+        // 带宽估计擅自把满档降到 q 层（现场：观众选 f 却只收到 353×254）。
+        // 只有观众主动选「流畅优先」时才放开自适应降层去换平滑。
+        adaptive: settings.shareViewMode === "motion",
       })
         .then((sub) => {
           if (cancelled) {
@@ -539,7 +543,12 @@ export function useVoice() {
             });
             sharePubRef.current = pub;
             sessionId = pub.sessionId;
-            simulcast = true;
+            // 用**实际**是否多档（有硬件编码器时 publishScreen 会否决 simulcast，
+            // 避免 Chrome 为多档强制走软件编码——实测画面会糊到 353×254）
+            simulcast = pub.simulcast;
+            if (!pub.simulcast) {
+              transportNote = "本机有硬件编码，已用单档硬件编码直发（画质更好）";
+            }
           } catch (error) {
             // SFU 这条路走不通（跨境/被限流）时，别让用户"共享失败"——
             // 退回 P2P 直连，能出画面最重要。
@@ -658,7 +667,7 @@ export function useVoice() {
             const pub = await publishScreen(demo, { quality: "fhd1080", simulcast: true });
             sharePubRef.current = pub;
             sessionId = pub.sessionId;
-            simulcast = true;
+            simulcast = pub.simulcast;
           } catch {
             transport = "p2p";
             sessionId = randomSessionId();

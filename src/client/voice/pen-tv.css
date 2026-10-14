@@ -626,26 +626,62 @@ html[data-daypart="night"] .vx-proj-beam {
   font-size: 13px;
 }
 
+/* 灯箱底部工具条：统计条 + 画质开关 + 音量 + 提示。
+   允许换行（窄屏折成两行），且**每个控件都不许压缩**（nowrap），
+   否则会出现"一个字一行"的竖排（业主实拍反馈过）。 */
 .vx-tv-bigfoot {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 12px;
+  gap: 8px 10px;
   padding: 10px 14px;
 }
-.vx-tv-bigfoot .vx-range { flex: 0 1 220px; }
-/* 观众的画质开关（自动 / 清晰优先 / 流畅优先）：一组小胶囊按钮 */
+/* 观众的画质开关（自动 / 清晰 / 流畅）：一组小胶囊 */
 .vx-tv-viewmode {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  flex: 0 0 auto;
 }
-.vx-tv-viewmode .vx-menu-btn {
-  font-size: 12px;
-  padding: 4px 10px;
+/* 灯箱专用胶囊按钮（**不要**用 .vx-menu-btn：那是弹层里的竖排全宽按钮）。
+   木纹底色上用"奶油高亮"表示选中，不用 --vx-danger 的红。 */
+.vx-tv-ctrl {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  white-space: nowrap;
+  padding: 5px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 244, 221, 0.3);
+  background: rgba(12, 10, 5, 0.26);
+  color: #f7eeda;
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 500;
+  line-height: 1.5;
+  cursor: pointer;
+  transition: background 0.14s ease, border-color 0.14s ease, color 0.14s ease;
 }
+.vx-tv-ctrl:hover { background: rgba(12, 10, 5, 0.45); }
+.vx-tv-ctrl[aria-pressed="true"] {
+  background: #f8e7c2;
+  border-color: #f8e7c2;
+  color: #46301a;
+  font-weight: 600;
+}
+/* 音量：按钮 + 滑杆成组，整体可伸缩（滑杆优先被压缩，按钮永不压扁） */
+.vx-tv-volume {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1 1 220px;
+  min-width: 0;
+}
+.vx-tv-bigfoot .vx-range { flex: 1 1 90px; min-width: 70px; }
 /* 实时链路数据条（发送端/接收端共用）：等宽数字，读数不跳行 */
 .vx-tv-stats {
-  flex: 0 1 auto;
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -659,8 +695,30 @@ html[data-daypart="night"] .vx-proj-beam {
 }
 .vx-tv-bighint {
   margin-left: auto;
+  flex: 0 0 auto;
+  white-space: nowrap;
   font-size: 12px;
   color: rgba(255, 244, 221, 0.6);
+}
+/* 多档（simulcast）逐层读数：整行铺开，等宽数字 */
+.vx-tv-layers {
+  flex: 1 1 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: rgba(12, 10, 5, 0.55);
+  color: #d8c9ab;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+/* 窄屏（手机/矮窗口）：提示语直接收起，别跟读数挤成一团 */
+@media (max-width: 720px) {
+  .vx-tv-bighint { display: none; }
+  .vx-tv-stats { flex: 1 1 100%; order: 2; }
+  .vx-tv-volume { flex: 1 1 100%; }
 }
 
 /* 控制栏是 relative 锚点（共享菜单从按钮上弹） */

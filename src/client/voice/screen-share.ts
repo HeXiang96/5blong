@@ -328,9 +328,13 @@ export function preferredRidFor(pref: ScreenViewPreference): "f" | "h" {
 /**
  * P2P / SFU 传输方式的自动选择（SCREENSHARE-PERF-PLAN §P1-11）。
  *
- * P2P 的上行是"档位码率 × 观众数"：1~2 位观众时直连最省事、画质最好；
- * 3 人及以上时家用上行会被打爆（1080p@8M × 3 ≈ 24 Mbps），必须切 SFU 转发。
- * 用户的显式选择永远优先，"auto" 才按人数决定。
+ * P2P 的上行是"每路码率 × 观众数"：观众不多时直连最省事、画质最好（走本地运营商
+ * 互联，延迟低）；观众多到一定程度家宽上行会被打爆，必须切 SFU 转发
+ * （上行从 N 路变成 1 路，由 SFU 分发）。
+ *
+ * 阈值由业主定：**观众 ≤4 走直连**（2026-10-14 从 ≤2 上调——实测共享端上行余量
+ * 有 14 Mbps，8 Mbps 档位摊到 4 路仍够；且直连画质明显优于绕境外的 SFU）。
+ * 观众的显式选择永远优先，"auto" 才按人数决定。
  */
 export function autoTransportFor(
   preference: "p2p" | "sfu" | "auto",
@@ -339,7 +343,7 @@ export function autoTransportFor(
   if (preference === "p2p") return { transport: "p2p", reason: "你选了直连" };
   if (preference === "sfu") return { transport: "sfu", reason: "你选了 SFU 转发" };
   const viewers = Math.max(0, memberCount - 1);
-  if (viewers <= 2) return { transport: "p2p", reason: `观众 ${viewers} 人，直连画质最好` };
+  if (viewers <= 4) return { transport: "p2p", reason: `观众 ${viewers} 人，直连画质最好` };
   return { transport: "sfu", reason: `观众 ${viewers} 人，直连上行会打爆，自动走 SFU` };
 }
 
@@ -528,6 +532,23 @@ export interface StatsEntry {
 export interface RateSample {
   bytes: number;
   ts: number;
+  /**
+   * simulcast 时每一层的独立基线（key = rid）。
+   *
+   * 为什么需要：simulcast 发布会同时产生 **3 条 outbound-rtp**（f/h/q）。
+   * 只看第一条会让数据条随机显示某一层——实测里正好显示到 q 层，
+   * 于是"发出 353×254 · 480 kbps"被误读成"整条流只有这么糊"。
+   */
+  layers?: Record<string, RateSample>;
+}
+
+/** 一层 simulcast 的读数。 */
+export interface ScreenLayerStat {
+  rid: string;
+  width: number;
+  height: number;
+  fps: number;
+  kbps: number;
 }
 
 export interface ScreenStatsSummary {
@@ -561,6 +582,11 @@ export interface ScreenStatsSummary {
   frozen: number;
   /** 接收端：累计丢包率（%）。 */
   lossPct: number;
+  /**
+   * simulcast 发布时的**逐层读数**（按分辨率从大到小；单档 = 空数组）。
+   * 有了它才能回答"码率低在哪一层"——之前数据条随机显示某一层，误导性极强。
+   */
+  layers: ScreenLayerStat[];
   /** 已经拼好的可显示文本。 */
   text: string;
   sample: RateSample | null;
@@ -581,6 +607,7 @@ const EMPTY_SUMMARY: ScreenStatsSummary = {
   encodeMs: 0,
   frozen: 0,
   lossPct: 0,
+  layers: [],
   text: "",
   sample: null,
 };
@@ -614,14 +641,38 @@ export function summarizeScreenStats(entries: StatsEntry[], prev: RateSample | n
     }
   }
 
-  let outbound: StatsEntry | null = null;
-  let inbound: StatsEntry | null = null;
+  /*
+   * simulcast 发布时同向会有**多条** outbound-rtp（f/h/q 各一条）。原实现取第一条，
+   * 于是数据条随机显示到某一层——实测里正好落在 q 层，屏幕上就成了
+   * "发出 353×254 · 480 kbps"，看着像整条流都糊透了（其实是三层里最小的那层）。
+   * 现在：取**分辨率最高的一条**作代表（= 主层），码率按**所有层求和**（那才是真实上行），
+   * 并额外给出逐层读数（`layers`）。
+   */
+  const videoEntries: StatsEntry[] = [];
+  let firstOutbound: StatsEntry | null = null;
+  let firstInbound: StatsEntry | null = null;
   for (const entry of entries) {
     if (entry.kind !== "video") continue;
-    if (!outbound && entry.type === "outbound-rtp") outbound = entry;
-    else if (!inbound && entry.type === "inbound-rtp") inbound = entry;
+    if (entry.type === "outbound-rtp") {
+      videoEntries.push(entry);
+      firstOutbound ??= entry;
+    } else if (entry.type === "inbound-rtp") {
+      videoEntries.push(entry);
+      firstInbound ??= entry;
+    }
   }
-  const target = outbound ?? inbound;
+  // 发送/接收方向：有 outbound 就按发送端看（与旧行为一致），否则看 inbound
+  if (!firstOutbound && !firstInbound) return EMPTY_SUMMARY;
+  const send = firstOutbound !== null;
+  const sameDirection = videoEntries.filter((entry) =>
+    send ? entry.type === "outbound-rtp" : entry.type === "inbound-rtp",
+  );
+  // 代表条目 = 分辨率最高的一层（单档时就是它自己）
+  const target = sameDirection.reduce<StatsEntry | null>(
+    (best, entry) =>
+      best === null || num(entry["frameWidth"]) > num(best["frameWidth"]) ? entry : best,
+    null,
+  );
   if (!target) return EMPTY_SUMMARY;
 
   // ICE 候选对里藏着两件"链路真相"，而 outbound-rtp 上都没有：
@@ -638,14 +689,51 @@ export function summarizeScreenStats(entries: StatsEntry[], prev: RateSample | n
     linkAvailable = Math.max(linkAvailable, num(entry["availableOutgoingBitrate"]));
   }
 
-  const send = target === outbound;
   const codecEntry = target.codecId ? byId.get(String(target.codecId)) : undefined;
   const codec = (codecEntry?.mimeType ? String(codecEntry.mimeType) : "").replace(/^video\//i, "") || fallbackCodec;
 
+  // 逐层读数 + 总码率：单档时 layers 为空、总码率就等于这一条
+  const layerSamples: Record<string, RateSample> = {};
+  const layers: ScreenLayerStat[] = [];
+  let layerBytes = 0;
+  for (const [index, entry] of sameDirection.entries()) {
+    const bytes = send ? num(entry["bytesSent"]) : num(entry["bytesReceived"]);
+    const ts = num(entry["timestamp"]) || Date.now();
+    layerBytes += bytes;
+    const rid = str(entry["rid"]) || (sameDirection.length > 1 ? `#${index}` : "");
+    const previous = rid ? prev?.layers?.[rid] : undefined;
+    const layerKbps =
+      previous && ts > previous.ts
+        ? Math.max(0, Math.round(((bytes - previous.bytes) * 8) / (ts - previous.ts)))
+        : 0;
+    if (rid) {
+      layerSamples[rid] = { bytes, ts };
+      layers.push({
+        rid,
+        width: num(entry["frameWidth"]),
+        height: num(entry["frameHeight"]),
+        fps: Math.round(num(entry["framesPerSecond"])),
+        kbps: layerKbps,
+      });
+    }
+  }
+  layers.sort((a, b) => b.width - a.width);
+
   const bytes = send ? num(target["bytesSent"]) : num(target["bytesReceived"]);
   const ts = num(target["timestamp"]) || Date.now();
-  const kbps = prev && ts > prev.ts ? Math.round(((bytes - prev.bytes) * 8) / (ts - prev.ts)) : 0;
-  const sample: RateSample = { bytes, ts };
+  const multiLayer = sameDirection.length > 1;
+  const totalBytes = multiLayer ? layerBytes : bytes;
+  // 上一次的基线：多档要按层求和，单档用整条
+  const prevBytes = multiLayer
+    ? prev?.layers
+      ? Object.values(prev.layers).reduce((sum, item) => sum + item.bytes, 0)
+      : 0
+    : (prev?.bytes ?? 0);
+  const kbps =
+    prev && prevBytes > 0 && ts > prev.ts && totalBytes >= prevBytes
+      ? Math.max(0, Math.round(((totalBytes - prevBytes) * 8) / (ts - prev.ts)))
+      : 0;
+  const sample: RateSample = { bytes: totalBytes, ts, ...(layers.length > 0 ? { layers: layerSamples } : {}) };
 
   const width = num(target["frameWidth"]);
   const height = num(target["frameHeight"]);
@@ -663,9 +751,13 @@ export function summarizeScreenStats(entries: StatsEntry[], prev: RateSample | n
   const lossPct = !send && packets + lost > 0 ? Number(((lost / (packets + lost)) * 100).toFixed(1)) : 0;
 
   const parts: string[] = [];
-  parts.push(`${send ? "发出" : "收到"} ${width && height ? `${width}×${height}` : "?"}`);
+  // 多档（simulcast）时明确标"主层"，并把合计码率放在最前——那是真实上行带宽
+  parts.push(
+    `${send ? "发出" : "收到"} ${width && height ? `${width}×${height}` : "?"}${multiLayer ? "（主层）" : ""}`,
+  );
   parts.push(`${fps || "?"} fps`);
-  parts.push(`${kbps || "?"} kbps`);
+  if (multiLayer) parts.push(`三层合计 ${kbps || "?"} kbps`);
+  else parts.push(`${kbps || "?"} kbps`);
   const accel = powerEfficient ? (send ? "硬编" : "硬解") : send ? "软编" : "软解";
   parts.push([codec, implementation, accel].filter(Boolean).join(" ") || "编码器?");
   // 走没走中继直接写在数据条里：中继被限速时，"码率上不去"就不是编码参数能救的
@@ -694,9 +786,24 @@ export function summarizeScreenStats(entries: StatsEntry[], prev: RateSample | n
     encodeMs,
     frozen,
     lossPct,
+    layers,
     text: parts.join(" · "),
     sample,
   };
+}
+
+/**
+ * 逐层读数的单行文本（灯箱第二行用）：`f 1414×1018 5200k · h 707×509 2100k · q 353×254 400k`。
+ * 没有多档时返回空串（界面就不显示第二行）。
+ */
+export function formatScreenLayers(layers: ScreenLayerStat[]): string {
+  if (layers.length < 2) return "";
+  return layers
+    .map(
+      (layer) =>
+        `${layer.rid} ${layer.width}×${layer.height} ${layer.kbps || "?"}k${layer.fps ? `@${layer.fps}` : ""}`,
+    )
+    .join(" · ");
 }
 
 /** 直接吃 RTCStatsReport 的便捷包装（组件里用）。 */
@@ -1024,6 +1131,11 @@ export interface ScreenPublication {
   sessionId: string;
   /** 是否带了音频轨。 */
   hasAudio: boolean;
+  /**
+   * **实际**是否用了 simulcast 多档（可能与请求的相反——有硬件编码器时会被否决，见 publishScreen）。
+   * 房主据此广播，订阅端才知道该不该按层拉流。
+   */
+  simulcast: boolean;
   /** 停止发布（关 PC + 通知 SFU 关轨，尽力而为）。 */
   stop: () => void;
   /** 连接中断回调（watchdog 用，界面上表现为雪花）。 */
@@ -1370,18 +1482,51 @@ export interface PublishScreenOptions {
 }
 
 /**
+ * 是否真的要开 simulcast 多档。纯函数，便于把"硬件编码与多档互斥"这条钉在单测里。
+ *
+ * 只有"调用方请求"且"本机没有硬件编码器"时才开：有硬编时多档会强制走软件编码
+ * （实测 SimulcastEncoderAdapter + OpenH264×3），画质反而崩掉。
+ */
+export function shouldUseSimulcast(requested: boolean, probe: HardwareCodecProbe): boolean {
+  if (!requested) return false;
+  return !(probe.h264 || probe.av1);
+}
+
+/**
  * 把采集好的屏幕流发布到 SFU。
  *
  * `stream` 来自 getDisplayMedia（或调试用的 canvas.captureStream）。
  * 返回的 stop() 只管 SFU 侧的清理；停止采集（track.stop()）由调用方负责。
  *
- * simulcast 是"锦上添花"：失败就退回单档发布，绝不让开播因它失败。
+ * ⚠️ **simulcast 与硬件编码互斥**（实测 + Chrome 实现决定）：
+ * 请求 `simulcast: true` 时 Chrome 会用 `SimulcastEncoderAdapter` 包多个编码器，
+ * 而 MediaFoundation/NVENC 在这种模式下**不会被采用**——实测读数直接写着
+ * `H264 SimulcastEncoderAdapter (OpenH264, OpenH264, OpenH264) 软编`，
+ * 而同一台机器走 P2P（单档）时是 `MediaFoundation… (NVIDIA H.264 Encoder MFT) 硬编`。
+ * 软编三档 1080p60 根本跑不动：实测编码 17.5ms/帧、上行掉到几百 kbps、
+ * 观众只拿到 353×254（q 层）。
+ *
+ * 所以：**本机有硬件编码器时忽略 simulcast，改发布单档硬编**（画质/CPU/上行全面更好；
+ * SFU 出口的上行也从"三层之和"降回一路）。只有没有硬件编码器时才保留多档
+ * （那时反正是软编，多档至少能让弱网观众拿到小层）。
  */
 export async function publishScreen(
   stream: MediaStream,
   options: PublishScreenOptions = {},
 ): Promise<ScreenPublication> {
-  if (!options.simulcast) return publishScreenOnce(stream, options);
+  const wantSimulcast = options.simulcast === true;
+  let useSimulcast = wantSimulcast;
+  if (wantSimulcast) {
+    const probe = await probeHardwareEncoders(options.quality ?? "fhd1080");
+    useSimulcast = shouldUseSimulcast(true, probe);
+    if (!useSimulcast) {
+      console.info(
+        "[screen-share] 本机有硬件编码器：放弃 simulcast 多档，改发布单档硬编" +
+          "（simulcast 在 Chrome 里会强制走软件编码，实测编码跟不上导致画面糊到 353×254）",
+      );
+    }
+  }
+  if (!useSimulcast) return publishScreenOnce(stream, { ...options, simulcast: false });
   try {
     return await publishScreenOnce(stream, { ...options, simulcast: true });
   } catch (error) {
@@ -1519,7 +1664,7 @@ async function publishScreenOnce(
     }
   };
 
-  return { sessionId, hasAudio: Boolean(audioTrack), stop: () => void teardown(), pc };
+  return { sessionId, hasAudio: Boolean(audioTrack), simulcast: useSimulcast, stop: () => void teardown(), pc };
 }
 
 // ---------------------------------------------------------------------------
@@ -1546,6 +1691,41 @@ export interface SubscribeScreenOptions {
   simulcast?: boolean;
   /** 优先层（默认 `f`，即满档）。 */
   preferredRid?: string;
+  /**
+   * 是否允许 SFU 自适应降层（`priorityOrdering: "asciibetical"`）。
+   *
+   * 缺省 **false = 锁住 preferredRid 那一层**：现场问题是观众明明选满档 `f`，
+   * SFU 却按"大陆→境外节点"的带宽估计把它降到了 353×254 的 q 层
+   * （观感就是"码率太低"）。业主口径：**默认给最高的**，
+   * 所以只有观众主动选"流畅优先"时才把它置真（允许退层换平滑）。
+   * `ridNotAvailable` 始终为字母序兜底：发布端真停掉该层时才退。
+   */
+  adaptive?: boolean;
+}
+
+/**
+ * 订阅 simulcast 轨时下发给 SFU 的层配置。纯函数（便于单测与语义固定）。
+ *
+ * **默认锁最高层**（业主明确要求："SFU 按它估计的带宽擅自把我从 f 降到 q，我不要；
+ * 默认就是最高的来"）：
+ * - `preferredRid` 默认满档 `f`；
+ * - `adaptive`（默认 false）= `priorityOrdering`：
+ *   `"none"` —— **就算 SFU 觉得带宽不够，也保持 f 层**（对应现场问题：
+ *   观众选满档却只收到 353×254 的 q 层，因为它按"大陆→境外节点"的估计擅自降了层）；
+ *   `"asciibetical"` —— 只在观众**主动**选"流畅优先"时才开，允许 SFU 按
+ *   f→h→q 自适应降层换平滑；
+ * - `ridNotAvailable: "asciibetical"` 始终保留：**发布端真的停掉该层**时才退层
+ *   （这与"带宽不足被降"是两件事，不会导致画面凭空消失）。
+ */
+export function simulcastSubscribeConfig(options: {
+  preferredRid?: string;
+  adaptive?: boolean;
+}): { preferredRid: string; priorityOrdering: string; ridNotAvailable: string } {
+  return {
+    preferredRid: options.preferredRid ?? "f",
+    priorityOrdering: options.adaptive === true ? "asciibetical" : "none",
+    ridNotAvailable: "asciibetical",
+  };
 }
 
 /**
@@ -1600,9 +1780,9 @@ async function subscribeScreenInner(
 
   // simulcast 发布：声明优先层并开启字母序降级（不声明 = 官方默认 none，
   // 带宽不足时 SFU 仍死推最高层，观众端只会更卡）。
-  const simulcast = options.simulcast
-    ? { preferredRid: options.preferredRid ?? "f", priorityOrdering: "asciibetical", ridNotAvailable: "asciibetical" }
-    : undefined;
+  // `lockLayer` 时把 priorityOrdering 设为 none = "就算它觉得带宽不够也别降层"
+  // （观众点"清晰优先"就是表达这个诉求）；ridNotAvailable 仍留字母序兜底。
+  const simulcast = options.simulcast ? simulcastSubscribeConfig(options) : undefined;
   const result = await postJson(`/sessions/${sessionId}/tracks/new`, {
     tracks: trackNames.map((trackName) => ({
       location: "remote",

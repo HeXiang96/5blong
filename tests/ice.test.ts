@@ -62,12 +62,15 @@ describe("兜底状态（尚未拉到凭据）", () => {
     expect(ice.iceHasTurn()).toBe(false);
   });
 
-  it("兜底 STUN 里保留国内可达的节点（Google STUN 在大陆基本不可用）", async () => {
+  it("兜底 STUN 只留实测活着的两家（小米已死、Google 大陆问不到）", async () => {
     const ice = await freshModule();
     const urls = urlsOf(ice.iceServers() as { urls: string[] }[]);
 
-    expect(urls).toContain("stun:stun.miwifi.com:3478");
+    expect(urls).toContain("stun:stun.cloudflare.com:3478");
     expect(urls).toContain("stun:stun.chat.bilibili.com:3478");
+    // 2026-10-14 UDP 实探：小米无响应、Google 大陆问不到 —— 死地址不许留在兜底里
+    expect(urls).not.toContain("stun:stun.miwifi.com:3478");
+    expect(urls).not.toContain("stun:stun.l.google.com:19302");
   });
 });
 
@@ -83,7 +86,7 @@ describe("刷新成功", () => {
     expect(urls.some((u) => u.startsWith("turn:"))).toBe(true);
     expect(urls.some((u) => u.startsWith("turns:"))).toBe(true);
     // 本地兜底不被服务端返回顶掉：服务端挂了也要还有 STUN 可用
-    expect(urls).toContain("stun:stun.miwifi.com:3478");
+    expect(urls).toContain("stun:stun.chat.bilibili.com:3478");
     expect(ice.iceHasTurn()).toBe(true);
   });
 

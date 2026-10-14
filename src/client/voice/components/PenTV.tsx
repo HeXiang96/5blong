@@ -6,6 +6,7 @@ import { FIRE_POS, PROJ_POS, SCREEN_POS, feetViewportPx } from "../pen";
 import type { ScreenShareState, ScreenViewPreference } from "../protocol";
 import {
   SHARE_QUALITY_PRESETS,
+  formatScreenLayers,
   simulcastLayerLabel,
   summarizeScreenReport,
   type RateSample,
@@ -286,11 +287,17 @@ export function PenTvLightbox({ state, stream, sharerName, pc, viewMode, onViewM
    */
   const [stats, setStats] = useState("");
   const [statsRole, setStatsRole] = useState<"send" | "recv" | null>(null);
+  /**
+   * simulcast 多档时的**逐层**读数（主层 + 半档 + 省流各多少码率）。
+   * 没有它就会闹出"发出 353×254 · 480 kbps"这种误导——那只是三层里最小的 q 层。
+   */
+  const [layers, setLayers] = useState("");
 
   useEffect(() => {
     if (!pc) {
       setStats("");
       setStatsRole(null);
+      setLayers("");
       return;
     }
     let prev: RateSample | null = null;
@@ -298,6 +305,7 @@ export function PenTvLightbox({ state, stream, sharerName, pc, viewMode, onViewM
       try {
         const summary = summarizeScreenReport(await pc.getStats(), prev);
         prev = summary.sample;
+        setLayers(formatScreenLayers(summary.layers));
         if (!summary.text) return;
         let text = summary.text;
         /*
@@ -381,52 +389,77 @@ export function PenTvLightbox({ state, stream, sharerName, pc, viewMode, onViewM
               {stats}
             </span>
           ) : null}
+          {/* 多档发布时把三层各自的码率摊开——"码率低在哪一层"一眼可见 */}
+          {layers ? (
+            <span className="vx-tv-layers" title="simulcast 各层读数（f 主层 / h 半档 / q 省流）">
+              三层：{layers}
+            </span>
+          ) : null}
           {stream ? (
             <>
               {/* 观众的画质开关：换来的是"发送端按你的偏好降档"（P2P）
-                  或"订阅到哪一层"（SFU）。共享者不显示。 */}
+                  或"订阅到哪一层"（SFU）。共享者不显示。
+                  按钮用 `.vx-tv-ctrl`（灯箱专用胶囊），**不要**复用 `.vx-menu-btn`
+                  —— 那是弹层里的竖排全宽按钮（width:100%），塞进横排会被挤成
+                  一个字一行，激活色还是"危险红"（业主实拍反馈）。 */}
               {!isSharer && onViewMode ? (
-                <div className="vx-tv-viewmode" role="group" aria-label="画质偏好">
+                <div
+                  className="vx-tv-viewmode"
+                  role="group"
+                  aria-label="画质偏好"
+                  title="按你的观感调：清晰优先保文字清楚，流畅优先保不卡"
+                >
                   {(
                     [
                       { key: "auto", name: "自动" },
-                      { key: "detail", name: "清晰优先" },
-                      { key: "motion", name: "流畅优先" },
+                      { key: "detail", name: "清晰" },
+                      { key: "motion", name: "流畅" },
                     ] as const
                   ).map((item) => (
                     <button
                       key={item.key}
                       type="button"
-                      className={`vx-menu-btn${(viewMode ?? "auto") === item.key ? " vx-menu-btn-active" : ""}`}
+                      className="vx-tv-ctrl"
                       onClick={() => onViewMode(item.key)}
                       aria-pressed={(viewMode ?? "auto") === item.key}
+                      title={
+                        item.key === "detail"
+                          ? "清晰优先：宁可掉帧，文字更清楚（看文档/代码）"
+                          : item.key === "motion"
+                            ? "流畅优先：宁可糊一点，画面更跟手（看游戏/视频）"
+                            : "自动：交给发送端按链路自己调"
+                      }
                     >
                       {item.name}
                     </button>
                   ))}
                 </div>
               ) : null}
-              <button
-                type="button"
-                className={`vx-menu-btn${muted ? "" : " vx-menu-btn-active"}`}
-                onClick={() => setMuted((m) => !m)}
-              >
-                {muted ? <VolumeX size={14} /> : <Volume2 size={14} />}
-                {muted ? "开启声音" : "声音已开"}
-              </button>
-              <input
-                type="range"
-                min={0}
-                max={1}
-                step={0.01}
-                value={volume}
-                onChange={(event) => {
-                  setVolume(Number(event.target.value));
-                  setMuted(Number(event.target.value) === 0);
-                }}
-                className="vx-range"
-                aria-label="音量"
-              />
+              <div className="vx-tv-volume">
+                <button
+                  type="button"
+                  className="vx-tv-ctrl"
+                  onClick={() => setMuted((m) => !m)}
+                  aria-pressed={!muted}
+                  title={muted ? "点一下开启画面声音" : "画面声音已开"}
+                >
+                  {muted ? <VolumeX size={14} /> : <Volume2 size={14} />}
+                  {muted ? "开声音" : "声音已开"}
+                </button>
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  value={volume}
+                  onChange={(event) => {
+                    setVolume(Number(event.target.value));
+                    setMuted(Number(event.target.value) === 0);
+                  }}
+                  className="vx-range"
+                  aria-label="音量"
+                />
+              </div>
             </>
           ) : null}
           <span className="vx-tv-bighint">ESC 或点击空白处关闭</span>

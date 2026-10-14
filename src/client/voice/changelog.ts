@@ -20,6 +20,16 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.4.2",
+    date: "2026-10-14",
+    lines: [
+      "SFU 共享修好：改走硬件编码",
+      "订阅默认锁最高层，不再偷降",
+      "灯箱底部改版，按钮不再竖排",
+      "观众 ≤4 走直连，人多才中转",
+    ],
+  },
+  {
     version: "1.4.1",
     date: "2026-10-14",
     lines: [
