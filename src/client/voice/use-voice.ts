@@ -529,9 +529,19 @@ export function useVoice() {
             const pub = await publishScreen(stream, {
               quality,
               preferAv1,
-              // simulcast：一条轨编 3 档，SFU 按每个观众的网络挑层（P1-12）。
-              // 发布失败会自动回落单档；整条 SFU 发布再失败则退回 P2P（见下）。
-              simulcast: true,
+              /*
+               * **不再请求 simulcast 多档**（2026-10-14 实测定性）：
+               * Chrome 的多档一律用 `SimulcastEncoderAdapter` 包软件编码器
+               * （实测 `OpenH264, OpenH264, OpenH264`），硬件编码单元在这种模式下
+               * **根本不会被采用**——同一台机器单档时是 `NVIDIA H.264 Encoder MFT`。
+               * 结果是：三档软编 1080p60 跑不动（12.2ms/帧、CPU 受限），
+               * 帧率被压到 24~30fps，而单档硬编能轻松跑 60fps（3.4ms/帧）。
+               * 代价是观众端失去了"按自己网络挑层"的能力，换来的是一路高质量流：
+               * SFU 出口本来就只有一份上行，观众各自按链路收——
+               * 用帧率和编码效率换"弱网观众能挑小层"，不划算。
+               * （订阅侧仍完整支持多档，看 1.4.0/1.4.1 的发布端不会出问题。）
+               */
+              simulcast: false,
               onStep: (point) => {
                 if (stepNoticeShown.current) return;
                 stepNoticeShown.current = true;
@@ -543,12 +553,8 @@ export function useVoice() {
             });
             sharePubRef.current = pub;
             sessionId = pub.sessionId;
-            // 用**实际**是否多档（有硬件编码器时 publishScreen 会否决 simulcast，
-            // 避免 Chrome 为多档强制走软件编码——实测画面会糊到 353×254）
+            // 单档发布（见上面的说明）：simulcast 恒为 false，广播时也就没有分档信息
             simulcast = pub.simulcast;
-            if (!pub.simulcast) {
-              transportNote = "本机有硬件编码，已用单档硬件编码直发（画质更好）";
-            }
           } catch (error) {
             // SFU 这条路走不通（跨境/被限流）时，别让用户"共享失败"——
             // 退回 P2P 直连，能出画面最重要。
@@ -664,7 +670,7 @@ export function useVoice() {
         let simulcast = false;
         if (transport === "sfu") {
           try {
-            const pub = await publishScreen(demo, { quality: "fhd1080", simulcast: true });
+            const pub = await publishScreen(demo, { quality: "fhd1080", simulcast: false });
             sharePubRef.current = pub;
             sessionId = pub.sessionId;
             simulcast = pub.simulcast;

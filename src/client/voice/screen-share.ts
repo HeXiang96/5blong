@@ -1183,51 +1183,127 @@ interface VideoEncoderSupportResult {
   config?: { hardwareAcceleration?: string };
 }
 
+/** MediaCapabilities 的 `encodingInfo` / `decodingInfo` 结果（只取两个字段）。 */
+interface MediaCapabilitiesInfo {
+  supported?: boolean;
+  powerEfficient?: boolean;
+}
+
 /**
- * 用 WebCodecs 问系统"有没有硬件编码单元"（SCREENSHARE-PERF-PLAN §O-3）。
+ * 问一次 `navigator.mediaCapabilities`：**WebRTC 实际会不会用硬件**。
  *
- * 比"建一条假连接跑 getStats"干净得多：不建连接、不造假流，一次调用出结果。
- * `hardwareAcceleration: "require-hardware"` 是关键——它要求系统必须用硬件编码，
- * 没有硬件单元时返回 supported:false（而不是悄悄给你一个软编）。
+ * ⚠️ 为什么不只用 WebCodecs 的 `VideoEncoder.isConfigSupported`（原来的做法，2026-10-14 实测推翻）：
+ * WebCodecs 的 H.264 **编码器在 Chrome/Windows 上并不暴露 MediaFoundation/NVENC**，
+ * 它对 `avc1.640028 + require-hardware` 一律回答 supported:false——而真实 WebRTC
+ * 协商时同一个 H.264 走的是 MediaFoundation 硬编（灯箱读数：`NVIDIA H.264 Encoder MFT 硬编`）。
+ * 于是"有硬编就关掉 simulcast"的判据永远不成立，共享端**继续用 OpenH264 软编三档**
+ * （实测 12.2ms/帧、CPU 受限、只能跑到 24~30fps）。
  *
- * 注意：这只是一道**预检**。Chromium 在真实协商里仍可能因配置不支持而静默回落
- * 软编，所以发布后必须以 `getStats` 的 `encoderImplementation` /
- * `powerEfficientEncoder` 复核（灯箱数据条就是干这个的）。
+ * `mediaCapabilities.encodingInfo({type:"webrtc"})` 回答的才是 WebRTC 这条路会用谁，
+ * `powerEfficient: true` = 会走硬件编码器。拿不到（旧浏览器）时返回 null，
+ * 由调用方决定退回 WebCodecs 预检还是保守取值。
+ */
+async function askMediaCapabilities(
+  kind: "encode" | "decode",
+  contentType: string,
+  preset: ShareQualityPreset,
+): Promise<boolean | null> {
+  const mc =
+    typeof navigator === "undefined"
+      ? undefined
+      : (navigator as unknown as { mediaCapabilities?: { encodingInfo?: unknown; decodingInfo?: unknown } })
+          .mediaCapabilities;
+  const api = kind === "encode" ? mc?.encodingInfo : mc?.decodingInfo;
+  if (!mc || typeof api !== "function") return null;
+  try {
+    const info = (await (api as (config: unknown) => Promise<MediaCapabilitiesInfo>).call(mc, {
+      type: "webrtc",
+      video: {
+        contentType,
+        width: preset.width,
+        height: preset.height,
+        bitrate: preset.maxBitrate,
+        framerate: preset.fps,
+      },
+    })) as MediaCapabilitiesInfo | undefined;
+    if (!info?.supported) return false;
+    return info.powerEfficient === true;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 硬件编解码预检（优先 mediaCapabilities，其次 WebCodecs 兜底）。
+ *
+ * 结果四处用途：① 共享端决定**能不能上 AV1**；② 共享端决定**要不要开 simulcast**
+ * （有硬编就不开——Chrome 的多档强制软件编码）；③④ 每个端把"本机能否 AV1 硬解"
+ * 报进 hello / 名册（共享者据此做双端判断）。
+ *
+ * 这只是一道**预检**：真实协商仍可能因配置不支持而静默回落软编，
+ * 所以发布后必须以 `getStats` 的 `encoderImplementation` / `powerEfficientEncoder`
+ * 复核（灯箱数据条就是干这个的）。
  */
 export function probeHardwareEncoders(quality: ShareQuality): Promise<HardwareCodecProbe> {
   if (probeCache) return probeCache;
   const preset = SHARE_QUALITY_PRESETS[quality];
   probeCache = (async (): Promise<HardwareCodecProbe> => {
-    const Encoder = (globalThis as { VideoEncoder?: { isConfigSupported?: unknown } }).VideoEncoder;
-    const isConfigSupported = (Encoder as { isConfigSupported?: (config: unknown) => Promise<VideoEncoderSupportResult> })
-      ?.isConfigSupported;
-    if (typeof isConfigSupported !== "function") return NO_PROBE;
-    const askEncoder = async (codec: string): Promise<boolean> => {
-      try {
-        const result = await isConfigSupported.call(Encoder, {
-          codec,
-          width: preset.width,
-          height: preset.height,
-          bitrate: preset.maxBitrate,
-          framerate: preset.fps,
-          hardwareAcceleration: "require-hardware",
-        });
-        return result?.supported === true;
-      } catch {
-        return false;
-      }
+    const [encH264, encAv1, decH264, decAv1] = await Promise.all([
+      askMediaCapabilities("encode", "video/H264", preset),
+      askMediaCapabilities("encode", "video/AV1", preset),
+      askMediaCapabilities("decode", "video/H264", preset),
+      askMediaCapabilities("decode", "video/AV1", preset),
+    ]);
+    // 四个都问不出来（浏览器没有 mediaCapabilities）→ 退回 WebCodecs 预检
+    if (encH264 === null && encAv1 === null && decH264 === null && decAv1 === null) {
+      return probeViaWebCodecs(quality);
+    }
+    return {
+      h264: encH264 === true,
+      av1: encAv1 === true,
+      decH264: decH264 === true,
+      decAv1: decAv1 === true,
+      checked: true,
     };
-    // 解码侧也问一遍（观众端才有意义的读数）：发端据此决定能不能上 AV1，
-    // 观众端把它报给房主/共享者（见 hello / roster 里的 av1 字段）。
-    const Decoder = (globalThis as { VideoDecoder?: { isConfigSupported?: unknown } }).VideoDecoder;
-    const decodeIsConfigSupported = (
-      Decoder as { isConfigSupported?: (config: unknown) => Promise<VideoEncoderSupportResult> }
-    )?.isConfigSupported;
-    const askDecoder = async (codec: string): Promise<boolean> => {
-      if (typeof decodeIsConfigSupported !== "function") return false;
-      try {
-        const result = await decodeIsConfigSupported.call(Decoder, {
-          codec,
+  })();
+  return probeCache;
+}
+
+/**
+ * WebCodecs 兜底预检（`require-hardware`）。
+ * 注意它对 **H.264 编码**会误报 false（见 `askMediaCapabilities` 的说明），
+ * 所以只在 mediaCapabilities 完全不可用时才用它。
+ */
+async function probeViaWebCodecs(quality: ShareQuality): Promise<HardwareCodecProbe> {
+  const preset = SHARE_QUALITY_PRESETS[quality];
+  const Encoder = (globalThis as { VideoEncoder?: { isConfigSupported?: unknown } }).VideoEncoder;
+  const isConfigSupported = (Encoder as { isConfigSupported?: (config: unknown) => Promise<VideoEncoderSupportResult> })
+    ?.isConfigSupported;
+  if (typeof isConfigSupported !== "function") return NO_PROBE;
+  const askEncoder = async (codec: string): Promise<boolean> => {
+    try {
+      const result = await isConfigSupported.call(Encoder, {
+        codec,
+        width: preset.width,
+        height: preset.height,
+        bitrate: preset.maxBitrate,
+        framerate: preset.fps,
+        hardwareAcceleration: "require-hardware",
+      });
+      return result?.supported === true;
+    } catch {
+      return false;
+    }
+  };
+  const Decoder = (globalThis as { VideoDecoder?: { isConfigSupported?: unknown } }).VideoDecoder;
+  const decodeIsConfigSupported = (
+    Decoder as { isConfigSupported?: (config: unknown) => Promise<VideoEncoderSupportResult> }
+  )?.isConfigSupported;
+  const askDecoder = async (codec: string): Promise<boolean> => {
+    if (typeof decodeIsConfigSupported !== "function") return false;
+    try {
+      const result = await decodeIsConfigSupported.call(Decoder, {
+        codec,
           codedWidth: preset.width,
           codedHeight: preset.height,
           hardwareAcceleration: "require-hardware",
@@ -1237,15 +1313,13 @@ export function probeHardwareEncoders(quality: ShareQuality): Promise<HardwareCo
         return false;
       }
     };
-    const [h264, av1, decH264, decAv1] = await Promise.all([
-      askEncoder("avc1.640028"),
-      askEncoder("av01.0.08M.08"),
-      askDecoder("avc1.640028"),
-      askDecoder("av01.0.08M.08"),
-    ]);
-    return { h264, av1, decH264, decAv1, checked: true };
-  })();
-  return probeCache;
+  const [h264, av1, decH264, decAv1] = await Promise.all([
+    askEncoder("avc1.640028"),
+    askEncoder("av01.0.08M.08"),
+    askDecoder("avc1.640028"),
+    askDecoder("av01.0.08M.08"),
+  ]);
+  return { h264, av1, decH264, decAv1, checked: true };
 }
 
 /** 仅测试用：清掉预检缓存。 */

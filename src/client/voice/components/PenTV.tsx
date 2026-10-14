@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import { Volume2, VolumeX, X } from "lucide-react";
 
@@ -368,6 +368,15 @@ export function PenTvLightbox({ state, stream, sharerName, pc, viewMode, onViewM
           <span className="vx-tv-bigdot" />
           <strong>{sharerName} 的屏幕</strong>
           <span className="vx-tv-biglabel">{state.label || "屏幕共享"}</span>
+          {/*
+           * 明确标出画面走的哪条路（P2P 直连 / SFU 转发）。
+           * 数据条上只有"直连 / 经中继"——那是 ICE 层的候选类型，SFU 模式下
+           * 客户端到边缘节点本来就是直连，所以**看不出到底走没走转发**；
+           * 排查时（"这次测的到底是哪条路"）来回猜过一轮，这里直接写出来。
+           */}
+          <span className={`vx-tv-mode${state.transport === "sfu" ? " vx-tv-mode-sfu" : ""}`}>
+            {state.transport === "sfu" ? "SFU 转发" : "P2P 直连"}
+          </span>
           <button type="button" className="vx-icon-btn" onClick={onClose} aria-label="关闭放大画面">
             <X size={18} />
           </button>
@@ -398,11 +407,13 @@ export function PenTvLightbox({ state, stream, sharerName, pc, viewMode, onViewM
           {stream ? (
             <>
               {/* 观众的画质开关：换来的是"发送端按你的偏好降档"（P2P）
-                  或"订阅到哪一层"（SFU）。共享者不显示。
+                  或"订阅到哪一层"（SFU 多档）。共享者不显示；
+                  **单档转发时它什么也改不了**（SFU 不能转码），所以这时不显示，
+                  免得给人一个按了没反应的按钮。
                   按钮用 `.vx-tv-ctrl`（灯箱专用胶囊），**不要**复用 `.vx-menu-btn`
                   —— 那是弹层里的竖排全宽按钮（width:100%），塞进横排会被挤成
                   一个字一行，激活色还是"危险红"（业主实拍反馈）。 */}
-              {!isSharer && onViewMode ? (
+              {!isSharer && onViewMode && (state.transport === "p2p" || state.simulcast === true) ? (
                 <div
                   className="vx-tv-viewmode"
                   role="group"
@@ -458,6 +469,11 @@ export function PenTvLightbox({ state, stream, sharerName, pc, viewMode, onViewM
                   }}
                   className="vx-range"
                   aria-label="音量"
+                  /*
+                   * 灯箱里以前**没设这个变量**：滑块按真实音量走，填充条却停在默认
+                   * 50% —— 看着像"音量条坏了一半"（业主实拍反馈"太丑"的一部分）。
+                   */
+                  style={{ "--vx-range-pct": `${Math.round(volume * 100)}%` } as CSSProperties}
                 />
               </div>
             </>

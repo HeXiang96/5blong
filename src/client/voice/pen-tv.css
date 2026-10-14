@@ -593,6 +593,20 @@ html[data-daypart="night"] .vx-proj-beam {
   white-space: nowrap;
 }
 .vx-tv-bighead .vx-icon-btn { margin-left: auto; color: #fff4dd; }
+/* 传输方式标识（P2P 直连 / SFU 转发）：排查时"这次测的哪条路"一眼可见 */
+.vx-tv-mode {
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  white-space: nowrap;
+  background: rgba(12, 10, 5, 0.28);
+  color: rgba(255, 244, 221, 0.9);
+}
+.vx-tv-mode-sfu {
+  background: rgba(59, 130, 246, 0.25);
+  color: #dbeafe;
+}
 
 .vx-tv-bigscreen {
   aspect-ratio: 16 / 9;
@@ -670,15 +684,58 @@ html[data-daypart="night"] .vx-proj-beam {
   color: #46301a;
   font-weight: 600;
 }
-/* 音量：按钮 + 滑杆成组，整体可伸缩（滑杆优先被压缩，按钮永不压扁） */
+/* 音量：按钮 + 细滑杆成组。滑杆**限宽**，不再拉成一条通栏米色长条
+   （业主实拍反馈"太丑"）；配色改用灯箱自己的暖色，不吃全局 --vx-accent。 */
 .vx-tv-volume {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
-  flex: 1 1 220px;
+  gap: 9px;
+  flex: 0 1 auto;
   min-width: 0;
 }
-.vx-tv-bigfoot .vx-range { flex: 1 1 90px; min-width: 70px; }
+.vx-tv-bigfoot .vx-range {
+  flex: 0 1 110px;
+  min-width: 70px;
+  max-width: 130px;
+  height: 16px;
+}
+.vx-tv-bigfoot .vx-range::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 999px;
+  background: linear-gradient(
+    to right,
+    #f3e2bd 0,
+    #f3e2bd var(--vx-range-pct, 50%),
+    rgba(255, 244, 221, 0.22) var(--vx-range-pct, 50%)
+  );
+}
+.vx-tv-bigfoot .vx-range::-webkit-slider-thumb {
+  width: 12px;
+  height: 12px;
+  margin-top: -4px;
+  border-radius: 50%;
+  background: #fff8ea;
+  border: none;
+  box-shadow: 0 1px 3px rgba(20, 12, 4, 0.5);
+}
+.vx-tv-bigfoot .vx-range::-moz-range-track {
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(255, 244, 221, 0.22);
+}
+.vx-tv-bigfoot .vx-range::-moz-range-progress {
+  height: 4px;
+  border-radius: 999px;
+  background: #f3e2bd;
+}
+.vx-tv-bigfoot .vx-range::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border: none;
+  border-radius: 50%;
+  background: #fff8ea;
+  box-shadow: 0 1px 3px rgba(20, 12, 4, 0.5);
+}
 /* 实时链路数据条（发送端/接收端共用）：等宽数字，读数不跳行 */
 .vx-tv-stats {
   flex: 1 1 auto;

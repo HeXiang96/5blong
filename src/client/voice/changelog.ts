@@ -20,6 +20,16 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.4.3",
+    date: "2026-10-14",
+    lines: [
+      "共享不再软编，帧率回到 60",
+      "SFU 也吃硬件编码，更省 CPU",
+      "音量条改细，填充与滑块对齐",
+      "灯箱标明：直连还是 SFU 转发",
+    ],
+  },
+  {
     version: "1.4.2",
     date: "2026-10-14",
     lines: [
