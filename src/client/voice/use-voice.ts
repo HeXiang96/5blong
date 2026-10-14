@@ -363,8 +363,11 @@ export function useVoice() {
     if (shareSubRef.current) return;
 
     let cancelled = false;
+    let attemptNo = 0;
     let retryTimer = 0;
-    const attempt = (isRetry: boolean) => {
+    // 退避重试（2/4/8/15s）：共享期间观众端可自愈（SFU 抖动、发布者刚连接等）
+    const RETRY_DELAYS = [2000, 4000, 8000, 15000];
+    const attempt = () => {
       const trackNames = [TRACK_VIDEO];
       if (screenShare.trackNameAudio) trackNames.push(TRACK_AUDIO);
       void subscribeScreen(screenShare.sessionId, trackNames)
@@ -377,17 +380,19 @@ export function useVoice() {
           setShareStream(sub.stream);
         })
         .catch(() => {
-          // 降级：电视雪花，不弹错（语音零影响的收敛出口）；重试一次
+          // 降级：电视雪花，不弹错（语音零影响的收敛出口）；按退避节奏重试
           if (cancelled) return;
           setShareStream(null);
-          if (!isRetry) {
+          if (attemptNo < RETRY_DELAYS.length) {
+            const delay = RETRY_DELAYS[attemptNo];
+            attemptNo += 1;
             retryTimer = window.setTimeout(() => {
-              if (!cancelled) attempt(true);
-            }, 2000);
+              if (!cancelled) attempt();
+            }, delay);
           }
         });
     };
-    attempt(false);
+    attempt();
     return () => {
       cancelled = true;
       window.clearTimeout(retryTimer);

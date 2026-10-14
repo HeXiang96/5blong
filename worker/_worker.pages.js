@@ -9,9 +9,11 @@
  * 由 scripts/deploy-pages.mjs 在本机发部署时从 .dev-secrets.json 自动写入）。
  *
  * 防串流：SFU 没有房间概念，订阅必须"点名"（256-bit sessionId 只在房间内分发），
- * 本身就串不了流；这里再拦一道发布登记表（同 isolate 内存账本，尽力而为）：
- * 只有本服务签发过的 (sessionId, trackName) 才允许被订阅，未登记一律 403。
- * （完整版 Durable Object 账本见 worker/index.js，可部署到自定义域名加强。）
+ * 别的房间物理上拿不到这个 key，串流不成立。
+ * **教训（2026-10-14 线上事故）**：这里不要加"发布登记表"之类的实例内校验——
+ * Cloudflare 会把请求落到不同 isolate，发布者的登记与订阅者的查验不在同一份
+ * 内存里，正常观众会被误杀成 403（表现为观众端永远雪花）。
+ * 需要全局账本的强化版见 worker/index.js（Durable Object 版，可部署到自定义域名）。
  *
  * 部署：scripts/deploy-pages.mjs / publish-desktop.mjs 会把本文件作为
  * `_worker.js` 附到部署请求里（与 wrangler pages deploy 的行为一致）。
@@ -26,50 +28,6 @@ const ROUTES = [
   { method: "PUT", pattern: /^\/sessions\/[\w-]+\/tracks\/close$/ },
   { method: "GET", pattern: /^\/sessions\/[\w-]+$/ },
 ];
-
-/** 发布登记表（isolate 级内存账本；进程回收后自然失效，只影响拦截的覆盖面）。 */
-const publications = new Map();
-const PUB_TTL_MS = 2 * 60 * 60 * 1000;
-
-function registerPublication(sessionId, trackNames) {
-  const entry = publications.get(sessionId) ?? { trackNames: new Set(), at: Date.now() };
-  for (const name of trackNames) entry.trackNames.add(name);
-  entry.at = Date.now();
-  publications.set(sessionId, entry);
-  if (publications.size > 500) {
-    const now = Date.now();
-    for (const [id, item] of publications) {
-      if (now - item.at > PUB_TTL_MS) publications.delete(id);
-    }
-  }
-}
-
-function publicationsKnown(sessionId, trackNames) {
-  const entry = publications.get(sessionId);
-  if (!entry) return false;
-  return trackNames.every((name) => entry.trackNames.has(name));
-}
-
-function forgetPublication(sessionId, trackNames) {
-  const entry = publications.get(sessionId);
-  if (!entry) return;
-  for (const name of trackNames) entry.trackNames.delete(name);
-  if (entry.trackNames.size === 0) publications.delete(sessionId);
-}
-
-function parseTracks(raw) {
-  try {
-    const tracks = JSON.parse(raw)?.tracks;
-    if (!Array.isArray(tracks)) return null;
-    return tracks.map((t) => ({
-      location: t?.location === "remote" ? "remote" : "local",
-      sessionId: typeof t?.sessionId === "string" ? t.sessionId : "",
-      trackName: typeof t?.trackName === "string" ? t.trackName : "",
-    }));
-  } catch {
-    return null;
-  }
-}
 
 export default {
   async fetch(request, env) {
@@ -104,25 +62,6 @@ export default {
     if (!route) return json({ error: "not found" }, 404);
 
     const rawBody = request.method === "GET" ? undefined : await request.arrayBuffer();
-
-    // 登记表：本地发布 → 登记；订阅 remote 轨 → 必须是本服务签发过的
-    const trackMatch = sub.match(/^\/sessions\/([\w-]+)\/tracks\/(new|close)$/);
-    if (trackMatch && rawBody && rawBody.byteLength > 0) {
-      const sessionId = trackMatch[1];
-      const closing = trackMatch[2] === "close";
-      const tracks = parseTracks(new TextDecoder().decode(rawBody));
-      if (!tracks) return json({ error: "invalid tracks" }, 400);
-      const locals = tracks.filter((t) => t.location === "local" && t.trackName).map((t) => t.trackName);
-      const remotes = tracks.filter((t) => t.location === "remote" && t.sessionId && t.trackName);
-      if (!closing && remotes.length > 0) {
-        const bad = remotes.find((t) => !publicationsKnown(t.sessionId, [t.trackName]));
-        if (bad) return json({ error: "unknown publication" }, 403);
-      }
-      if (locals.length > 0) {
-        if (closing) forgetPublication(sessionId, locals);
-        else registerPublication(sessionId, locals);
-      }
-    }
 
     const upstream = await fetch(`${SFU_BASE}/apps/${env.SFU_APP_ID}${sub}${url.search}`, {
       method: request.method,

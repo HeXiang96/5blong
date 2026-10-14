@@ -224,10 +224,11 @@ async function main() {
   }
 
   // 屏幕共享同域接口：把 worker/_worker.pages.js 作为 _worker.js 附到部署里
-  // （Pages 高级模式；非 /sfu 请求回落静态资源）。目录里没有就补一份。
+  // （Pages 高级模式；非 /sfu 请求回落静态资源）。**始终覆盖**——
+  // dist-deploy 会被复用，残留的旧 _worker.js 会把新修复顶掉（踩过坑）。
   const workerSource = path.join(root, "worker", "_worker.pages.js");
   const workerTarget = path.join(directory, "_worker.js");
-  if (existsSync(workerSource) && !existsSync(workerTarget)) {
+  if (existsSync(workerSource)) {
     const { copyFileSync } = await import("node:fs");
     copyFileSync(workerSource, workerTarget);
     log("worker", "已附加 _worker.js（/sfu 屏幕共享接口）");
