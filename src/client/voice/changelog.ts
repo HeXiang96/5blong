@@ -20,6 +20,12 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    // 纯修复/调优版：lines 留空 → 公告栏展示上一条有内容版本
+    version: "1.1.3",
+    date: "2026-10-14",
+    lines: [],
+  },
+  {
     // 纯修复版：lines 留空 → 公告栏展示上一条有内容版本
     version: "1.1.2",
     date: "2026-10-14",
