@@ -10,3 +10,9 @@ dist-deploy/
 
 # 3D 源模型（61MB）：仅用于本机渲染精灵素材，不入库（防仓库膨胀）
 3d.glb
+
+# 屏幕共享本地凭证（Realtime SFU，绝不入库）
+.dev-secrets.json
+
+# 本地验证截图/临时产物
+outputs/

@@ -152,6 +152,12 @@ export function App() {
         onForceMute={voice.forceMute}
         onToggleLock={voice.toggleRoomLock}
         onInteract={voice.interact}
+        screenShare={voice.screenShare}
+        shareStream={voice.shareStream}
+        onStartShare={(quality) => void voice.startScreenShare(quality)}
+        onStopShare={voice.stopScreenShare}
+        shareQuality={voice.shareQuality}
+        onSetShareQuality={voice.setShareQuality}
       />
       {settingsOverRoom ? (
         <div className="vx-overlay-layer">

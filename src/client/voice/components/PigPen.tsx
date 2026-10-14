@@ -8,7 +8,7 @@ import {
   type MouseEvent,
 } from "react";
 
-import { EAT_APPROACH_MS, FEET_MAX_VH, FEET_MIN_VH, clampToRange, feetViewportPx, type PenActionPhase } from "../pen";
+import { EAT_APPROACH_MS, FEET_MAX_VH, FEET_MIN_VH, FIRE_POS, TV_APPROACH_MS, clampToRange, feetViewportPx, type PenActionPhase } from "../pen";
 import type { MediaLinkState } from "../engine";
 import { INTERACT_KINDS, type InteractEvent, type InteractKind } from "../protocol";
 import { daypartForHour, daypartOverride, type Daypart } from "../daypart";
@@ -288,6 +288,14 @@ export interface PigActorProps {
   followEnabled?: boolean;
   /** 成员 id：猪位快照注册表的键（房主后台广播用）。 */
   actorId: string;
+  /**
+   * 围观位（围炉看投影，**仅房主端传入**）： pigs 的移动权威在房主，
+   * 房主把自己的（以及模拟中的所有）猪走到投影区，访客靠位置广播自然跟随。
+   * null/缺省 = 没在共享，照常闲逛。
+   */
+  tvTarget?: { x: number; bottomPx: number; delayMs: number; faceLeft: boolean } | null;
+  /** 电视亮着（用于"看电视"姿态：面朝电视、偶尔点头）。 */
+  watching?: boolean;
 }
 
 const NETWORK_TITLE: Record<MediaLinkState, string> = {
@@ -356,14 +364,18 @@ export function PigActor({
   entryAt,
   feedCount = 0,
   followEnabled = false,
+  tvTarget = null,
+  watching = false,
 }: PigActorProps) {
   const crowd = total > 5 ? 0.68 : total > 3 ? 0.8 : total > 1 ? 0.92 : 1;
   /*
    * 全员默认同一体型（112px 基准）；被投喂多了会长大一点点：
    * 每次 +0.8%、封顶 12 次（+9.6%），最大 ≈123px，不会变成巨猪。
+   * 看投影时整体缩小一圈（×0.68）：围坐在一起不挡幕布，也更像"小小的猪围炉"。
    */
+  const watchShrink = watching ? 0.68 : 1;
   const feedGrowth = 1 + Math.min(feedCount, 12) * 0.008;
-  const size = Math.round(112 * crowd * feedGrowth);
+  const size = Math.round(112 * crowd * feedGrowth * watchShrink);
   const half = size / 2;
 
   /*
@@ -517,7 +529,8 @@ export function PigActor({
    * （房主端 followEnabled=false，一切照旧。）
    */
   const following = followEnabled;
-  const walking = !speaking && !sleeping && !busy && !entering && !reacting && !following;
+  // 看电视时不闲逛（优先级：互动/吃 > 看电视 > 漫步）
+  const walking = !speaking && !sleeping && !busy && !entering && !reacting && !following && !watching;
   // 吃 / 拉优先于说话，否则侧面那套动作会被正面姿态顶掉
   // 闭听的猪仍是侧躺睡觉姿态（戴耳罩），不正面、不讲话。
   const frontPose = speaking && !busy && !entering && !reacting;
@@ -525,6 +538,8 @@ export function PigActor({
   const [remoteMoving, setRemoteMoving] = useState(false);
 
   const bumpRef = useRef<HTMLDivElement | null>(null);
+  /** 看电视姿态生效中（不与说话/互动/走路打架）。 */
+  const watchingActive = watching && !busy && !reacting && !entering;
   // 收到互动时给猪加对应的动作 class（移除再重加，强制重播动画）。
   useEffect(() => {
     const el = bumpRef.current;
@@ -951,6 +966,102 @@ export function PigActor({
     };
   }, [action, phase, targetX, stageWidth, setFacing, feetRange]);
 
+  /*
+   * 围炉看 TV：走到火堆前的围观位（仅房主端驱动；访客靠位置广播跟随）。
+   *
+   * 与"走向蔬菜"同一套 approach 思路，但多了三样：
+   * - 出发错落（tvTarget.delayMs + 距离反调速度），不做百米赛跑；
+   * - 弧线绕火堆（多关键帧：中途点向火堆侧收拢），不是直线穿模；
+   * - 取消时把采样到的当前位置钉进 inline style 再 cancel——否则动画
+   *   一取消猪会瞬移回这趟的起点（停播散场的跳变就是这么来的）。
+   */
+  /** 正在走向电视（精灵用走路而不是待机，否则像滑行）。 */
+  const [tvWalking, setTvWalking] = useState(false);
+  useEffect(() => {
+    const walker = walkerRef.current;
+    if (!walker || following || !tvTarget || stageWidth <= 0) return;
+
+    const cfg = cfgRef.current;
+    const feetNow = feetRange();
+    const toX = clampToRange(tvTarget.x * stageWidth - cfg.half, cfg.leftLimit, cfg.rightLimit);
+    const toB = clampToRange(tvTarget.bottomPx - 4, feetNow.min, feetNow.max);
+    const fromX = clampToRange(livePosRef.current, cfg.leftLimit, cfg.rightLimit);
+    const fromB = clampToRange(liveBottomRef.current, feetNow.min, feetNow.max);
+    playerRef.current?.cancel();
+    segRef.current = null;
+
+    setFacing(toX < fromX);
+
+    // 距离反调：近的猪慢悠悠、远的猪小跑（~140px/s），到位时间自然错开
+    const dist = Math.hypot(toX - fromX, (toB - fromB) * 1.4);
+    const duration = Math.max(1800, Math.min(TV_APPROACH_MS, (dist / 140) * 1000));
+    let anim: Animation | null = null;
+
+    const timer = window.setTimeout(
+      () => {
+        // 弧线：中途点朝火堆那侧收拢 + 纵深微微拱起，像绕着火堆走过去
+        const fireX = FIRE_POS.x * stageWidth - cfg.half;
+        const midX = clampToRange((fromX + toX) / 2 + Math.sign(fireX - toX) * 70, cfg.leftLimit, cfg.rightLimit);
+        const midB = clampToRange((fromB + toB) / 2 + 16, feetNow.min, feetNow.max);
+        setTvWalking(true);
+        anim = walker.animate(
+          [
+            { left: `${fromX}px`, bottom: `${fromB}px` },
+            { left: `${midX}px`, bottom: `${midB}px`, offset: 0.55 },
+            { left: `${toX}px`, bottom: `${toB}px` },
+          ],
+          { duration, easing: "ease-in-out", fill: "forwards" },
+        );
+        playerRef.current = anim;
+        segRef.current = { fromX, fromB, toX, toB, player: anim };
+        anim.onfinish = () => {
+          livePosRef.current = toX;
+          liveBottomRef.current = toB;
+          posRef.current = toX;
+          if (walkerRef.current) {
+            walkerRef.current.style.left = `${toX}px`;
+            walkerRef.current.style.bottom = `${toB}px`;
+          }
+          playerRef.current = null;
+          segRef.current = null;
+          setTvWalking(false);
+          setFacing(tvTarget.faceLeft); // 坐定后面朝中心（幕布在正上方）
+        };
+      },
+      Math.max(0, tvTarget.delayMs),
+    );
+
+    return () => {
+      window.clearTimeout(timer);
+      const w = walkerRef.current;
+      if (w && playerRef.current) {
+        // 钉住当前位置再取消，避免取消后瞬移回起点
+        w.style.left = `${livePosRef.current}px`;
+        w.style.bottom = `${liveBottomRef.current}px`;
+      }
+      playerRef.current?.cancel();
+      playerRef.current = null;
+      segRef.current = null;
+      setTvWalking(false);
+    };
+  }, [tvTarget, stageWidth, following, feetRange, setFacing]);
+
+  // 散场：watching 撤掉时小跳一下，再接回闲逛
+  const prevWatchingRef = useRef(false);
+  useEffect(() => {
+    const was = prevWatchingRef.current;
+    prevWatchingRef.current = watching;
+    if (was && !watching) {
+      const el = bumpRef.current;
+      if (el) {
+        el.classList.remove("vx-pig-hop");
+        void el.offsetWidth;
+        el.classList.add("vx-pig-hop");
+      }
+      setRestKey((n) => n + 1);
+    }
+  }, [watching]);
+
   // 位置上报已经并进上面的采样循环（每帧一次，比原来的 1.5 秒轮询准确得多），
   // 这里不再需要单独一套。
 
@@ -983,7 +1094,7 @@ export function PigActor({
 
             <div
               ref={bumpRef}
-              className={`vx-pig${entering ? " vx-pig-entering" : ""}${reaction?.kind === "hoist" ? " vx-pig-hoisted" : ""}${walking ? " vx-pig-walking" : ""}${frontPose ? " vx-pig-speaking" : ""}${sleeping && !reacting ? " vx-pig-sleeping" : ""}${busy ? ` vx-pig-action-${action} vx-pig-phase-${phase}` : ""}`}
+              className={`vx-pig${entering ? " vx-pig-entering" : ""}${reaction?.kind === "hoist" ? " vx-pig-hoisted" : ""}${walking ? " vx-pig-walking" : ""}${frontPose ? " vx-pig-speaking" : ""}${watchingActive && !remoteMoving && !tvWalking ? " vx-pig-watching" : ""}${sleeping && !reacting ? " vx-pig-sleeping" : ""}${busy ? ` vx-pig-action-${action} vx-pig-phase-${phase}` : ""}`}
             >
               {/*
                 精灵状态机（优先级从上到下）：
@@ -1011,7 +1122,10 @@ export function PigActor({
               ) : frontPose ? (
                 // 说话：蹦迪猪上线（谁的猪在跳舞，谁就在说话）
                 <img src={pigDanceUrl} className="vx-pig-sprite" alt="" aria-hidden="true" />
-              ) : walking || remoteMoving ? (
+              ) : watchingActive && !remoteMoving && !tvWalking ? (
+                // 看投影：趴在火堆边（复用躺卧精灵，无耳罩≠睡觉），面朝投影安静围坐
+                <img src={pigSleepUrl} className="vx-pig-sprite" alt="" aria-hidden="true" />
+              ) : walking || remoteMoving || tvWalking ? (
                 <img src={pigWalkUrl} className="vx-pig-sprite" alt="" aria-hidden="true" />
               ) : (
                 <img src={pigIdleUrl} className="vx-pig-sprite" alt="" aria-hidden="true" />
@@ -1028,7 +1142,7 @@ export function PigActor({
                 </span>
               ) : null}
 
-              {sleeping ? (
+              {sleeping && !watchingActive ? (
                 <span className="vx-pig-zzz" aria-hidden="true">
                   <i>z</i>
                   <i>z</i>

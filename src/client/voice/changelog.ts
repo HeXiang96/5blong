@@ -20,6 +20,16 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.1.0",
+    date: "2026-10-14",
+    lines: [
+      "围炉看投影：开共享，全房同看大幕布",
+      "投影仪从天而降，小猪围火趴坐围观",
+      "共享画质两档：高清 720p / 超清 1080p",
+      "多房间互不串流，语音链路零影响",
+    ],
+  },
+  {
     // bump 自动插入（发版时保证首条 = 本次版本）；内容按需补充，留空 = 公告栏展示上一条有内容版本
     version: "1.0.10",
     date: "2026-10-13",

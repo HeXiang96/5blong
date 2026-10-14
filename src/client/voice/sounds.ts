@@ -14,7 +14,7 @@
  * 这个文件是纯逻辑（不碰 AudioContext），所以可以直接单测。
  */
 
-export type SoundKind = "join" | "leave" | "mute" | "unmute";
+export type SoundKind = "join" | "leave" | "mute" | "unmute" | "tv-land" | "tv-on" | "tv-off";
 
 export interface SoundEvent {
   kind: SoundKind;
@@ -55,6 +55,26 @@ export const SOUND_NOTES: Record<SoundKind, Note[]> = {
   mute: [{ freq: 392.0, start: 0, duration: 0.12, gain: 0.36, type: "triangle" }],
   // 开麦：单声、偏高一点，和关麦成对
   unmute: [{ freq: 659.25, start: 0, duration: 0.12, gain: 0.36, type: "triangle" }],
+  /*
+   * 电视三连音（围炉看 TV）：
+   * - tv-land：支架砸进草地的闷响（低音双击，带一点余震）
+   * - tv-on：开机上扬两声，像老电视"叮——"
+   * - tv-off：关机下行短促"啪嗒"
+   */
+  "tv-land": [
+    { freq: 98.0, start: 0, duration: 0.22, gain: 0.62, type: "triangle" },
+    { freq: 62.0, start: 0.02, duration: 0.3, gain: 0.5, type: "sine" },
+    { freq: 49.0, start: 0.16, duration: 0.18, gain: 0.3, type: "sine" },
+  ],
+  "tv-on": [
+    { freq: 523.25, start: 0, duration: 0.1, gain: 0.32, type: "sine" },
+    { freq: 783.99, start: 0.09, duration: 0.16, gain: 0.36, type: "sine" },
+    { freq: 1046.5, start: 0.18, duration: 0.2, gain: 0.28, type: "sine" },
+  ],
+  "tv-off": [
+    { freq: 196.0, start: 0, duration: 0.09, gain: 0.4, type: "triangle" },
+    { freq: 130.81, start: 0.08, duration: 0.14, gain: 0.34, type: "triangle" },
+  ],
 };
 
 /** 整段提示音的总时长（用于将来做节流/去重）。 */
@@ -68,6 +88,9 @@ export const SOUND_THROTTLE_MS: Record<SoundKind, number> = {
   leave: 300,
   mute: 180,
   unmute: 180,
+  "tv-land": 800,
+  "tv-on": 800,
+  "tv-off": 800,
 };
 
 /**
@@ -90,7 +113,12 @@ export function parseSoundEvent(input: unknown): SoundEvent | null {
   if (!input || typeof input !== "object") return null;
   const raw = input as Record<string, unknown>;
   const kind = raw["kind"];
-  if (kind !== "join" && kind !== "leave" && kind !== "mute" && kind !== "unmute") return null;
+  if (
+    kind !== "join" && kind !== "leave" && kind !== "mute" && kind !== "unmute" &&
+    kind !== "tv-land" && kind !== "tv-on" && kind !== "tv-off"
+  ) {
+    return null;
+  }
   const actor = typeof raw["actor"] === "string" ? raw["actor"].slice(0, 64) : "";
   const id = typeof raw["id"] === "string" ? raw["id"].slice(0, 64) : "";
   const ts = typeof raw["ts"] === "number" && Number.isFinite(raw["ts"]) ? raw["ts"] : 0;

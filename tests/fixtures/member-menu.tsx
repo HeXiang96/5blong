@@ -9,6 +9,7 @@ import "../../src/client/voice/styles.css";
 import "../../src/client/voice/pen-scene.css";
 import "../../src/client/voice/pen-life.css";
 import "../../src/client/voice/pen-fence.css";
+import "../../src/client/voice/pen-tv.css";
 
 const params = new URLSearchParams(location.search);
 document.documentElement.dataset.theme = params.get("theme") ?? "light";
@@ -93,6 +94,27 @@ function Fixture() {
     interactions, feedCounts: params.get("fed") ? { "1000000002": Number(params.get("fed")) } : {}, onToggleDeaf: () => record("deaf"),
     onKick: (...args) => record("kick", ...args), onForceMute: (...args) => record("force-mute", ...args),
     onToggleLock: () => record("lock"), onInteract: (...args) => record("interact", ...args),
+    /*
+     * ?tv=1：电视亮起（演示状态，无真实流 → 雪花待机）。
+     * 目检掉落/聚集/散场动画与放大灯箱（sharer=guest，本机是观众视角）。
+     */
+    screenShare:
+      params.get("tv") === "1"
+        ? {
+            active: true,
+            sharerId: "guest",
+            sessionId: "demo-local",
+            trackName: "",
+            trackNameAudio: "",
+            label: "回归演示画面",
+            startedAt: Date.now(),
+          }
+        : null,
+    shareStream: null,
+    onStartShare: (quality) => record("share-start", quality),
+    onStopShare: () => record("share-stop"),
+    shareQuality: "fhd1080",
+    onSetShareQuality: (quality) => record("share-quality", quality),
   };
   return <RoomView {...props} />;
 }

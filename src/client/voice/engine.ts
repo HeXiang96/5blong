@@ -36,6 +36,8 @@ import {
   type InteractEvent,
   type InteractKind,
   type PenPose,
+  type ScreenSharePublication,
+  type ScreenShareState,
   type WireMember,
 } from "./protocol";
 import { sessionScopedId, type Identity } from "./identity";
@@ -180,6 +182,11 @@ export interface EngineEvents {
    * 与某个成员的媒体 P2P 连接状态变化，用于界面区分"直连 / 中继 / 连不通"。
    */
   mediaState: (peerId: string, state: MediaLinkState) => void;
+  /**
+   * 屏幕共享状态变化（房主权威广播；null = 停播，电视回雪花）。
+   * **与语音链路完全隔离**：这条回调的实现里绝不允许碰音频/PeerJS 媒体。
+   */
+  screenShare?: (state: ScreenShareState | null) => void;
 }
 
 /** 与单个成员的媒体连接状态（供界面诊断跨网无声）。 */
@@ -303,6 +310,11 @@ export class VoiceMesh {
   private dialAttempts = 0;
   /** 房间是否已上锁（仅房主有意义）。 */
   private locked = false;
+  /**
+   * 屏幕共享状态（房主权威；一台电视，同时最多一个共享者）。
+   * 只是房间状态上的一个可空字段——成员表、语音、媒体连接都不读它。
+   */
+  private screenShareState: ScreenShareState | null = null;
   /** 本机是否闭听（deaf：同时闭麦且不听任何人）。 */
   private deafened = false;
   /** 是否正在等房主的 welcome（用于断线重连时的超时判定）。 */
@@ -814,6 +826,35 @@ export class VoiceMesh {
         this.handleInteract(guest.member.id, message.to, message.kind);
         break;
       }
+      case "screen-share-start": {
+        // 权威互斥：电视已被占用时忽略请求，并把当前状态再广播一次，
+        // 让输家从广播里看到"sharer 不是我"，自行停止发布。
+        if (this.screenShareState) {
+          this.broadcastHost({ t: "screen-share", state: this.screenShareState });
+          break;
+        }
+        const pub = message.session;
+        this.applyScreenShare(
+          {
+            active: true,
+            sharerId: guest.member.id,
+            sessionId: pub.sessionId,
+            trackName: pub.trackName,
+            trackNameAudio: pub.hasAudio ? pub.trackNameAudio : "",
+            label: pub.label,
+            startedAt: Date.now(),
+          },
+          true,
+        );
+        break;
+      }
+      case "screen-share-stop": {
+        // 只有共享者本人（或房主代管）能停。
+        if (this.screenShareState?.sharerId === guest.member.id) {
+          this.applyScreenShare(null, true);
+        }
+        break;
+      }
       case "ping": {
         this.send(conn, { t: "pong", ts: message.ts });
         break;
@@ -904,6 +945,8 @@ export class VoiceMesh {
       you: peerId,
       roster: this.roster(),
       locked: this.locked,
+      // 新成员也要知道电视亮没亮（中途加入直接去围观）。
+      screenShare: this.screenShareState ?? undefined,
     });
   }
 
@@ -932,6 +975,11 @@ export class VoiceMesh {
     this.guests.delete(peerId);
     this.members.delete(peerId);
     this.dropMedia(peerId);
+
+    // 共享者掉线：电视收起来（房间与语音完全不受影响）。
+    if (this.screenShareState?.sharerId === peerId) {
+      this.applyScreenShare(null, true);
+    }
 
     for (const [id, other] of this.guests) {
       if (id !== peerId && other.joined) {
@@ -1005,6 +1053,92 @@ export class VoiceMesh {
     this.locked = locked;
     this.broadcastHost({ t: "lock", locked });
     this.events.roomFlags({ locked });
+  }
+
+  // -------------------------------------------------------------- 屏幕共享（围炉看 TV）
+
+  /** 当前屏幕共享状态（null = 没人在共享，电视收起来了）。 */
+  getScreenShareState(): ScreenShareState | null {
+    return this.screenShareState;
+  }
+
+  /**
+   * 申请开播（共享者已完成 SFU publish 后调用）。
+   * 返回 false = 本地就知道被拒（电视已被占用 / 房间未就绪），调用方不要上行。
+   * 房主侧还有一道权威互斥：并发竞态时只保留先到者，后到者会从广播里
+   * 发现 sharer 不是自己，自行停止发布并退订。
+   */
+  requestScreenShare(pub: ScreenSharePublication): boolean {
+    if (this.destroyed || !this.joined || !this.me) return false;
+    if (this.screenShareState) return false;
+    if (this.hosting) {
+      this.applyScreenShare(
+        {
+          active: true,
+          sharerId: this.myId,
+          sessionId: pub.sessionId,
+          trackName: pub.trackName,
+          trackNameAudio: pub.trackNameAudio,
+          label: pub.label,
+          startedAt: Date.now(),
+        },
+        true,
+      );
+      return true;
+    }
+    if (!this.hostConn || !this.hostConn.open) return false;
+    this.send(this.hostConn, { t: "screen-share-start", session: pub });
+    return true;
+  }
+
+  /** 停播（本人主动停止；房主侧也会在共享者掉线时代为清理）。 */
+  stopScreenShare(): void {
+    const state = this.screenShareState;
+    if (!state) {
+      /*
+       * 竞态窗口：用户在"申报开播"的广播还没回来的几毫秒里就停止了采集
+       * （点了系统选择器里的"停止共享"）。本地还没拿到状态，但停播申报
+       * 仍要发出去——房主查不到对应共享者会安全忽略，无害。
+       */
+      if (!this.hosting && this.hostConn?.open) {
+        this.send(this.hostConn, { t: "screen-share-stop" });
+      }
+      return;
+    }
+    const isSharer = state.sharerId === this.myId;
+    if (!isSharer && !this.hosting) return;
+    if (this.hosting) {
+      this.applyScreenShare(null, true);
+      return;
+    }
+    if (this.hostConn?.open) this.send(this.hostConn, { t: "screen-share-stop" });
+    // 访客先乐观清本地（房主的权威广播随后到达，语义一致）。
+    this.screenShareState = null;
+    this.events.screenShare?.(null);
+  }
+
+  /**
+   * 房主权威应用共享状态：更新字段、播声音、广播全员（含房主自己的回调）。
+   * 声音也是房主统一产出的（与 join/leave 同一套机制）。
+   */
+  private applyScreenShare(state: ScreenShareState | null, broadcast: boolean): void {
+    const previous = this.screenShareState;
+    this.screenShareState = state;
+    if (this.hosting && broadcast) {
+      this.broadcastHost({ t: "screen-share", state });
+      if (state && !previous) {
+        // 支架砸地（立即）+ 开机（落地 ~0.9s 后）
+        this.emitSound("tv-land", state.sharerId);
+        this.timers.after(900, () => {
+          if (!this.destroyed && this.screenShareState?.sessionId === state.sessionId) {
+            this.emitSound("tv-on", state.sharerId);
+          }
+        });
+      } else if (!state && previous) {
+        this.emitSound("tv-off", previous.sharerId);
+      }
+    }
+    this.events.screenShare?.(state);
   }
 
   /** 对某位成员发起小猪互动（戳一戳 / 打招呼 / 投喂）。 */
@@ -1428,6 +1562,11 @@ export class VoiceMesh {
       this.events.status("connected");
       this.send(conn, { t: "joined" });
       this.joined = true;
+      // 中途进房：把"电视亮没亮"一并接管（缺席 = 没在共享）。
+      if (message.screenShare && !this.screenShareState) {
+        this.screenShareState = message.screenShare;
+        this.events.screenShare?.(message.screenShare);
+      }
       this.callPeers();
       this.startHeartbeat();
       return;
@@ -1436,6 +1575,11 @@ export class VoiceMesh {
     this.hostLastSeen = Date.now();
 
     switch (message.t) {
+      case "screen-share": {
+        this.screenShareState = message.state;
+        this.events.screenShare?.(message.state);
+        break;
+      }
       case "roster": {
         const seen = new Set<string>();
         for (const member of message.members) {

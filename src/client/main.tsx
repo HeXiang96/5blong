@@ -13,6 +13,7 @@ import "./voice/styles.css";
 import "./voice/pen-scene.css";
 import "./voice/pen-life.css";
 import "./voice/pen-fence.css";
+import "./voice/pen-tv.css";
 
 const root = document.getElementById("root");
 if (!root) {

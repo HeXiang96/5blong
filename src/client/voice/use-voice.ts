@@ -11,6 +11,20 @@ import {
 import { loadIdentity, resolveDisplayNames, saveIdentity, type Identity } from "./identity";
 import { debugPoseFrom, eventTtl, pruneEvents, type PenEvent } from "./pen";
 import { clearPenPoses, setLatestPenPoses } from "./pen-follow";
+import {
+  TRACK_AUDIO,
+  TRACK_VIDEO,
+  createDemoStream,
+  debugTvDemoFrom,
+  debugTvFrom,
+  publishScreen,
+  shareVideoConstraints,
+  subscribeScreen,
+  type ScreenPublication,
+  type ScreenSubscription,
+  type ShareQuality,
+} from "./screen-share";
+import type { ScreenShareState } from "./protocol";
 
 /**
  * 提示条停留多久（毫秒）。
@@ -80,6 +94,44 @@ export function useVoice() {
   const [deaf, setDeaf] = useState(false);
   /** 最近的小猪互动（带序号，超时自动移除）。 */
   const [interactions, setInteractions] = useState<{ key: number; event: InteractEvent }[]>([]);
+
+  /*
+   * 屏幕共享（围炉看 TV）。
+   * 状态只有一条：房主权威广播的 ScreenShareState。SFU 的发布/订阅
+   * 全部住在 use-voice 之外的 screen-share.ts，与语音链路零接触。
+   */
+  const [screenShare, setScreenShare] = useState<ScreenShareState | null>(() => {
+    // ?tv=1：不开采集就能目检全套动画（电视播测试彩条）
+    if (typeof location !== "undefined" && debugTvFrom(location.search)) {
+      return {
+        active: true,
+        sharerId: "debug-tv",
+        sessionId: "demo-local",
+        trackName: "",
+        trackNameAudio: "",
+        label: "演示画面",
+        startedAt: Date.now(),
+      };
+    }
+    return null;
+  });
+  /** 订阅到的共享画面流（观看端；null = 雪花待机）。 */
+  const [shareStream, setShareStream] = useState<MediaStream | null>(null);
+
+  const sharePubRef = useRef<ScreenPublication | null>(null);
+  const shareSubRef = useRef<ScreenSubscription | null>(null);
+  /** 共享者本机采集的流（自己电视的播放源；订阅流供其他端用）。 */
+  const shareLocalStreamRef = useRef<MediaStream | null>(null);
+  /** 共享会话的清理（离房/重置时无条件执行）。 */
+  const teardownShare = useCallback(() => {
+    sharePubRef.current?.stop();
+    sharePubRef.current = null;
+    shareSubRef.current?.stop();
+    shareSubRef.current = null;
+    for (const track of shareLocalStreamRef.current?.getTracks() ?? []) track.stop();
+    shareLocalStreamRef.current = null;
+    setShareStream(null);
+  }, []);
 
   const interactSeq = useRef(0);
   /** 本机对各成员（按个人 ID）的投喂次数。 */
@@ -154,8 +206,10 @@ export function useVoice() {
     setInteractions([]);
     clearPenPoses();
     setPenEvents(initialPenEvents());
+    teardownShare();
+    setScreenShare(null);
     setStatus("idle");
-  }, [initialPenEvents]);
+  }, [initialPenEvents, teardownShare]);
 
   const makeEngine = useCallback(() => {
     return new VoiceMesh({
@@ -236,6 +290,13 @@ export function useVoice() {
       mediaState: (peerId, state) => {
         setMediaStates((prev) => ({ ...prev, [peerId]: state }));
       },
+      /*
+       * 屏幕共享状态（房主权威广播）。只更新 React 状态与订阅流，
+       * 绝不触碰语音状态——这条回调的实现里没有一行音频代码。
+       */
+      screenShare: (state) => {
+        setScreenShare(state);
+      },
       roomFlags: (flags) => {
         setRoomLocked(flags.locked);
       },
@@ -261,9 +322,190 @@ export function useVoice() {
   const teardown = useCallback(() => {
     engineRef.current?.destroy();
     engineRef.current = null;
-  }, []);
+    teardownShare();
+  }, [teardownShare]);
 
   useEffect(() => teardown, [teardown]);
+
+  // ------------------------------------------------------------ 屏幕共享（围炉看 TV）
+
+  /**
+   * 订阅副作用：电视亮起且不是自己在共享时，向 SFU 拉流。
+   * 任何失败只降级为"电视雪花"（shareStream = null），不上抛、不动语音；
+   * 失败后自动重试一次（SFU 偶发抖动不该让电视永远雪花）。
+   */
+  useEffect(() => {
+    // 竞态输家清理：本地已经发布到 SFU，但广播里 sharer 不是自己
+    // （两人同时开播，房主留了先到者）——立刻停掉自己的发布与采集。
+    if (screenShare && sharePubRef.current) {
+      const selfId = members.find((member) => member.local)?.id;
+      if (selfId && screenShare.sharerId !== selfId) {
+        stopScreenShareRef.current();
+        return;
+      }
+    }
+
+    if (!screenShare) {
+      shareSubRef.current?.stop();
+      shareSubRef.current = null;
+      setShareStream(null);
+      return;
+    }
+    const selfId = members.find((member) => member.local)?.id;
+    // 自己在共享：电视播本机采集流（不走订阅）
+    if (selfId && screenShare.sharerId === selfId) {
+      setShareStream(shareLocalStreamRef.current);
+      return;
+    }
+    // 调试假状态 / 已在订阅同一场：跳过
+    if (screenShare.sessionId === "demo-local") return;
+    if (shareSubRef.current) return;
+
+    let cancelled = false;
+    let retryTimer = 0;
+    const attempt = (isRetry: boolean) => {
+      const trackNames = [TRACK_VIDEO];
+      if (screenShare.trackNameAudio) trackNames.push(TRACK_AUDIO);
+      void subscribeScreen(screenShare.sessionId, trackNames)
+        .then((sub) => {
+          if (cancelled) {
+            sub.stop();
+            return;
+          }
+          shareSubRef.current = sub;
+          setShareStream(sub.stream);
+        })
+        .catch(() => {
+          // 降级：电视雪花，不弹错（语音零影响的收敛出口）；重试一次
+          if (cancelled) return;
+          setShareStream(null);
+          if (!isRetry) {
+            retryTimer = window.setTimeout(() => {
+              if (!cancelled) attempt(true);
+            }, 2000);
+          }
+        });
+    };
+    attempt(false);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(retryTimer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [screenShare, members.length]);
+
+  /** 共享者本机：采集流变化时同步给电视（开播瞬间先有画面）。 */
+  useEffect(() => {
+    if (!screenShare) return;
+    const selfId = members.find((member) => member.local)?.id;
+    if (selfId && screenShare.sharerId === selfId && shareLocalStreamRef.current) {
+      setShareStream(shareLocalStreamRef.current);
+    }
+  }, [screenShare, members.length]);
+
+  /** 开播：采集 → SFU 发布 → 向房主申报（申报失败自动回滚）。 */
+  const startScreenShare = useCallback(
+    async (quality: ShareQuality): Promise<boolean> => {
+      const engine = engineRef.current;
+      if (!engine?.isJoined) return false;
+      if (screenShare || sharePubRef.current) {
+        setNotice({ kind: "error", text: `电视被 ${screenShare?.label || "别人"} 占着，等关播再上` });
+        return false;
+      }
+      let stream: MediaStream | null = null;
+      try {
+        // v1 不采集声音：系统声音经扬声器回采会造成远端回声（无回声消除兜底）
+        stream = await navigator.mediaDevices.getDisplayMedia({
+          video: shareVideoConstraints(quality),
+          audio: false,
+        });
+        const videoTrack = stream.getVideoTracks()[0];
+        if (!videoTrack) {
+          for (const track of stream.getTracks()) track.stop();
+          return false;
+        }
+        const pub = await publishScreen(stream, quality);
+        const ok = engine.requestScreenShare({
+          sessionId: pub.sessionId,
+          trackName: TRACK_VIDEO,
+          trackNameAudio: "",
+          label: videoTrack.label || "屏幕共享",
+          hasAudio: false,
+        });
+        if (!ok) {
+          // 电视被占用（本地预检或房主拒绝）：回滚一切，不留半开连接
+          pub.stop();
+          for (const track of stream.getTracks()) track.stop();
+          setNotice({ kind: "error", text: "电视被别人占着，晚点再来" });
+          return false;
+        }
+        sharePubRef.current = pub;
+        shareLocalStreamRef.current = stream;
+        setShareStream(stream);
+        // 用户在系统选择器里点了"停止共享"：走正常停播流程
+        videoTrack.addEventListener("ended", () => stopScreenShareRef.current());
+        return true;
+      } catch (error) {
+        // 采集成功但发布/申报失败的：必须停掉采集，否则系统的"正在共享"指示灯常亮
+        for (const track of stream?.getTracks() ?? []) track.stop();
+        // 用户取消选择器（NotAllowedError）不算错误，静默返回
+        if ((error as DOMException)?.name === "NotAllowedError") return false;
+        setNotice({ kind: "error", text: "共享没开起来，语音不受影响，稍后再试" });
+        return false;
+      }
+    },
+    [screenShare],
+  );
+
+  /** 停播：通知房主 + 停 SFU 发布 + 停采集。订阅侧由副作用自动清理。 */
+  const stopScreenShare = useCallback(() => {
+    // engine 内部会判断：有状态且是本人 → 停播广播；广播未到的窗口期 → 仍发停播申报
+    engineRef.current?.stopScreenShare();
+    sharePubRef.current?.stop();
+    sharePubRef.current = null;
+    for (const track of shareLocalStreamRef.current?.getTracks() ?? []) track.stop();
+    shareLocalStreamRef.current = null;
+    setShareStream(null);
+  }, []);
+
+  /** track ended 回调要拿到最新闭包，经 ref 转发。 */
+  const stopScreenShareRef = useRef(() => {});
+  stopScreenShareRef.current = stopScreenShare;
+
+  /** `?tv=demo`：进房后自动用演示画面开播（真实 SFU 链路，无需点选择器）。 */
+  const demoAutoStarted = useRef(false);
+  useEffect(() => {
+    if (demoAutoStarted.current) return;
+    if (typeof location === "undefined") return;
+    if (!debugTvDemoFrom(location.search)) return;
+    if (status !== "connected" || screenShare) return;
+    const engine = engineRef.current;
+    if (!engine?.isJoined) return;
+    const demo = createDemoStream();
+    if (!demo) return;
+    demoAutoStarted.current = true;
+    void (async () => {
+      try {
+        const pub = await publishScreen(demo, "fhd1080");
+        const ok = engine.requestScreenShare({
+          sessionId: pub.sessionId,
+          trackName: TRACK_VIDEO,
+          trackNameAudio: "",
+          label: "演示画面",
+          hasAudio: false,
+        });
+        if (!ok) {
+          pub.stop();
+          return;
+        }
+        sharePubRef.current = pub;
+        shareLocalStreamRef.current = demo;
+        setShareStream(demo);
+      } catch {
+        /* 演示模式失败就当没这回事 */
+      }
+    })();
+  }, [status, screenShare]);
 
   /**
    * 提示条自动消失。
@@ -435,6 +677,14 @@ export function useVoice() {
       setView(settingsReturn);
     },
     [persistSettings, settingsReturn],
+  );
+
+  /** 屏幕共享画质档位（开播时生效；落盘）。 */
+  const setShareQuality = useCallback(
+    (quality: ShareQuality) => {
+      persistSettings({ ...settings, shareQuality: quality });
+    },
+    [persistSettings, settings],
   );
 
   const toggleChat = useCallback(() => {
@@ -720,5 +970,12 @@ export function useVoice() {
     forceMute,
     toggleRoomLock,
     interact,
+    // 屏幕共享（围炉看 TV）
+    screenShare,
+    shareStream,
+    startScreenShare,
+    stopScreenShare,
+    shareQuality: settings.shareQuality,
+    setShareQuality,
   };
 }
