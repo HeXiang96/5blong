@@ -158,6 +158,8 @@ export function App() {
         onStopShare={voice.stopScreenShare}
         shareQuality={voice.shareQuality}
         onSetShareQuality={voice.setShareQuality}
+        shareTransport={voice.shareTransport}
+        onSetShareTransport={voice.setShareTransport}
       />
       {settingsOverRoom ? (
         <div className="vx-overlay-layer">

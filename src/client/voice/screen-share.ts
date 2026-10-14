@@ -37,6 +37,15 @@ export const TRACK_VIDEO = "screen";
 /** SFU 音频轨名（共享系统/标签页声音时才有）。 */
 export const TRACK_AUDIO = "screen-audio";
 
+/** P2P 模式的随机会话标识（只在房间内分发，用于把广播状态和 P2P 呼叫对上号）。 */
+export function randomSessionId(): string {
+  try {
+    return crypto.randomUUID().replace(/-/g, "").slice(0, 32);
+  } catch {
+    return `p2p${Date.now().toString(16)}${Math.floor(Math.random() * 0xffff).toString(16)}`;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // 画质档位（业主指定：高清 HD 720p60 / 超清 1080p60，均 10000 kbps）
 // ---------------------------------------------------------------------------

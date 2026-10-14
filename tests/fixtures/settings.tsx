@@ -26,6 +26,7 @@ const settings = {
   peerVolumes: {},
   peerMuted: {},
   shareQuality: "fhd1080" as const,
+  shareTransport: "p2p" as const,
 };
 
 createRoot(document.getElementById("root")!).render(

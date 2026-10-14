@@ -18,6 +18,7 @@ describe("parseScreenShareState", () => {
     trackNameAudio: "",
     label: "Visual Studio Code",
     startedAt: 1_700_000_000_000,
+    transport: "p2p",
   };
 
   it("接受完整合法状态", () => {

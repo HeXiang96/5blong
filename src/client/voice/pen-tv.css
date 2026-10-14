@@ -482,6 +482,57 @@ html[data-daypart="night"] .vx-proj-beam {
   color: #8a7355;
 }
 
+/* 传输方式两列排布 */
+.vx-share-transport {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px;
+}
+
+/* "?" 悬停说明：优缺点气泡 */
+.vx-share-help {
+  position: relative;
+  margin-left: 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  border: 1px solid rgba(120, 78, 34, 0.5);
+  color: #7a5a2e;
+  font-size: 11px;
+  cursor: help;
+  vertical-align: middle;
+}
+.vx-share-tip {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  right: -6px;
+  width: 218px;
+  padding: 9px 11px;
+  border-radius: 10px;
+  background: rgba(52, 36, 16, 0.94);
+  color: #f4ead8;
+  font-size: 11px;
+  line-height: 1.55;
+  text-align: left;
+  opacity: 0;
+  transform: translateY(4px);
+  pointer-events: none;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+  z-index: 5;
+}
+.vx-share-tip b {
+  color: #ffd9a0;
+  font-weight: 500;
+}
+.vx-share-help:hover .vx-share-tip,
+.vx-share-help:focus .vx-share-tip {
+  opacity: 1;
+  transform: translateY(0);
+}
+
 .vx-ctl-disabled {
   opacity: 0.45;
   cursor: not-allowed;

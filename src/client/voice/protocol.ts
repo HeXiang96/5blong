@@ -390,11 +390,14 @@ export function parseInteractEvent(input: unknown): InteractEvent | null {
  * 设计约束（见 SCREENSHARE-PLAN.md §H）：这是**房间状态上的一个可空字段**，
  * 成员表与语音链路完全不读也不写它——共享链路崩了只表现为"电视雪花"。
  */
+/** 画面数据的传输方式：P2P 直连（默认，质量最好）或 SFU 转发（兜底）。 */
+export type ScreenShareTransport = "p2p" | "sfu";
+
 export interface ScreenShareState {
   active: boolean;
   /** 共享者的成员 id（掉线/退出由房主清理）。 */
   sharerId: string;
-  /** 共享者在 SFU 的会话 id（订阅方据此拉流）。 */
+  /** 共享会话标识（SFU 模式 = SFU 会话 id；P2P 模式 = 随机会话 id）。 */
   sessionId: string;
   /** SFU 媒体轨名（视频）。 */
   trackName: string;
@@ -403,6 +406,8 @@ export interface ScreenShareState {
   /** 电视上显示的来源名（窗口标题）。 */
   label: string;
   startedAt: number;
+  /** 画面传输方式（旧版本广播缺省 = sfu）。 */
+  transport: ScreenShareTransport;
 }
 
 /** 校验从线上收到的屏幕共享状态；形状不对就丢弃。 */
@@ -423,16 +428,19 @@ export function parseScreenShareState(input: unknown): ScreenShareState | null {
       typeof raw["trackNameAudio"] === "string" ? raw["trackNameAudio"].slice(0, 64) : "",
     label: typeof raw["label"] === "string" ? raw["label"].slice(0, 120) : "",
     startedAt: typeof raw["startedAt"] === "number" && Number.isFinite(raw["startedAt"]) ? raw["startedAt"] : 0,
+    // 旧版本广播没有 transport 字段——那时只有 SFU 一条路
+    transport: raw["transport"] === "p2p" ? "p2p" : "sfu",
   };
 }
 
-/** 共享者向房主申报的 SFU 发布信息。 */
+/** 共享者向房主申报的发布信息（SFU 模式含 SFU 会话 id；P2P 模式为随机会话 id）。 */
 export interface ScreenSharePublication {
   sessionId: string;
   trackName: string;
   trackNameAudio: string;
   label: string;
   hasAudio: boolean;
+  transport: ScreenShareTransport;
 }
 
 export function parseScreenSharePublication(input: unknown): ScreenSharePublication | null {
@@ -448,6 +456,7 @@ export function parseScreenSharePublication(input: unknown): ScreenSharePublicat
       typeof raw["trackNameAudio"] === "string" ? raw["trackNameAudio"].slice(0, 64) : "",
     label: typeof raw["label"] === "string" ? raw["label"].slice(0, 120) : "",
     hasAudio: raw["hasAudio"] === true,
+    transport: raw["transport"] === "sfu" ? "sfu" : "p2p",
   };
 }
 
