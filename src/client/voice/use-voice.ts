@@ -65,6 +65,8 @@ export type View = "landing" | "confirm" | "room" | "settings";
 export interface Notice {
   kind: "info" | "error";
   text: string;
+  /** true = 不自动消失，等用户点 ×（用于必须让用户看到的失败说明）。 */
+  sticky?: boolean;
 }
 
 /**
@@ -491,16 +493,45 @@ export function useVoice() {
         // 带上系统/标签页声音（业主需求：观众要听得到）。回声风险：
         // 共享者用外放开声音时会被麦克风二次拾取——默认静音进房 +
         // 开播后提示戴耳机，可基本规避。
-        stream = await navigator.mediaDevices.getDisplayMedia({
-          video: shareVideoConstraints(quality),
-          audio: true,
-          // 选择器体验（Chromium 系；TS 类型未收录的用 as 兜底）：
-          // - selfBrowserSurface exclude：把 5blong 自己的页面从列表里剔除，
-          //   防止把房间网页共享进房间（自己拍自己）
-          // - surfaceSwitching exclude：去掉"切换到此标签页"按钮，
-          //   共享别的标签页时浏览器就不会自动跳过去
-          ...(pickerHints() as Record<string, never>),
-        } as DisplayMediaStreamOptions);
+        /*
+         * 采集策略**分端**（业主定的方案）：
+         * - **客户端**：画面**不带**浏览器音频（选择器里连"共享系统音频"开关
+         *   都不出现），系统声音一律走下面的内置 WASAPI 回环采集——
+         *   多声道/虚拟声卡设备也稳定，不踩浏览器那条会失败的路径。
+         * - **网页版**：先按"画面 + 系统声音"请求；系统声音建不起来时 Chromium
+         *   会直接拒绝整个采集（NotReadableError 等），退一步：不带声音重采
+         *   （用户需再选一次共享源），并提示换设备或改用客户端。
+         */
+        const clientNativeAudio = isTauriRuntime();
+        let systemAudioBroken = false;
+        try {
+          stream = await navigator.mediaDevices.getDisplayMedia({
+            video: shareVideoConstraints(quality),
+            audio: !clientNativeAudio,
+            ...(pickerHints(!clientNativeAudio) as Record<string, never>),
+          } as DisplayMediaStreamOptions);
+        } catch (firstError) {
+          // 客户端没请求音频，不会因音频走到这；网页版被拒 → 无声音重采一次
+          if ((firstError as DOMException)?.name === "NotAllowedError") return false;
+          console.warn("[screen-share] 带声音的采集失败，改试纯画面：", firstError);
+          setNotice({
+            kind: "info",
+            sticky: true,
+            text: "系统声音采集失败（设备原因）——请再选一次要共享的屏幕，这次不带声音",
+          });
+          try {
+            stream = await navigator.mediaDevices.getDisplayMedia({
+              video: shareVideoConstraints(quality),
+              audio: false,
+              ...(pickerHints(false) as Record<string, never>),
+            } as DisplayMediaStreamOptions);
+            systemAudioBroken = true;
+          } catch (retryError) {
+            if ((retryError as DOMException)?.name === "NotAllowedError") return false;
+            console.warn("[screen-share] 纯画面采集也失败：", retryError);
+            throw retryError; // 交给统一错误提示（会带上错误名）
+          }
+        }
         const videoTrack = stream.getVideoTracks()[0];
         if (!videoTrack) {
           for (const track of stream.getTracks()) track.stop();
@@ -523,20 +554,32 @@ export function useVoice() {
           }
         }
         let hasAudio = stream.getAudioTracks().length > 0;
+        // "用户要了系统声音但浏览器没给上"的两种形态：死音轨 / 采集直接被拒
+        const systemAudioUnavailable = audioDied || systemAudioBroken;
         /*
-         * 客户端兜底：浏览器在这台机器上拿不到系统声音（多声道/虚拟声卡等设备，
-         * Chromium 对回环端点的格式挑剔），而**桌面客户端可以**——Rust 侧像 Oopz
-         * 那样直接走 WASAPI 回环采集，喂给页面一条音轨并进共享流。
-         * 触发条件：勾了系统音频但拿到的轨是死的。网页版没有这条路，走下面的提示。
+         * 客户端：系统声音**一律**走内置 WASAPI 回环采集（业主定的默认方案）——
+         * 不依赖浏览器那条会失败的路，多声道/虚拟声卡设备也稳定。
+         * 网页版没有这条路：systemAudioUnavailable 时走下面的提示。
          */
-        if (!hasAudio && audioDied && isTauriRuntime()) {
+        if (clientNativeAudio) {
+          let nativeError = "";
           try {
-            const native = await startLoopbackAudio();
+            const native = await startLoopbackAudio((message) =>
+              setNotice({ kind: "info", text: message }),
+            );
             stream.addTrack(native.track);
             nativeLoopbackStopRef.current = native.stop;
             hasAudio = true;
           } catch (error) {
-            console.warn("[screen-share] 客户端内置系统声音采集失败：", error);
+            console.warn("[screen-share] 内置系统声音采集失败：", error);
+            nativeError = "客户端内置系统声音采集失败（画面不受影响）";
+          }
+          if (nativeError) {
+            setNotice({
+              kind: "info",
+              sticky: true,
+              text: `${nativeError}；可把 Windows 默认播放设备换成普通立体声扬声器后重试`,
+            });
           }
         }
         // 传输方式：显式选择优先，"自动"按观众数决定（1~2 人直连、3 人以上 SFU）——
@@ -644,7 +687,7 @@ export function useVoice() {
          * 现在音频轨断了只提示、不停播：画面继续，声音没了。
          */
         for (const track of stream.getVideoTracks()) {
-          track.addEventListener("ended", () => stopScreenShareRef.current());
+          track.addEventListener("ended", () => stopScreenShareRef.current({ viaTrackEnded: true }));
         }
         for (const track of stream.getAudioTracks()) {
           track.addEventListener("ended", () => {
@@ -656,19 +699,21 @@ export function useVoice() {
         }
         setNotice({
           kind: "info",
+          sticky: !hasAudio && systemAudioUnavailable,
           text: [
             hasAudio
-              ? "共享已带上系统声音；观众点幕布可开音量。戴耳机可避免回声"
-              : audioDied
-                ? isTauriRuntime()
-                  ? "这台机器的系统声音采集失败（多声道/虚拟声卡设备常见），已改为只共享画面；可把 Windows 默认播放设备换成普通立体声扬声器后再试"
-                  : "此浏览器拿不到系统声音（多声道/虚拟声卡设备常见），已改为只共享画面。两个办法：把 Windows 默认播放设备换成普通立体声扬声器；或改用桌面客户端共享（内置采集，不受设备限制，首页可下载）"
+              ? clientNativeAudio
+                ? "共享已带上系统声音（客户端内置采集）；观众点幕布可开音量"
+                : "共享已带上系统声音；观众点幕布可开音量。戴耳机可避免回声"
+              : systemAudioUnavailable
+                ? "此浏览器拿不到系统声音（多声道/虚拟声卡设备常见），已改为只共享画面。两个办法：把 Windows 默认播放设备换成普通立体声扬声器；或改用桌面客户端共享（内置采集，不受设备限制，首页可下载）"
                 : "共享已开始（此来源没有可共享的声音）",
             transportNote,
           ]
             .filter(Boolean)
             .join("；"),
         });
+        shareStartedAtRef.current = Date.now();
         return true;
       } catch (error) {
         // 采集成功但发布/申报失败的：必须停掉采集，否则系统的"正在共享"指示灯常亮
@@ -679,7 +724,13 @@ export function useVoice() {
         setSharePc(null);
         // 用户取消选择器（NotAllowedError）不算错误，静默返回
         if ((error as DOMException)?.name === "NotAllowedError") return false;
-        setNotice({ kind: "error", text: "共享没开起来，语音不受影响，稍后再试" });
+        // 带上错误名：用户截图给我们时能直接定位是哪类失败；置顶不自动消失
+        const errorName = (error as DOMException)?.name || "未知错误";
+        setNotice({
+          kind: "error",
+          sticky: true,
+          text: `共享没开起来（${errorName}），语音不受影响，稍后再试`,
+        });
         return false;
       }
     },
@@ -688,8 +739,10 @@ export function useVoice() {
     [screenShare, settings, members],
   );
 
-  /** 停播：通知房主 + 停 SFU 发布 + 停采集。订阅侧由副作用自动清理。 */
-  const stopScreenShare = useCallback(() => {
+  /** 停播：通知房主 + 停 SFU 发布 + 停采集。订阅侧由副作用自动清理。
+   *  `viaTrackEnded`：画面轨被系统/浏览器掐断（不是用户主动停）→ 给出解释，
+   *  尤其"刚启动就被中断"——那正是系统声音采集失败连累共享的现场。 */
+  const stopScreenShare = useCallback((opts?: { viaTrackEnded?: boolean }) => {
     // engine 内部会判断：有状态且是本人 → 停播广播；广播未到的窗口期 → 仍发停播申报
     engineRef.current?.stopScreenShare();
     sharePubRef.current?.stop();
@@ -700,13 +753,30 @@ export function useVoice() {
     void nativeLoopbackStopRef.current?.();
     nativeLoopbackStopRef.current = null;
     setShareStream(null);
+    if (opts?.viaTrackEnded) {
+      const justStarted = Date.now() - shareStartedAtRef.current < 8000;
+      if (justStarted) {
+        // 刚开播就被掐：用户没点停，必须解释（这正是系统声音采集失败的现场）
+        setNotice({
+          kind: "error",
+          sticky: true,
+          text: isTauriRuntime()
+            ? "共享刚启动就被浏览器中断了。若反复出现，可把 Windows 默认播放设备换成普通立体声扬声器后再试"
+            : "共享刚启动就被浏览器中断了。若刚勾选了系统声音，多半是系统声音采集失败连累了共享——建议改用桌面客户端共享（内置采集，不受设备限制，首页可下载）",
+        });
+      } else {
+        setNotice({ kind: "info", text: "共享已结束" });
+      }
+    }
   }, []);
 
   /** track ended 回调要拿到最新闭包，经 ref 转发。 */
-  const stopScreenShareRef = useRef(() => {});
+  const stopScreenShareRef = useRef<(opts?: { viaTrackEnded?: boolean }) => void>(() => {});
   stopScreenShareRef.current = stopScreenShare;
   /** 客户端内置系统声音采集的清理（停播/画面被掐断时一并停）。 */
   const nativeLoopbackStopRef = useRef<(() => void) | null>(null);
+  /** 本次共享的开始时刻（判断"刚启动就被中断"用）。 */
+  const shareStartedAtRef = useRef(0);
 
   /** `?tv=demo`：进房后自动用演示画面开播（真实 SFU 链路，无需点选择器）。 */
   const demoAutoStarted = useRef(false);
@@ -773,7 +843,7 @@ export function useVoice() {
    * 按类型分档：操作成功的提示很快收掉，错误留久一点让人看清。
    */
   useEffect(() => {
-    if (!notice) return;
+    if (!notice || notice.sticky) return;
     const ms = NOTICE_DISMISS_MS[notice.kind] ?? 3200;    const timer = window.setTimeout(() => setNotice(null), ms);
     return () => window.clearTimeout(timer);
   }, [notice]);

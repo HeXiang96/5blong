@@ -20,6 +20,15 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.4.5",
+    date: "2026-10-14",
+    lines: [
+      "客户端声音默认内置采集",
+      "共享被中断会说明原因",
+      "网页端引导改用客户端",
+    ],
+  },
+  {
     version: "1.4.4",
     date: "2026-10-14",
     lines: [

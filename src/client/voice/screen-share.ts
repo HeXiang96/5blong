@@ -350,14 +350,15 @@ export function autoTransportFor(
 /** getDisplayMedia 选择器提示项（Chromium 支持；TS 类型未收录，运行时透传）。
  *  注意：preferCurrentTab 与 selfBrowserSurface:"exclude" 互斥
  *  （Chromium 抛 TypeError: Self-contradictory configuration），
- *  不能同时开——这里保留"剔除自己页面"（防把房间网页共享进房间）。 */
-export function pickerHints(): Record<string, unknown> {
+ *  不能同时开——这里保留"剔除自己页面"（防把房间网页共享进房间）。
+ *  `withSystemAudio=false`（客户端走内置 WASAPI 采集时）：选择器里不再出现
+ *  "共享系统音频"开关——从源头绕开 Chromium 在多声道设备上回环失败的坑。 */
+export function pickerHints(withSystemAudio = true): Record<string, unknown> {
   return {
     selfBrowserSurface: "exclude",
     surfaceSwitching: "exclude",
     monitorTypeSurfaces: "include",
-    // 共享屏幕时带上系统声音（Windows 10 2004+ / 标签页声音）
-    systemAudio: "include",
+    systemAudio: withSystemAudio ? "include" : "exclude",
   };
 }
 
