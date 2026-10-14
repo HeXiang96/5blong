@@ -20,6 +20,14 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.4.6",
+    date: "2026-10-14",
+    lines: [
+      "系统声音开关照常显示",
+      "勾了就有声：自动兜底采集",
+    ],
+  },
+  {
     version: "1.4.5",
     date: "2026-10-14",
     lines: [

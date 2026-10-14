@@ -494,24 +494,22 @@ export function useVoice() {
         // 共享者用外放开声音时会被麦克风二次拾取——默认静音进房 +
         // 开播后提示戴耳机，可基本规避。
         /*
-         * 采集策略**分端**（业主定的方案）：
-         * - **客户端**：画面**不带**浏览器音频（选择器里连"共享系统音频"开关
-         *   都不出现），系统声音一律走下面的内置 WASAPI 回环采集——
-         *   多声道/虚拟声卡设备也稳定，不踩浏览器那条会失败的路径。
-         * - **网页版**：先按"画面 + 系统声音"请求；系统声音建不起来时 Chromium
-         *   会直接拒绝整个采集（NotReadableError 等），退一步：不带声音重采
-         *   （用户需再选一次共享源），并提示换设备或改用客户端。
+         * 采集策略（业主定的方案）：**选择器照常出现"共享系统音频"开关**，
+         * 勾不勾由用户定；差别在客户端——**勾了但浏览器拿不到声音时**（死音轨 /
+         * 采集被拒），自动改用内置 WASAPI 回环采集补上，保证"勾了就一定有声"，
+         * 且不受播放设备（7.1/虚拟声卡）限制。网页版没有兜底，走提示。
+         * 系统声音建不起来时 Chromium 可能直接拒绝整个采集（NotReadableError），
+         * 这时退一步：不带声音重采一次（用户需再选一次共享源），客户端再补声音。
          */
-        const clientNativeAudio = isTauriRuntime();
         let systemAudioBroken = false;
         try {
           stream = await navigator.mediaDevices.getDisplayMedia({
             video: shareVideoConstraints(quality),
-            audio: !clientNativeAudio,
-            ...(pickerHints(!clientNativeAudio) as Record<string, never>),
+            audio: true,
+            ...(pickerHints(true) as Record<string, never>),
           } as DisplayMediaStreamOptions);
         } catch (firstError) {
-          // 客户端没请求音频，不会因音频走到这；网页版被拒 → 无声音重采一次
+          // 用户取消选择器：不算故障，静默返回
           if ((firstError as DOMException)?.name === "NotAllowedError") return false;
           console.warn("[screen-share] 带声音的采集失败，改试纯画面：", firstError);
           setNotice({
@@ -554,14 +552,16 @@ export function useVoice() {
           }
         }
         let hasAudio = stream.getAudioTracks().length > 0;
-        // "用户要了系统声音但浏览器没给上"的两种形态：死音轨 / 采集直接被拒
+        // "用户要了系统声音但浏览器没给上"的两种形态：死音轨 / 采集直接被拒。
+        // 注意：用户**没勾**开关时（正常解析、无音轨、无报错）不算这里——尊重选择。
         const systemAudioUnavailable = audioDied || systemAudioBroken;
         /*
-         * 客户端：系统声音**一律**走内置 WASAPI 回环采集（业主定的默认方案）——
-         * 不依赖浏览器那条会失败的路，多声道/虚拟声卡设备也稳定。
+         * 客户端兜底：勾了系统声音但浏览器没给上（死轨/被拒）时，走内置 WASAPI
+         * 回环采集——保证"勾了就一定有声"，且不受播放设备（7.1/虚拟声卡）限制。
          * 网页版没有这条路：systemAudioUnavailable 时走下面的提示。
          */
-        if (clientNativeAudio) {
+        let viaNativeAudio = false;
+        if (!hasAudio && systemAudioUnavailable && isTauriRuntime()) {
           let nativeError = "";
           try {
             const native = await startLoopbackAudio((message) =>
@@ -570,6 +570,7 @@ export function useVoice() {
             stream.addTrack(native.track);
             nativeLoopbackStopRef.current = native.stop;
             hasAudio = true;
+            viaNativeAudio = true;
           } catch (error) {
             console.warn("[screen-share] 内置系统声音采集失败：", error);
             nativeError = "客户端内置系统声音采集失败（画面不受影响）";
@@ -702,7 +703,7 @@ export function useVoice() {
           sticky: !hasAudio && systemAudioUnavailable,
           text: [
             hasAudio
-              ? clientNativeAudio
+              ? viaNativeAudio
                 ? "共享已带上系统声音（客户端内置采集）；观众点幕布可开音量"
                 : "共享已带上系统声音；观众点幕布可开音量。戴耳机可避免回声"
               : systemAudioUnavailable
