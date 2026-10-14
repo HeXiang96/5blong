@@ -420,12 +420,13 @@ export function useVoice() {
       }
       let stream: MediaStream | null = null;
       try {
-        // v1 不采集声音：系统声音经扬声器回采会造成远端回声（无回声消除兜底）
+        // 带上系统/标签页声音（业主需求：观众要听得到）。回声风险：
+        // 共享者用外放开声音时会被麦克风二次拾取——默认静音进房 +
+        // 开播后提示戴耳机，可基本规避。
         stream = await navigator.mediaDevices.getDisplayMedia({
           video: shareVideoConstraints(quality),
-          audio: false,
+          audio: true,
           // 选择器体验（Chromium 系；TS 类型未收录的用 as 兜底）：
-          // - preferCurrentTab：默认就选中当前标签页，不用翻找
           // - selfBrowserSurface exclude：把 5blong 自己的页面从列表里剔除，
           //   防止把房间网页共享进房间（自己拍自己）
           // - surfaceSwitching exclude：去掉"切换到此标签页"按钮，
@@ -438,12 +439,13 @@ export function useVoice() {
           return false;
         }
         const pub = await publishScreen(stream, quality);
+        const hasAudio = stream.getAudioTracks().length > 0;
         const ok = engine.requestScreenShare({
           sessionId: pub.sessionId,
           trackName: TRACK_VIDEO,
-          trackNameAudio: "",
+          trackNameAudio: hasAudio ? TRACK_AUDIO : "",
           label: videoTrack.label || "屏幕共享",
-          hasAudio: false,
+          hasAudio,
         });
         if (!ok) {
           // 电视被占用（本地预检或房主拒绝）：回滚一切，不留半开连接
@@ -455,8 +457,16 @@ export function useVoice() {
         sharePubRef.current = pub;
         shareLocalStreamRef.current = stream;
         setShareStream(stream);
-        // 用户在系统选择器里点了"停止共享"：走正常停播流程
-        videoTrack.addEventListener("ended", () => stopScreenShareRef.current());
+        // 用户在系统选择器里点了"停止共享"（或任一轨被掐断）：走正常停播流程
+        for (const track of stream.getTracks()) {
+          track.addEventListener("ended", () => stopScreenShareRef.current());
+        }
+        setNotice({
+          kind: "info",
+          text: hasAudio
+            ? "共享已带上系统声音；观众点幕布可开音量。戴耳机可避免回声"
+            : "共享已开始（此来源没有可共享的声音）",
+        });
         return true;
       } catch (error) {
         // 采集成功但发布/申报失败的：必须停掉采集，否则系统的"正在共享"指示灯常亮
