@@ -14,7 +14,7 @@
 - 前端：React 19 + Vite + TypeScript，无 UI 框架，全部手写组件，类名统一 `vx-` 前缀。
 - 通信：PeerJS 公共云信令 + WebRTC mesh；房主权威（心跳、成员表、猪圈事件广播）。
 - 桌面壳：Tauri 2（NSIS 安装包约 3.6 MiB，**重做后素材总体积必须控制在 +1.5 MiB 以内**）。
-- 仓库：`github.com/HeXiang96/5blong`；本地目录 `E:/twest/5blong/piik`（目录名历史遗留，产品只叫 5blong）。
+- 仓库：`github.com/HeXiang96/5blong`；本地目录 `E:/tv12/5blong/5blong`。
 
 ### 1.2 房间视觉相关的文件地图
 
@@ -38,19 +38,19 @@
 
 ```bash
 # 类型检查（必须用项目内 tsc，勿用 npx tsc）
-"D:/tools/node-v24.21.0-win-x64/node.exe" "E:/twest/5blong/piik/node_modules/typescript/bin/tsc" -b "E:/twest/5blong/piik" --pretty false
+"D:/tools/node-v24.21.0-win-x64/node.exe" "E:/tv12/5blong/5blong/node_modules/typescript/bin/tsc" -b "E:/tv12/5blong/5blong" --pretty false
 
 # 全量测试（当前 110 项，7 个文件，node 环境）
-"D:/tools/node-v24.21.0-win-x64/node.exe" "E:/twest/5blong/piik/node_modules/vitest/vitest.mjs" run --root "E:/twest/5blong/piik"
+"D:/tools/node-v24.21.0-win-x64/node.exe" "E:/tv12/5blong/5blong/node_modules/vitest/vitest.mjs" run --root "E:/tv12/5blong/5blong"
 
 # 网页构建
-"D:/tools/node-v24.21.0-win-x64/node.exe" "E:/twest/5blong/piik/node_modules/vite/bin/vite.js" build "E:/twest/5blong/piik" --base ./ --outDir dist-web --emptyOutDir
+"D:/tools/node-v24.21.0-win-x64/node.exe" "E:/tv12/5blong/5blong/node_modules/vite/bin/vite.js" build "E:/tv12/5blong/5blong" --base ./ --outDir dist-web --emptyOutDir
 
 # 浏览器回归（本地 UI，不连信令不采麦克风；需先起 vite dev/preview 于 8787 端口）
 BROWSER_CLI=<agent-browser.exe 路径> BROWSER_EXECUTABLE=<Edge/Chrome 路径> UI_OUTPUT_DIR=<输出目录> node scripts/check-ui-browser.mjs
 ```
 
-- git 一律 `git -C "E:/twest/5blong/piik" ...`；npm 一律 `--prefix`；shell cwd 不跨命令保持。
+- git 一律 `git -C "E:/tv12/5blong/5blong" ...`；npm 一律 `--prefix`；shell cwd 不跨命令保持。
 - 回归夹具：`tests/fixtures/member-menu.html` + `member-menu.tsx`（模拟两名成员渲染真实 `RoomView`）。
 
 ### 1.4 近期已完成、不要回退的改动（未发版）
@@ -101,7 +101,7 @@ P1 先换猪 → P2 互动+NPC → P3 场景道具 → P4 UI 统一
 
 ## 4. P0 · 素材生产管线
 
-### 4.1 现有素材盘点（`E:/twest/pig/`，共约 1.1 MiB）
+### 4.1 现有素材盘点（`E:/tv12/pig/`，共约 1.1 MiB）
 
 | 文件 | 尺寸/帧数/时长 | 推测用途（**待业主标注确认**） |
 |---|---|---|

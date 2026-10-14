@@ -31,12 +31,12 @@ ACTIONS = [
     ("12-33-04", "join-parachute", False),
 ]
 
-SRC_DIR = Path("E:/twest/5blong/outputs/actions")
+SRC_DIR = Path("E:/tv12/5blong/outputs/actions")
 OUT_DIR = SRC_DIR / "sprites"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 PY = "C:/Users/hexia/.workbuddy/binaries/python/envs/default/Scripts/python.exe"
-PIPE = "E:/twest/5blong/piik/scripts/video-to-sprite.py"
+PIPE = "E:/tv12/5blong/5blong/scripts/video-to-sprite.py"
 
 videos = {p.name: p for p in SRC_DIR.glob("*.mp4")}
 for stamp, name, pingpong in ACTIONS:

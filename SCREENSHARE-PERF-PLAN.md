@@ -97,7 +97,7 @@ sharePc={voice.sharePc}
 | **B** | **降级策略选错了方向**。当前 `contentHint = "motion"`（`screen-share.ts:245`）→ Chrome 采"**保帧率、降质量**"策略：带宽一紧就死保 60fps，把画质往死里压 → 观感就是"糊 + 块" | `screen-share.ts:245` |
 | **C** | **`degradationPreference` 是空转**（已查证）：MDN 已标记该字段 **Deprecated**，且兼容表显示 Chrome 对 `RTCRtpSendParameters.degradationPreference` **不受支持**；写在 `encodings[0]` 里同样不生效。想"保清晰"不能靠它，得靠 `contentHint` | `screen-share.ts:104-113` |
 | **D** | **`setParameters` 失败被静默吞掉，且只在协商后调一次**。若首次调用时协商未就绪而被拒绝，码率/帧率参数**压根没生效**，档位形同虚设 | `screen-share.ts:115` `.catch(() => {})` |
-| **E** | **编码器可能不是硬编**。H264 协商失败会回落 VP8 软编；1080p60 软编在高负载机器上跑不动，编码器为保实时把质量压到极低 → 马赛克 + 卡。Piik 的 ADR-0007 就是为这个坑写的（能力表 ≠ 真能硬编） | `screen-share.ts:206` 只查 `getCapabilities()` |
+| **E** | **编码器可能不是硬编**。H264 协商失败会回落 VP8 软编；1080p60 软编在高负载机器上跑不动，编码器为保实时把质量压到极低 → 马赛克 + 卡。这正是「能力表 ≠ 真能硬编」这个坑 | `screen-share.ts:206` 只查 `getCapabilities()` |
 | **F** | **`scaleResolutionDownBy: 1` 硬顶**：既禁止降分辨率，又把码率上限放得很高 → 全部压力交给量化器 → 块状伪影 | `screen-share.ts:112` |
 
 ### 3.2 症状对照口诀（补上 F4 之后就能自查）

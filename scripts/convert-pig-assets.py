@@ -1,15 +1,15 @@
 """把业主的三个小猪 GIF 转成动画 WebP（控制体积，透明底保留）。
 
 用法：python convert-pig-assets.py
-源：E:/twest/pig/{吊猪,快跑猪,蹦迪猪}.gif
-出：E:/twest/5blong/piik/src/client/voice/assets/{hanging,running,disco}-pig.webp
+源：E:/tv12/pig/{吊猪,快跑猪,蹦迪猪}.gif
+出：E:/tv12/5blong/5blong/src/client/voice/assets/{hanging,running,disco}-pig.webp
 """
 from pathlib import Path
 
 from PIL import Image, ImageSequence
 
-SRC = Path("E:/twest/pig")
-DST = Path("E:/twest/5blong/piik/src/client/voice/assets")
+SRC = Path("E:/tv12/pig")
+DST = Path("E:/tv12/5blong/5blong/src/client/voice/assets")
 DST.mkdir(parents=True, exist_ok=True)
 
 JOBS = [
