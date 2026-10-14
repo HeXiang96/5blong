@@ -197,6 +197,76 @@ export const EAT_APPROACH_MS = 5_000;
 /** 走到之后低头吃多久（吃完菜才消失）。 */
 export const EAT_MUNCH_MS = 3_200;
 
+// ---------------------------------------------------------------------------
+// 围炉看 TV：机位与围观排位
+// ---------------------------------------------------------------------------
+
+/** 猪从当前位置走到投影区围观位要多久（走得快一点，开播后很快围坐好）。 */
+export const TV_APPROACH_MS = 3_200;
+
+/** 幕布中心横向机位（0~1 相对舞台宽；纵向由组件按比例排，内嵌在坡上）。 */
+export const SCREEN_POS = { x: 0.51 };
+/** 投影仪机位：最下面居中、紧贴控制栏上沿（业主定的位置）。 */
+export const PROJ_POS = { x: 0.5, lane: 0.18 };
+/** 火堆机位：两翼猪群正中间（围炉——左翼右翼围着它坐）。 */
+export const FIRE_POS = { x: 0.5, lane: 0.45 };
+
+/** 一个围观位。 */
+export interface TvSlot {
+  /** 横向 0~1（猪中心 / 舞台宽）。 */
+  x: number;
+  /** 纵深 0~1。 */
+  lane: number;
+  /** 是否面朝左（幕布在正上方，两翼猪群面朝中心）。 */
+  faceLeft: boolean;
+  /** 出发延迟（ms）：错落感，避免全员齐步走。 */
+  delayMs: number;
+}
+
+/**
+ * 前排两翼交错入座（L1→R1→L2→R2→…）：人再少也围着火堆两边坐，
+ * 不会全挤在一边"就地趴下"。超出 10 人的房间极罕见，后排循环。
+ */
+const SLOT_FRONT = [
+  { x: 0.4, lane: 0.46, faceLeft: false },
+  { x: 0.6, lane: 0.46, faceLeft: true },
+  { x: 0.33, lane: 0.43, faceLeft: false },
+  { x: 0.67, lane: 0.43, faceLeft: true },
+  { x: 0.25, lane: 0.47, faceLeft: false },
+  { x: 0.74, lane: 0.47, faceLeft: true },
+];
+const SLOT_BACK = [
+  { x: 0.44, lane: 0.29, faceLeft: false },
+  { x: 0.57, lane: 0.29, faceLeft: true },
+  { x: 0.36, lane: 0.27, faceLeft: false },
+  { x: 0.65, lane: 0.27, faceLeft: true },
+];
+
+/** 由成员 id 推出一个 0~255 的稳定抖动值（确定性，各端渲染一致）。 */
+function idJitter(id: string): number {
+  let sum = 0;
+  for (let i = 0; i < id.length; i += 1) sum = (sum + id.charCodeAt(i) * (i + 7)) & 0xff;
+  return sum;
+}
+
+/**
+ * 某头猪的围观位。**确定性**：输入相同（排序后的成员 id 表）输出就相同，
+ * 不需要额外广播"谁站哪"，每个客户端自己算就能对上。
+ */
+export function tvSlotFor(actorId: string, memberIds: readonly string[]): TvSlot {
+  const sorted = [...memberIds].sort();
+  const order = Math.max(0, sorted.indexOf(actorId));
+  const base = order < SLOT_FRONT.length ? SLOT_FRONT[order] : SLOT_BACK[(order - SLOT_FRONT.length) % SLOT_BACK.length];
+  const jitter = idJitter(actorId);
+  return {
+    x: base.x,
+    lane: base.lane,
+    faceLeft: base.faceLeft,
+    // 出发错落：序号拉开大间隔 + 每头猪自己的小抖动
+    delayMs: 200 + order * 160 + (jitter % 260),
+  };
+}
+
 /**
  * 把横向位置夹回允许范围。
  *

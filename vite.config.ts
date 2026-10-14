@@ -21,5 +21,20 @@ export default defineConfig({
     host: true,
     port: 8787,
     strictPort: true,
+    // 屏幕共享：/sfu/* 转发到本地 SFU 代理（scripts/dev-sfu-server.mjs，需先启动）。
+    proxy: {
+      "/sfu": {
+        target: "http://127.0.0.1:8789",
+        changeOrigin: true,
+      },
+    },
+  },
+  preview: {
+    proxy: {
+      "/sfu": {
+        target: "http://127.0.0.1:8789",
+        changeOrigin: true,
+      },
+    },
   },
 });

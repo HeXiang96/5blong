@@ -25,6 +25,7 @@ const settings = {
   micVolume: 1,
   peerVolumes: {},
   peerMuted: {},
+  shareQuality: "fhd1080" as const,
 };
 
 createRoot(document.getElementById("root")!).render(

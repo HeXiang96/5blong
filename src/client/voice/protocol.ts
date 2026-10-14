@@ -380,8 +380,78 @@ export function parseInteractEvent(input: unknown): InteractEvent | null {
   return { from, to, kind: kind as InteractKind, ts };
 }
 
-export interface WireMember {
-  id: string;
+// ---------------------------------------------------------------------------
+// 屏幕共享（围炉看 TV）
+// ---------------------------------------------------------------------------
+
+/**
+ * 房间的屏幕共享状态（房主权威，一台电视，同时最多一个共享者）。
+ *
+ * 设计约束（见 SCREENSHARE-PLAN.md §H）：这是**房间状态上的一个可空字段**，
+ * 成员表与语音链路完全不读也不写它——共享链路崩了只表现为"电视雪花"。
+ */
+export interface ScreenShareState {
+  active: boolean;
+  /** 共享者的成员 id（掉线/退出由房主清理）。 */
+  sharerId: string;
+  /** 共享者在 SFU 的会话 id（订阅方据此拉流）。 */
+  sessionId: string;
+  /** SFU 媒体轨名（视频）。 */
+  trackName: string;
+  /** SFU 媒体轨名（系统/标签页声音，无则为空串）。 */
+  trackNameAudio: string;
+  /** 电视上显示的来源名（窗口标题）。 */
+  label: string;
+  startedAt: number;
+}
+
+/** 校验从线上收到的屏幕共享状态；形状不对就丢弃。 */
+export function parseScreenShareState(input: unknown): ScreenShareState | null {
+  if (!input || typeof input !== "object") return null;
+  const raw = input as Record<string, unknown>;
+  if (raw["active"] !== true) return null;
+  const sharerId = typeof raw["sharerId"] === "string" ? raw["sharerId"].slice(0, 64) : "";
+  const sessionId = typeof raw["sessionId"] === "string" ? raw["sessionId"].slice(0, 128) : "";
+  const trackName = typeof raw["trackName"] === "string" ? raw["trackName"].slice(0, 64) : "";
+  if (!sharerId || !sessionId || !trackName) return null;
+  return {
+    active: true,
+    sharerId,
+    sessionId,
+    trackName,
+    trackNameAudio:
+      typeof raw["trackNameAudio"] === "string" ? raw["trackNameAudio"].slice(0, 64) : "",
+    label: typeof raw["label"] === "string" ? raw["label"].slice(0, 120) : "",
+    startedAt: typeof raw["startedAt"] === "number" && Number.isFinite(raw["startedAt"]) ? raw["startedAt"] : 0,
+  };
+}
+
+/** 共享者向房主申报的 SFU 发布信息。 */
+export interface ScreenSharePublication {
+  sessionId: string;
+  trackName: string;
+  trackNameAudio: string;
+  label: string;
+  hasAudio: boolean;
+}
+
+export function parseScreenSharePublication(input: unknown): ScreenSharePublication | null {
+  if (!input || typeof input !== "object") return null;
+  const raw = input as Record<string, unknown>;
+  const sessionId = typeof raw["sessionId"] === "string" ? raw["sessionId"].slice(0, 128) : "";
+  const trackName = typeof raw["trackName"] === "string" ? raw["trackName"].slice(0, 64) : "";
+  if (!sessionId || !trackName) return null;
+  return {
+    sessionId,
+    trackName,
+    trackNameAudio:
+      typeof raw["trackNameAudio"] === "string" ? raw["trackNameAudio"].slice(0, 64) : "",
+    label: typeof raw["label"] === "string" ? raw["label"].slice(0, 120) : "",
+    hasAudio: raw["hasAudio"] === true,
+  };
+}
+
+export interface WireMember {  id: string;
   /** 本机个人 ID，仅用于重名消歧展示，不作为身份凭据。 */
   personId: string;
   /** 会话级短标识：同一个人开两个窗口也能区分开。 */
@@ -407,17 +477,21 @@ export type GuestMessage =
   | { t: "muted"; muted: boolean; deafened?: boolean }
   | { t: "speaking"; speaking: boolean }
   | { t: "interact"; to: string; kind: InteractKind }
+  | { t: "screen-share-start"; session: ScreenSharePublication }
+  | { t: "screen-share-stop" }
   | { t: "ping"; ts: number }
   | { t: "pong"; ts: number };
 
 /** 房主 → 访客。 */
 export type HostMessage =
-  | { t: "welcome"; code: string; hostId: string; proof: string; roster: WireMember[]; you: string; locked?: boolean }
+  | { t: "welcome"; code: string; hostId: string; proof: string; roster: WireMember[]; you: string; locked?: boolean; screenShare?: ScreenShareState }
   | { t: "reject"; reason: RejectReason }
   | { t: "kick"; id: string }
   | { t: "force-mute"; id: string; muted: boolean }
   | { t: "lock"; locked: boolean }
   | { t: "interact"; event: InteractEvent }
+  /** state 为 null 表示停播（电视回雪花）。 */
+  | { t: "screen-share"; state: ScreenShareState | null }
   | { t: "chat"; id: string; name: string; text: string; ts: number }
   | { t: "roster"; members: WireMember[] }
   | { t: "peer-join"; member: WireMember }
@@ -506,6 +580,12 @@ export function parseGuestMessage(data: unknown): GuestMessage | null {
       }
       return { t: "interact", to, kind: kind as InteractKind };
     }
+    case "screen-share-start": {
+      const session = parseScreenSharePublication(msg["session"]);
+      return session ? { t: "screen-share-start", session } : null;
+    }
+    case "screen-share-stop":
+      return { t: "screen-share-stop" };
     case "ping": {
       const ts = num(msg["ts"]);
       return ts === null ? null : { t: "ping", ts };
@@ -543,7 +623,15 @@ export function parseHostMessage(data: unknown): HostMessage | null {
         you,
         roster: parseRoster(msg["roster"]),
         locked: msg["locked"] === true,
+        // 中途进房的人也要知道"电视亮没亮"（缺席 = 没在共享，向后兼容）。
+        screenShare: msg["screenShare"] === undefined ? undefined : parseScreenShareState(msg["screenShare"]) ?? undefined,
       };
+    }
+    case "screen-share": {
+      // state 显式为 null = 停播；其余形状不对才丢弃。
+      if (msg["state"] === null) return { t: "screen-share", state: null };
+      const state = parseScreenShareState(msg["state"]);
+      return state ? { t: "screen-share", state } : null;
     }
     case "reject": {
       const reason = msg["reason"];

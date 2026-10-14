@@ -46,6 +46,8 @@ import type { ChatMessage, EngineStatus, MediaLinkState, Member } from "../engin
 import type { Notice } from "../use-voice";
 import type { InteractEvent, InteractKind, Invite } from "../protocol";
 import type { LucideIcon } from "lucide-react";
+import { MonitorUp } from "lucide-react";
+import { SHARE_QUALITY_PRESETS } from "../screen-share";
 
 /** 可对其他成员做的小猪互动，按顺序展示成一排按钮。 */
 const INTERACT_ACTIONS: ReadonlyArray<{ kind: InteractKind; label: string; Icon: LucideIcon }> = [
@@ -63,7 +65,10 @@ import { Banner, Spinner, Toggle } from "./ui";
 import { ViewportPopover } from "./ViewportPopover";
 import { PigActor, PenFrame, PenScatter, useElementSize, ENTRY_TOTAL_MS } from "./PigPen";
 import { NpcVisitor, PenPropsLayer, type PenPropEntry } from "./PenProps";
-import { NPC_NAME, feetViewportPx, phaseForActor } from "../pen";
+import { Campfire, PenTV, PenTvLightbox } from "./PenTV";
+import { NPC_NAME, feetViewportPx, phaseForActor, tvSlotFor } from "../pen";
+import type { ScreenShareState } from "../protocol";
+import type { ShareQuality } from "../settings";
 import pigJoinUrl from "../assets/pig-join.webp?url";
 import pigHoistUrl from "../assets/pig-hoist.webp?url";
 import pigDanceUrl from "../assets/pig-dance.webp?url";
@@ -133,6 +138,12 @@ export function RoomView({
   onForceMute,
   onToggleLock,
   onInteract,
+  screenShare,
+  shareStream,
+  onStartShare,
+  onStopShare,
+  shareQuality,
+  onSetShareQuality,
 }: {
   status: EngineStatus;
   members: Member[];
@@ -192,10 +203,44 @@ export function RoomView({
   onForceMute: (id: string, muted: boolean) => void;
   onToggleLock: () => void;
   onInteract: (peerId: string, personId: string, kind: InteractKind) => void;
+  /** 屏幕共享状态（房主权威广播；null = 电视不在场）。 */
+  screenShare: ScreenShareState | null;
+  /** 电视正在播的画面流（观看端订阅 / 共享者本机采集）。 */
+  shareStream: MediaStream | null;
+  /** 开播（参数为画质档位）。 */
+  onStartShare: (quality: ShareQuality) => void;
+  /** 停播。 */
+  onStopShare: () => void;
+  /** 本机选的画质档位。 */
+  shareQuality: ShareQuality;
+  /** 改画质档位（落盘，下次开播生效）。 */
+  onSetShareQuality: (quality: ShareQuality) => void;
 }) {
   const self = members.find((member) => member.local) ?? null;
   const muted = self?.muted ?? true;
   const [copied, setCopied] = useState<"code" | "invite" | null>(null);
+
+  // ------------------------------------------------------------ 围炉看 TV
+
+  /** 放大层开关。 */
+  const [tvExpanded, setTvExpanded] = useState(false);
+  const [shareMenuOpen, setShareMenuOpen] = useState(false);
+  const tvLive = screenShare !== null;
+  const selfSharing = tvLive && self !== null && screenShare.sharerId === self.id;
+  const tvOccupied = tvLive && !selfSharing;
+
+  useEffect(() => {
+    if (!tvLive) setTvExpanded(false);
+  }, [tvLive]);
+
+  useEffect(() => {
+    if (!shareMenuOpen) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setShareMenuOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [shareMenuOpen]);
 
   /*
    * 成员第一次出现在名册的时刻：新成员入圈要播"空降入场"。
@@ -244,6 +289,24 @@ export function RoomView({
     return rect ? Math.max(0, window.innerHeight - rect.bottom) : 0;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stageWidth, stageHeight]);
+
+  /** 各猪的围观位（仅房主端驱动走位；确定性排布，访客靠位置广播跟随）。 */
+  const tvTargets = useMemo(() => {
+    const map = new Map<string, { x: number; bottomPx: number; delayMs: number; faceLeft: boolean }>();
+    if (!isHost || !tvLive) return map;
+    const ids = members.map((member) => member.id);
+    for (const member of members) {
+      const slot = tvSlotFor(member.id, ids);
+      map.set(member.id, {
+        x: slot.x,
+        bottomPx: feetViewportPx(slot.lane, window.innerHeight) - stageBottomGap,
+        delayMs: slot.delayMs,
+        faceLeft: slot.faceLeft,
+      });
+    }
+    return map;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isHost, tvLive, members, stageBottomGap]);
 
   /*
    * 动作阶段（走过去 / 正在吃 / 使劲 / 闻一闻）是按时间戳推算的，
@@ -734,6 +797,8 @@ export function RoomView({
               action={action}
               phase={phase}
               targetX={eatTarget(member.id)}
+              tvTarget={tvTargets.get(member.id)}
+              watching={tvLive}
               mediaState={member.local ? undefined : mediaStates[member.id]}
               reaction={reactionByActor.get(member.id)}
               entryAt={joinAt.get(member.id)}
@@ -767,6 +832,27 @@ export function RoomView({
           targetX={npcShow?.x ?? 0.8}
           stageWidth={stageWidth}
         />
+
+        {/* 围炉看投影：篝火在两翼猪群中间靠后（常驻）；投影仪共享时从天而降，
+            光束打到坡上内嵌的幕布。猪在道具/光束之后走动。 */}
+        <Campfire stageWidth={stageWidth} stageBottomGap={stageBottomGap} />
+        <PenTV
+          state={screenShare}
+          stream={shareStream}
+          stageWidth={stageWidth}
+          stageHeight={stageHeight}
+          stageBottomGap={stageBottomGap}
+          onExpand={() => setTvExpanded(true)}
+        />
+
+        {tvExpanded && screenShare ? (
+          <PenTvLightbox
+            state={screenShare}
+            stream={shareStream}
+            sharerName={displayNames.get(screenShare.sharerId) ?? "成员"}
+            onClose={() => setTvExpanded(false)}
+          />
+        ) : null}
 
         {invite && members.length === 1 ? (
           <div className="vx-empty vx-empty-pen">
@@ -912,6 +998,64 @@ export function RoomView({
             </div>
           ) : null}
         </div>
+
+        <button
+          type="button"
+          className={`vx-ctl${selfSharing ? " vx-ctl-on" : ""}${tvOccupied ? " vx-ctl-disabled" : ""}`}
+          onClick={() => {
+            if (selfSharing) {
+              onStopShare();
+              return;
+            }
+            if (tvOccupied) return;
+            setShareMenuOpen((open) => !open);
+          }}
+          disabled={tvOccupied}
+          aria-pressed={selfSharing}
+          title={
+            selfSharing
+              ? "停止共享屏幕"
+              : tvOccupied
+                ? `电视被 ${displayNames.get(screenShare!.sharerId) ?? "别人"} 占着`
+                : "共享屏幕到小电视"
+          }
+        >
+          <span className="vx-ctl-icon">
+            <MonitorUp size={20} />
+          </span>
+          <span>{selfSharing ? "停共享" : "共享"}</span>
+        </button>
+
+        {shareMenuOpen ? (
+          <div className="vx-share-menu" onClick={(event) => event.stopPropagation()}>
+            <p className="vx-share-menu-title">共享画质</p>
+            {(Object.keys(SHARE_QUALITY_PRESETS) as ShareQuality[]).map((key) => {
+              const preset = SHARE_QUALITY_PRESETS[key];
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  className={`vx-share-quality${shareQuality === key ? " vx-share-quality-on" : ""}`}
+                  onClick={() => onSetShareQuality(key)}
+                >
+                  <strong>{preset.label}</strong>
+                  <span>60 帧 · {Math.round(preset.maxBitrate / 1000)} kbps</span>
+                </button>
+              );
+            })}
+            <button
+              type="button"
+              className="vx-btn vx-btn-small vx-btn-primary vx-share-start"
+              onClick={() => {
+                setShareMenuOpen(false);
+                onStartShare(shareQuality);
+              }}
+            >
+              选择窗口开始共享
+            </button>
+            <p className="vx-share-menu-hint">全房间同看一台电视，同一时间一人共享</p>
+          </div>
+        ) : null}
 
         <button
           type="button"
