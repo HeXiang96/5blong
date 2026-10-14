@@ -51,6 +51,7 @@ import {
   type ScreenShareState,
 } from "./protocol";
 import { refreshIceServers } from "./ice";
+import { isTauriRuntime, startLoopbackAudio } from "./loopback";
 import { loadSettings, saveSettings, type VoiceSettings } from "./settings";
 import { readJson, writeJson } from "./storage";
 
@@ -505,7 +506,39 @@ export function useVoice() {
           for (const track of stream.getTracks()) track.stop();
           return false;
         }
-        const hasAudio = stream.getAudioTracks().length > 0;
+        /*
+         * 有些机器上"系统音频"轨**刚拿到就是 ended 的**：Windows 的系统音频靠
+         * WASAPI 回环采集，对默认输出设备很敏感——虚拟声卡（VB-Cable / Voicemeeter）、
+         * 没有音频通道的 HDMI（NVIDIA/AMD 音频）、蓝牙耳机、独占模式、或输出设备被
+         * 禁用/切换，都会让回环建不起来。此时 Chromium 会直接给出（或很快结束）
+         * 音频轨，而画面轨是好的。
+         * 先把这种死轨剔掉，下面的 hasAudio 才不会说谎，也不会去订阅它。
+         */
+        let audioDied = false;
+        for (const track of stream.getAudioTracks()) {
+          if (track.readyState === "ended") {
+            audioDied = true;
+            stream.removeTrack(track);
+            track.stop();
+          }
+        }
+        let hasAudio = stream.getAudioTracks().length > 0;
+        /*
+         * 客户端兜底：浏览器在这台机器上拿不到系统声音（多声道/虚拟声卡等设备，
+         * Chromium 对回环端点的格式挑剔），而**桌面客户端可以**——Rust 侧像 Oopz
+         * 那样直接走 WASAPI 回环采集，喂给页面一条音轨并进共享流。
+         * 触发条件：勾了系统音频但拿到的轨是死的。网页版没有这条路，走下面的提示。
+         */
+        if (!hasAudio && audioDied && isTauriRuntime()) {
+          try {
+            const native = await startLoopbackAudio();
+            stream.addTrack(native.track);
+            nativeLoopbackStopRef.current = native.stop;
+            hasAudio = true;
+          } catch (error) {
+            console.warn("[screen-share] 客户端内置系统声音采集失败：", error);
+          }
+        }
         // 传输方式：显式选择优先，"自动"按观众数决定（1~2 人直连、3 人以上 SFU）——
         // P2P 的上行是"码率 × 观众数"，3 人以上会把家用上行打爆（P1-11）。
         const decision = autoTransportFor(settings.shareTransport, memberCountRef.current);
@@ -601,16 +634,36 @@ export function useVoice() {
         setSharePc(
           transport === "sfu" ? (sharePubRef.current?.pc ?? null) : engine.screenSenderPeerConnection(),
         );
-        // 用户在系统选择器里点了"停止共享"（或任一轨被掐断）：走正常停播流程
-        for (const track of stream.getTracks()) {
+        /*
+         * 用户在系统选择器里点"停止共享"（或画面被掐断）→ 走正常停播流程。
+         *
+         * ⚠️ **只认画面轨**。原先这里对整个 stream.getTracks() 都挂"ended → 停播"，
+         * 于是"系统音频轨结束"也会把整个共享关掉：Windows 上回环采集建不起来的
+         * 机器（虚拟声卡 / HDMI 无音频 / 蓝牙 / 独占模式 / 输出设备被禁用）
+         * **一勾"共享系统音频"就整个共享秒消失**——画面本来是好的，被我们误判了。
+         * 现在音频轨断了只提示、不停播：画面继续，声音没了。
+         */
+        for (const track of stream.getVideoTracks()) {
           track.addEventListener("ended", () => stopScreenShareRef.current());
+        }
+        for (const track of stream.getAudioTracks()) {
+          track.addEventListener("ended", () => {
+            setNotice({
+              kind: "info",
+              text: "系统声音已断开（画面继续共享看）；需要声音请停播后重新共享",
+            });
+          });
         }
         setNotice({
           kind: "info",
           text: [
             hasAudio
               ? "共享已带上系统声音；观众点幕布可开音量。戴耳机可避免回声"
-              : "共享已开始（此来源没有可共享的声音）",
+              : audioDied
+                ? isTauriRuntime()
+                  ? "这台机器的系统声音采集失败（多声道/虚拟声卡设备常见），已改为只共享画面；可把 Windows 默认播放设备换成普通立体声扬声器后再试"
+                  : "此浏览器拿不到系统声音（多声道/虚拟声卡设备常见），已改为只共享画面。两个办法：把 Windows 默认播放设备换成普通立体声扬声器；或改用桌面客户端共享（内置采集，不受设备限制，首页可下载）"
+                : "共享已开始（此来源没有可共享的声音）",
             transportNote,
           ]
             .filter(Boolean)
@@ -643,12 +696,17 @@ export function useVoice() {
     sharePubRef.current = null;
     for (const track of shareLocalStreamRef.current?.getTracks() ?? []) track.stop();
     shareLocalStreamRef.current = null;
+    // 客户端内置系统声音采集（WASAPI 回环）随停播一起收线
+    void nativeLoopbackStopRef.current?.();
+    nativeLoopbackStopRef.current = null;
     setShareStream(null);
   }, []);
 
   /** track ended 回调要拿到最新闭包，经 ref 转发。 */
   const stopScreenShareRef = useRef(() => {});
   stopScreenShareRef.current = stopScreenShare;
+  /** 客户端内置系统声音采集的清理（停播/画面被掐断时一并停）。 */
+  const nativeLoopbackStopRef = useRef<(() => void) | null>(null);
 
   /** `?tv=demo`：进房后自动用演示画面开播（真实 SFU 链路，无需点选择器）。 */
   const demoAutoStarted = useRef(false);

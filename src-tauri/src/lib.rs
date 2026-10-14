@@ -17,6 +17,10 @@ use tauri::{
 };
 use tauri_plugin_updater::{Update, UpdaterExt};
 
+/// 内置系统声音采集（Windows WASAPI 回环）：浏览器在多声道播放设备上
+/// 拿不到系统音频，客户端在 Rust 侧自己采后喂给页面随共享发布。
+mod loopback;
+
 /// 已发现、待用户确认下载的更新（确认后 start_update_download 取走）。
 struct UpdaterState {
     pending: Mutex<Option<Update>>,
@@ -255,7 +259,14 @@ fn grant_webview2_permissions(app: &tauri::AppHandle) {
 pub fn run() {
     tauri::Builder::default()
         .manage(UpdaterState { pending: Mutex::new(None) })
-        .invoke_handler(tauri::generate_handler![set_window_bg, check_update, start_update_download])
+        .manage(loopback::LoopbackState::default())
+        .invoke_handler(tauri::generate_handler![
+            set_window_bg,
+            check_update,
+            start_update_download,
+            loopback::start_loopback_capture,
+            loopback::stop_loopback_capture
+        ])
         // 单实例必须在其它插件 / WebView 初始化之前注册。
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             show_main(app);

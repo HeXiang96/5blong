@@ -7,6 +7,8 @@
 * 单房建议 2–6 人，最多 8 人；音频在参与者之间点对点（P2P）直连。
 * **屏幕共享（围炉看投影）**：传输方式默认**自动**（**观众 ≤4 走 P2P 直连、5 位观众及以上
   自动切 Cloudflare Realtime SFU 转发**，免费额度），全房同看一块大幕布，与语音链路物理隔离；
+  **可带系统声音**（观众点幕布开音量）。部分播放设备（7.1/虚拟声卡）会让浏览器拿不到系统
+  音频——桌面客户端内置 WASAPI 采集不受限；网页版会提示改用客户端或换成立体声设备。
   详见 [SCREENSHARE-PLAN.md](./SCREENSHARE-PLAN.md) 与 [SCREENSHARE-OPT-PLAN.md](./SCREENSHARE-OPT-PLAN.md)。
 * 全程 0 成本：信令用免费公共 PeerJS 云，NAT 穿透用免费公共 STUN +
   **Cloudflare Realtime TURN**（服务端 `/ice` 现签短期凭据，1000 GB/月免费额度），不需要任何付费服务。
