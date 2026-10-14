@@ -55,8 +55,10 @@ export interface ShareQualityPreset {
 }
 
 export const SHARE_QUALITY_PRESETS: Record<ShareQuality, ShareQualityPreset> = {
-  hd720: { label: "高清 HD 720p", width: 1280, height: 720, fps: 60, maxBitrate: 10_000_000 },
-  fhd1080: { label: "超清 1080p", width: 1920, height: 1080, fps: 60, maxBitrate: 10_000_000 },
+  // 业主定位：共享 = 直播流，画质拉满。1080p60 给 20 Mbps（直播推流级），
+  // 720p60 给 8 Mbps；高码率兜住分辨率，网络挤爆前不会降清。
+  hd720: { label: "高清 HD 720p", width: 1280, height: 720, fps: 60, maxBitrate: 8_000_000 },
+  fhd1080: { label: "超清 1080p", width: 1920, height: 1080, fps: 60, maxBitrate: 20_000_000 },
 };
 
 /** getDisplayMedia 选择器提示项（Chromium 支持；TS 类型未收录，运行时透传）。
@@ -92,8 +94,8 @@ function applySenderQuality(pc: RTCPeerConnection, quality: ShareQuality): void 
     type Encoding = RTCRtpEncodingParameters & { degradationPreference?: string };
     params.encodings[0] = {
       ...params.encodings[0],
-      // 屏幕内容要"宁掉帧不降清"：分辨率维持原样，带宽/CPU 吃紧时浏览器降帧率
-      degradationPreference: "maintain-resolution",
+      // 直播流定位：优先保帧率（流畅），高码率上限兜住清晰度
+      degradationPreference: "maintain-framerate",
       maxBitrate: preset.maxBitrate,
       maxFramerate: preset.fps,
       scaleResolutionDownBy: 1,
@@ -197,10 +199,10 @@ export async function publishScreen(
   onLost?: () => void,
 ): Promise<ScreenPublication> {
   const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
-  // 屏幕共享偏好平滑动态画面（60fps），明确告诉浏览器编码倾向
-  // 屏幕内容（文字/UI/网页）用 "detail"：编码器保清晰度而不是帧率，
-  // 用 "motion" 会让编码器降分辨率换取帧率——画面发糊的元凶就是它。
-  for (const track of stream.getVideoTracks()) track.contentHint = "detail";
+  // 业主定位：共享 = 直播流。"motion" = 编码器优先保帧率（画面流畅）；
+  // 高码率（20 Mbps）由发送端参数兜住，网络不挤爆就不会降分辨率——
+  // 流畅与清晰两者都要，不做"保一头"的取舍。
+  for (const track of stream.getVideoTracks()) track.contentHint = "motion";
 
   const videoTrack = stream.getVideoTracks()[0];
   const audioTrack = stream.getAudioTracks()[0];
