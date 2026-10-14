@@ -26,8 +26,10 @@ export interface VoiceSettings {
   peerVolumes: Record<string, number>;
   /** 对每个成员的本地静音（不接收其声音），按 peerId 记录；只影响本机。 */
   peerMuted: Record<string, boolean>;
-  /** 屏幕共享画质档位（720p60 / 1080p60，均为 10Mbps）。 */
+  /** 屏幕共享画质档位（720p60 / 1080p60）。 */
   shareQuality: ShareQuality;
+  /** 屏幕共享传输方式：p2p 直连（默认，画质最好）| sfu 转发（兜底）。 */
+  shareTransport: "p2p" | "sfu";
 }
 
 /** 屏幕共享画质档位（定义在 screen-share.ts，这里只引用字面量类型）。 */
@@ -74,6 +76,7 @@ export function defaultSettings(): VoiceSettings {
     peerVolumes: {},
     peerMuted: {},
     shareQuality: "fhd1080",
+    shareTransport: "p2p",
   };
 }
 
@@ -100,6 +103,8 @@ export function loadSettings(): VoiceSettings {
     peerMuted: stored.peerMuted && typeof stored.peerMuted === "object" ? stored.peerMuted : {},
     // 屏幕共享画质：默认超清 1080p；存量配置里没有该字段时也走默认
     shareQuality: stored.shareQuality === "hd720" ? "hd720" : "fhd1080",
+    // 屏幕共享传输：默认 P2P 直连；存量配置里没有该字段时也走默认
+    shareTransport: stored.shareTransport === "sfu" ? "sfu" : "p2p",
     processing: {
       echoCancellation: processing.echoCancellation !== false,
       noiseSuppression: processing.noiseSuppression !== false,

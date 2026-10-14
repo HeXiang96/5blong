@@ -19,6 +19,7 @@ import {
   debugTvFrom,
   pickerHints,
   publishScreen,
+  randomSessionId,
   shareVideoConstraints,
   subscribeScreen,
   type ScreenPublication,
@@ -112,6 +113,7 @@ export function useVoice() {
         trackNameAudio: "",
         label: "演示画面",
         startedAt: Date.now(),
+        transport: "p2p",
       };
     }
     return null;
@@ -301,6 +303,11 @@ export function useVoice() {
       screenShare: (state) => {
         setScreenShare(state);
       },
+      screenStream: (stream, call) => {
+        // P2P 直连：观众端收到共享者的画面流（引擎已按 sessionId 对上号）
+        setSharePc((call as unknown as { peerConnection?: RTCPeerConnection }).peerConnection ?? null);
+        setShareStream(stream);
+      },
       roomFlags: (flags) => {
         setRoomLocked(flags.locked);
       },
@@ -365,6 +372,10 @@ export function useVoice() {
     // 调试假状态 / 已在订阅同一场：跳过
     if (screenShare.sessionId === "demo-local") return;
     if (shareSubRef.current) return;
+
+    // P2P 直连模式：观众被动应答共享者的画面呼叫（引擎经 screenStream 事件送流），
+    // 这里无需主动动作；只处理 SFU 模式的拉流。
+    if (screenShare.transport !== "sfu") return;
 
     let cancelled = false;
     let attemptNo = 0;
@@ -443,23 +454,32 @@ export function useVoice() {
           for (const track of stream.getTracks()) track.stop();
           return false;
         }
-        const pub = await publishScreen(stream, quality);
         const hasAudio = stream.getAudioTracks().length > 0;
-        const ok = engine.requestScreenShare({
-          sessionId: pub.sessionId,
-          trackName: TRACK_VIDEO,
-          trackNameAudio: hasAudio ? TRACK_AUDIO : "",
-          label: videoTrack.label || "屏幕共享",
-          hasAudio,
-        });
+        const transport = settings.shareTransport;
+        // SFU 模式：先向 SFU 发布并拿会话 id；P2P 模式：直接用随机会话 id（画面走直连）
+        let sessionId: string;
+        if (transport === "sfu") {
+          sessionId = (await publishScreen(stream, quality)).sessionId;
+        } else {
+          sessionId = randomSessionId();
+        }
+        const ok = engine.requestScreenShare(
+          {
+            sessionId,
+            trackName: TRACK_VIDEO,
+            trackNameAudio: hasAudio ? TRACK_AUDIO : "",
+            label: videoTrack.label || "屏幕共享",
+            hasAudio,
+            transport,
+          },
+          transport === "p2p" ? stream : undefined,
+        );
         if (!ok) {
           // 电视被占用（本地预检或房主拒绝）：回滚一切，不留半开连接
-          pub.stop();
           for (const track of stream.getTracks()) track.stop();
           setNotice({ kind: "error", text: "电视被别人占着，晚点再来" });
           return false;
         }
-        sharePubRef.current = pub;
         shareLocalStreamRef.current = stream;
         setShareStream(stream);
         // 用户在系统选择器里点了"停止共享"（或任一轨被掐断）：走正常停播流程
@@ -514,19 +534,25 @@ export function useVoice() {
     demoAutoStarted.current = true;
     void (async () => {
       try {
-        const pub = await publishScreen(demo, "fhd1080");
-        const ok = engine.requestScreenShare({
-          sessionId: pub.sessionId,
-          trackName: TRACK_VIDEO,
-          trackNameAudio: "",
-          label: "演示画面",
-          hasAudio: false,
-        });
-        if (!ok) {
-          pub.stop();
-          return;
+        const transport = settings.shareTransport;
+        let sessionId: string;
+        if (transport === "sfu") {
+          sessionId = (await publishScreen(demo, "fhd1080")).sessionId;
+        } else {
+          sessionId = randomSessionId();
         }
-        sharePubRef.current = pub;
+        const ok = engine.requestScreenShare(
+          {
+            sessionId,
+            trackName: TRACK_VIDEO,
+            trackNameAudio: "",
+            label: "演示画面",
+            hasAudio: false,
+            transport,
+          },
+          transport === "p2p" ? demo : undefined,
+        );
+        if (!ok) return;
         shareLocalStreamRef.current = demo;
         setShareStream(demo);
       } catch {
@@ -711,6 +737,13 @@ export function useVoice() {
   const setShareQuality = useCallback(
     (quality: ShareQuality) => {
       persistSettings({ ...settings, shareQuality: quality });
+    },
+    [persistSettings, settings],
+  );
+
+  const setShareTransport = useCallback(
+    (transport: "p2p" | "sfu") => {
+      persistSettings({ ...settings, shareTransport: transport });
     },
     [persistSettings, settings],
   );
@@ -1006,5 +1039,7 @@ export function useVoice() {
     stopScreenShare,
     shareQuality: settings.shareQuality,
     setShareQuality,
+    shareTransport: settings.shareTransport,
+    setShareTransport,
   };
 }

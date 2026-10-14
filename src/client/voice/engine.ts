@@ -187,6 +187,11 @@ export interface EngineEvents {
    * **与语音链路完全隔离**：这条回调的实现里绝不允许碰音频/PeerJS 媒体。
    */
   screenShare?: (state: ScreenShareState | null) => void;
+  /**
+   * 观众端收到共享者的 P2P 直连画面流（仅 P2P 模式；SFU 模式走订阅）。
+   * 实现里同样不碰音频链路，只把流交给界面。
+   */
+  screenStream?: (stream: MediaStream, call: MediaConnection) => void;
 }
 
 /** 与单个成员的媒体连接状态（供界面诊断跨网无声）。 */
@@ -599,6 +604,7 @@ export class VoiceMesh {
       }
     }
     this.calls.clear();
+    this.closeScreenCalls();
 
     for (const guest of this.guests.values()) {
       try {
@@ -843,6 +849,7 @@ export class VoiceMesh {
             trackNameAudio: pub.hasAudio ? pub.trackNameAudio : "",
             label: pub.label,
             startedAt: Date.now(),
+            transport: pub.transport,
           },
           true,
         );
@@ -966,6 +973,8 @@ export class VoiceMesh {
       this.emitSound("join", guest.member.id);
       this.events.rosterChange({ kind: "join", name: guest.member.name });
     }
+    // 中途加入的人也要看到共享：我就是共享者时，向他发起画面直连（幂等）。
+    if (this.screenShareState?.sharerId === this.myId) this.startScreenCalls();
   }
 
   private evictGuest(peerId: string, _reason: string): void {
@@ -1068,9 +1077,16 @@ export class VoiceMesh {
    * 房主侧还有一道权威互斥：并发竞态时只保留先到者，后到者会从广播里
    * 发现 sharer 不是自己，自行停止发布并退订。
    */
-  requestScreenShare(pub: ScreenSharePublication): boolean {
+  /**
+   * 申请开播（P2P 模式带画面流，SFU 模式不带）。
+   * 返回 false = 本地就知道被拒（电视已被占用 / 房间未就绪），调用方不要上行。
+   * 房主侧还有一道权威互斥：并发竞态时只保留先到者，后到者会从广播里
+   * 看到 sharer 不是自己，自行停止发布并退订。
+   */
+  requestScreenShare(pub: ScreenSharePublication, stream?: MediaStream): boolean {
     if (this.destroyed || !this.joined || !this.me) return false;
     if (this.screenShareState) return false;
+    this.screenStream = pub.transport === "p2p" ? (stream ?? null) : null;
     if (this.hosting) {
       this.applyScreenShare(
         {
@@ -1081,6 +1097,7 @@ export class VoiceMesh {
           trackNameAudio: pub.trackNameAudio,
           label: pub.label,
           startedAt: Date.now(),
+          transport: pub.transport,
         },
         true,
       );
@@ -1139,6 +1156,14 @@ export class VoiceMesh {
       }
     }
     this.events.screenShare?.(state);
+    // P2P 直连：开播确认后（自己就是共享者）向各成员发起画面直连；
+    // 停播时收线。SFU 模式没有 screenStream，不会走这里。
+    if (state && state.sharerId === this.myId && this.screenStream) {
+      this.startScreenCalls();
+    }
+    if (!state) {
+      this.closeScreenCalls();
+    }
   }
 
   /** 对某位成员发起小猪互动（戳一戳 / 打招呼 / 投喂）。 */
@@ -1576,7 +1601,12 @@ export class VoiceMesh {
 
     switch (message.t) {
       case "screen-share": {
+        const prev = this.screenShareState;
         this.screenShareState = message.state;
+        // P2P：广播确认开播后（自己就是共享者），向各成员发起画面直连；
+        // 停播（房主代停/自己申报的广播回来）时收线。
+        if (message.state?.sharerId === this.myId && !prev) this.startScreenCalls();
+        if (!message.state && prev?.sharerId === this.myId) this.closeScreenCalls();
         this.events.screenShare?.(message.state);
         break;
       }
@@ -1620,6 +1650,8 @@ export class VoiceMesh {
         }
         this.emitMembers();
         this.callPeers();
+        // 我是共享者时：名单变化（新人进圈/有人退）都要补齐画面直连（幂等）。
+        if (this.screenShareState?.sharerId === this.myId) this.startScreenCalls();
         break;
       }
       case "peer-join": {
@@ -1884,6 +1916,72 @@ export class VoiceMesh {
     return this.myId < peerId;
   }
 
+  // ---------------------------------------------------------------- P2P 屏幕直连
+
+  /** 共享者的画面流（P2P 模式下发给各成员；SFU 模式为 null）。 */
+  private screenStream: MediaStream | null = null;
+  /** P2P 屏幕呼叫（共享者 → 各成员，一人一条）。 */
+  private screenCalls = new Map<string, MediaConnection>();
+
+  /** 开播确认后（自己就是共享者）：向所有成员发起画面直连（幂等）。 */
+  private startScreenCalls(): void {
+    if (!this.screenStream || this.destroyed) return;
+    for (const member of this.members.values()) {
+      if (member.local) continue;
+      this.callScreenPeer(member.id);
+    }
+  }
+
+  private callScreenPeer(peerId: string): void {
+    if (!this.peer || !this.screenStream || this.screenCalls.has(peerId)) return;
+    // 与语音同一套 PeerJS 传输；metadata 标记让对端知道这是画面呼叫（不给流、只收）。
+    const call = this.peer.call(peerId, this.screenStream, {
+      metadata: { kind: "screen-share", sessionId: this.screenShareState?.sessionId ?? "" },
+    });
+    if (!call) return;
+    this.screenCalls.set(peerId, call);
+    call.on("close", () => {
+      if (this.screenCalls.get(peerId) === call) this.screenCalls.delete(peerId);
+    });
+  }
+
+  private closeScreenCalls(): void {
+    for (const call of this.screenCalls.values()) {
+      try {
+        call.close();
+      } catch {
+        /* noop */
+      }
+    }
+    this.screenCalls.clear();
+    this.screenStream = null;
+  }
+
+  /** 观众端：应答共享者的画面呼叫（只收不发），流经事件交给界面。 */
+  private onIncomingScreenCall(call: MediaConnection, sessionId: string): void {
+    // 过期的会话（共享者已停又快速重开的旧呼叫）直接关掉
+    if (this.screenShareState && this.screenShareState.sessionId !== sessionId) {
+      try {
+        call.close();
+      } catch {
+        /* noop */
+      }
+      return;
+    }
+    call.answer();
+    call.on("stream", (stream) => {
+      if (this.screenShareState?.sessionId !== sessionId) {
+        try {
+          call.close();
+        } catch {
+          /* noop */
+        }
+        return;
+      }
+      this.events.screenStream?.(stream, call);
+    });
+  }
+
   private callPeers(): void {
     // 与房主的媒体立即建立；访客间逐个错峰，避免信令风暴把公共云队列打爆
     // （人越多越明显：这正是"前两个人能进、后面的人卡在加入"的诱因之一）。
@@ -1909,6 +2007,12 @@ export class VoiceMesh {
   }
 
   private onIncomingCall(call: MediaConnection): void {
+    // 屏幕共享的 P2P 画面呼叫：元数据里带 kind 标记，与语音呼叫分流。
+    const meta = (call as unknown as { metadata?: { kind?: string; sessionId?: string } }).metadata;
+    if (meta?.kind === "screen-share") {
+      this.onIncomingScreenCall(call, meta.sessionId ?? "");
+      return;
+    }
     // 已有连接时不重复应答（重复 answer 会被 PeerJS 警告并丢弃）。
     if (this.calls.has(call.peer)) {
       const existing = this.calls.get(call.peer);

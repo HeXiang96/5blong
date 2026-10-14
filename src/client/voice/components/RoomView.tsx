@@ -145,6 +145,8 @@ export function RoomView({
   onStopShare,
   shareQuality,
   onSetShareQuality,
+  shareTransport,
+  onSetShareTransport,
 }: {
   status: EngineStatus;
   members: Member[];
@@ -218,6 +220,9 @@ export function RoomView({
   shareQuality: ShareQuality;
   /** 改画质档位（落盘，下次开播生效）。 */
   onSetShareQuality: (quality: ShareQuality) => void;
+  /** 屏幕共享传输方式（p2p 直连 / sfu 转发）与切换。 */
+  shareTransport: "p2p" | "sfu";
+  onSetShareTransport: (transport: "p2p" | "sfu") => void;
 }) {
   const self = members.find((member) => member.local) ?? null;
   const muted = self?.muted ?? true;
@@ -1058,6 +1063,37 @@ export function RoomView({
                 </button>
               );
             })}
+            <p className="vx-share-menu-title">
+              共享方式
+              <span className="vx-share-help" tabIndex={0} aria-label="两种共享方式的优缺点说明">
+                ?
+                <span className="vx-share-tip" role="tooltip">
+                  <b>P2P 直连（推荐）</b>：画面在成员间直接传输，不绕服务器，
+                  同网/国内延迟低、画质最好；双方网络都打不通直连时可能连不上。
+                  <br />
+                  <b>SFU 转发</b>：画面经服务器中转，连接成功率高、更稳定，
+                  但要绕一道路由，画质和流畅度受线路影响，且消耗转发流量。
+                </span>
+              </span>
+            </p>
+            <div className="vx-share-transport">
+              {(
+                [
+                  { key: "p2p", name: "P2P 直连", desc: "画质最好 · 延迟最低" },
+                  { key: "sfu", name: "SFU 转发", desc: "连接成功率兜底" },
+                ] as const
+              ).map((item) => (
+                <button
+                  key={item.key}
+                  type="button"
+                  className={`vx-share-quality${shareTransport === item.key ? " vx-share-quality-on" : ""}`}
+                  onClick={() => onSetShareTransport(item.key)}
+                >
+                  <strong>{item.name}</strong>
+                  <span>{item.desc}</span>
+                </button>
+              ))}
+            </div>
             <button
               type="button"
               className="vx-btn vx-btn-small vx-btn-primary vx-share-start"
@@ -1068,7 +1104,7 @@ export function RoomView({
             >
               选择窗口开始共享
             </button>
-            <p className="vx-share-menu-hint">全房间同看一台电视，同一时间一人共享</p>
+            <p className="vx-share-menu-hint">全房间同看一块幕布，同一时间一人共享</p>
           </div>
         ) : null}
 

@@ -108,6 +108,7 @@ function Fixture() {
             trackNameAudio: "",
             label: "回归演示画面",
             startedAt: Date.now(),
+            transport: "p2p",
           }
         : null,
     shareStream: null,
@@ -115,6 +116,8 @@ function Fixture() {
     onStopShare: () => record("share-stop"),
     shareQuality: "fhd1080",
     onSetShareQuality: (quality) => record("share-quality", quality),
+    shareTransport: "p2p" as const,
+    onSetShareTransport: (transport) => record("share-transport", transport),
   };
   return <RoomView {...props} />;
 }
