@@ -83,7 +83,8 @@ mod imp {
                 true,
             )
             .map_err(|e| e.to_string())?;
-        let h_event = audio_client.set_get_eventhandle().map_err(|e| e.to_string())?;
+        // 事件句柄仍需设置（initialize 时带了 EVENTCALLBACK 标志），但我们改为轮询读取
+        let _h_event = audio_client.set_get_eventhandle().map_err(|e| e.to_string())?;
         let capture = audio_client.get_audiocaptureclient().map_err(|e| e.to_string())?;
         audio_client.start_stream().map_err(|e| e.to_string())?;
 
@@ -93,9 +94,23 @@ mod imp {
         let mut pcm: Vec<i16> = Vec::with_capacity(CHUNK_FRAMES * 2);
 
         while !stop.load(Ordering::SeqCst) {
-            capture
-                .read_from_device_to_deque(blockalign, &mut queue)
-                .map_err(|e| e.to_string())?;
+            // ⚠️ **先确认有包、才读**。无数据时 GetBuffer 会返回 0 帧 + 空指针，
+            // wasapi 0.14 的 read_from_device_to_deque 对此不设防（api.rs 直接
+            // slice::from_raw_parts）——真机探针实测：启动初期/静音期直接 panic，
+            // 采集线程无声死亡 → "共享正常但没有声音"。
+            // get_next_nbr_frames() 返回 None = 没有可用包，此时只等待不读。
+            match capture.get_next_nbr_frames().map_err(|e| e.to_string())? {
+                Some(frames) if frames > 0 => {
+                    capture
+                        .read_from_device_to_deque(blockalign, &mut queue)
+                        .map_err(|e| e.to_string())?;
+                }
+                _ => {
+                    // 没有可用包（静音期回环不产生包、也不触发事件）：
+                    // 短轮询等待，不依赖事件——静音转有声、设备切换都能自然恢复
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+            }
             while queue.len() >= chunk_bytes {
                 let mut chunk = Vec::with_capacity(chunk_bytes);
                 for _ in 0..chunk_bytes {
@@ -114,13 +129,10 @@ mod imp {
                     return Ok(());
                 }
             }
-            // 静音期不会有回环事件，这里按 20ms 超时轮询一次（顺便检查停止标志）
-            let _ = h_event.wait_for_event(200_000);
         }
         let _ = audio_client.stop_stream();
         Ok(())
     }
-
     /// 启动回环采集（重复调用会先停掉旧的）。返回前端建 AudioContext 所需参数。
     #[tauri::command]
     pub fn start_loopback_capture(
@@ -143,13 +155,28 @@ mod imp {
         let handle = std::thread::Builder::new()
             .name("loopback-capture".into())
             .spawn(move || {
-                if let Err(err) = capture_loop(thread_stop, on_chunk, thread_app.clone()) {
-                    log::warn!("[loopback] 采集线程异常退出：{err}");
-                    let _ = thread_app.emit(
-                        "loopback:error",
-                        format!("系统声音采集中断（画面不受影响）：{err}"),
-                    );
-                }
+                // catch_unwind：wasapi 内部还有别的坑时（见 wait/read 的注释），
+                // panic 不能无声吞掉采集线程——必须把原因发到页面给用户看。
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    capture_loop(thread_stop.clone(), on_chunk.clone(), thread_app.clone())
+                }));
+                let err = match result {
+                    Ok(Ok(())) => return,
+                    Ok(Err(err)) => err,
+                    Err(panic) => {
+                        let detail = panic
+                            .downcast_ref::<&str>()
+                            .map(|s| (*s).to_string())
+                            .or_else(|| panic.downcast_ref::<String>().cloned())
+                            .unwrap_or_else(|| "未知原因（采集库内部 panic）".into());
+                        format!("内置采集线程异常终止：{detail}")
+                    }
+                };
+                log::warn!("[loopback] {err}");
+                let _ = thread_app.emit(
+                    "loopback:error",
+                    format!("系统声音采集中断（画面不受影响）：{err}"),
+                );
             })
             .map_err(|e| format!("无法启动采集线程：{e}"))?;
         *state.worker.lock().unwrap() = Some(LoopbackWorker {

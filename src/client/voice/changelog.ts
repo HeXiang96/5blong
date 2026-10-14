@@ -20,6 +20,15 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.4.7",
+    date: "2026-10-14",
+    lines: [
+      "修：客户端系统声音不出声",
+      "网页端失败不再连弹两框",
+      "失败提示更明确可读",
+    ],
+  },
+  {
     version: "1.4.6",
     date: "2026-10-14",
     lines: [

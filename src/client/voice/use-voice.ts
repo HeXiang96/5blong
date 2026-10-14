@@ -498,37 +498,39 @@ export function useVoice() {
          * 勾不勾由用户定；差别在客户端——**勾了但浏览器拿不到声音时**（死音轨 /
          * 采集被拒），自动改用内置 WASAPI 回环采集补上，保证"勾了就一定有声"，
          * 且不受播放设备（7.1/虚拟声卡）限制。网页版没有兜底，走提示。
-         * 系统声音建不起来时 Chromium 可能直接拒绝整个采集（NotReadableError），
-         * 这时退一步：不带声音重采一次（用户需再选一次共享源），客户端再补声音。
+         * 注意：系统声音建不起来时 Chromium 可能**直接拒绝整个采集**
+         * （NotReadableError），也可能给一条死音轨——两种形态都要处理。
+         * 采集被拒不自动重采（连弹两次选择器会把人整懵，业主实测反馈）：
+         * 把话说清楚后返回；客户端记住这次失败，下次共享自动跳过浏览器音频、
+         * 由内置采集补上（见 audioRejectedRef）。
          */
-        let systemAudioBroken = false;
+        const skipBrowserAudio = isTauriRuntime() && audioRejectedRef.current;
         try {
           stream = await navigator.mediaDevices.getDisplayMedia({
             video: shareVideoConstraints(quality),
-            audio: true,
-            ...(pickerHints(true) as Record<string, never>),
+            audio: !skipBrowserAudio,
+            ...(pickerHints(!skipBrowserAudio) as Record<string, never>),
           } as DisplayMediaStreamOptions);
-        } catch (firstError) {
+        } catch (error) {
           // 用户取消选择器：不算故障，静默返回
-          if ((firstError as DOMException)?.name === "NotAllowedError") return false;
-          console.warn("[screen-share] 带声音的采集失败，改试纯画面：", firstError);
-          setNotice({
-            kind: "info",
-            sticky: true,
-            text: "系统声音采集失败（设备原因）——请再选一次要共享的屏幕，这次不带声音",
-          });
-          try {
-            stream = await navigator.mediaDevices.getDisplayMedia({
-              video: shareVideoConstraints(quality),
-              audio: false,
-              ...(pickerHints(false) as Record<string, never>),
-            } as DisplayMediaStreamOptions);
-            systemAudioBroken = true;
-          } catch (retryError) {
-            if ((retryError as DOMException)?.name === "NotAllowedError") return false;
-            console.warn("[screen-share] 纯画面采集也失败：", retryError);
-            throw retryError; // 交给统一错误提示（会带上错误名）
+          if ((error as DOMException)?.name === "NotAllowedError") return false;
+          console.warn("[screen-share] 采集失败：", error);
+          const errorName = (error as DOMException)?.name || "未知错误";
+          if (isTauriRuntime()) {
+            audioRejectedRef.current = true;
+            setNotice({
+              kind: "error",
+              sticky: true,
+              text: `系统声音采集失败（${errorName}），本次共享已取消。请再点一次「共享」——这次会跳过浏览器声音，由客户端内置采集自动补上`,
+            });
+          } else {
+            setNotice({
+              kind: "error",
+              sticky: true,
+              text: `系统声音采集失败（${errorName}），本次共享已取消。两个办法：重新点「共享」且不勾「使用系统音频共享」；或改用桌面客户端共享（内置采集，不受设备限制，首页可下载）`,
+            });
           }
+          return false;
         }
         const videoTrack = stream.getVideoTracks()[0];
         if (!videoTrack) {
@@ -552,20 +554,24 @@ export function useVoice() {
           }
         }
         let hasAudio = stream.getAudioTracks().length > 0;
-        // "用户要了系统声音但浏览器没给上"的两种形态：死音轨 / 采集直接被拒。
+        // "用户要了系统声音但浏览器没给上"的形态：死音轨（采集被拒走上面的分支）。
         // 注意：用户**没勾**开关时（正常解析、无音轨、无报错）不算这里——尊重选择。
-        const systemAudioUnavailable = audioDied || systemAudioBroken;
+        const systemAudioUnavailable = audioDied;
         /*
-         * 客户端兜底：勾了系统声音但浏览器没给上（死轨/被拒）时，走内置 WASAPI
-         * 回环采集——保证"勾了就一定有声"，且不受播放设备（7.1/虚拟声卡）限制。
+         * 客户端兜底：勾了系统声音但浏览器没给上（死音轨），或上次采集被拒
+         * （audioRejectedRef，本次已跳过浏览器音频）时，走内置 WASAPI 回环采集
+         * ——保证"勾了就一定有声"，且不受播放设备（7.1/虚拟声卡）限制。
          * 网页版没有这条路：systemAudioUnavailable 时走下面的提示。
          */
         let viaNativeAudio = false;
-        if (!hasAudio && systemAudioUnavailable && isTauriRuntime()) {
-          let nativeError = "";
+        if (
+          !hasAudio &&
+          isTauriRuntime() &&
+          (systemAudioUnavailable || audioRejectedRef.current)
+        ) {
           try {
             const native = await startLoopbackAudio((message) =>
-              setNotice({ kind: "info", text: message }),
+              setNotice({ kind: "error", sticky: true, text: message }),
             );
             stream.addTrack(native.track);
             nativeLoopbackStopRef.current = native.stop;
@@ -573,13 +579,10 @@ export function useVoice() {
             viaNativeAudio = true;
           } catch (error) {
             console.warn("[screen-share] 内置系统声音采集失败：", error);
-            nativeError = "客户端内置系统声音采集失败（画面不受影响）";
-          }
-          if (nativeError) {
             setNotice({
               kind: "info",
               sticky: true,
-              text: `${nativeError}；可把 Windows 默认播放设备换成普通立体声扬声器后重试`,
+              text: `${error instanceof Error ? error.message : "内置系统声音采集失败"}；已只共享画面，可把 Windows 默认播放设备换成普通立体声扬声器后重试`,
             });
           }
         }
@@ -776,6 +779,8 @@ export function useVoice() {
   stopScreenShareRef.current = stopScreenShare;
   /** 客户端内置系统声音采集的清理（停播/画面被掐断时一并停）。 */
   const nativeLoopbackStopRef = useRef<(() => void) | null>(null);
+  /** 本次会话里"浏览器系统声音采集被拒"的记录：下次共享直接跳过浏览器音频。 */
+  const audioRejectedRef = useRef(false);
   /** 本次共享的开始时刻（判断"刚启动就被中断"用）。 */
   const shareStartedAtRef = useRef(0);
 

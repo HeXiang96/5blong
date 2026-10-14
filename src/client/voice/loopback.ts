@@ -11,10 +11,19 @@
  *
  * 链路：Rust（回环 8ch→2ch/48k，i16）→ Channel（base64 字符串）
  *       → 解码成 Float32 → AudioWorklet 队列 → 目的地节点 → MediaStreamTrack
+ *
+ * 可靠性约定（2026-10-14 实测教训）：
+ * - **启动必须等到第一块 PCM 才算成功**（4 秒超时判失败）——否则"共享正常
+ *   但没声音"这种哑故障没法暴露（wasapi crate 在无包时读取会 panic，
+ *   采集线程无声死亡，Rust 侧已改为有包才读 + panic 上报）。
+ * - AudioContext 若被 autoplay 策略挂起要显式 resume。
  */
 
 /** Rust 侧固定 48000（见 src-tauri/src/loopback.rs），这里保持一致。 */
 const CAPTURE_SAMPLE_RATE = 48_000;
+
+/** 等第一块 PCM 的时限。超过即判定采集链路不通。 */
+const FIRST_CHUNK_TIMEOUT_MS = 4_000;
 
 /**
  * AudioWorklet 源码（Blob URL 注入，免得为 40 行代码加一个构建入口）。
@@ -100,6 +109,14 @@ export async function startLoopbackAudio(
   } finally {
     URL.revokeObjectURL(workletUrl);
   }
+  // autoplay 策略可能把上下文挂起：挂起状态下游节点永远静音
+  if (ctx.state === "suspended") {
+    try {
+      await ctx.resume();
+    } catch {
+      /* 恢复失败由下面的健康检查兜底 */
+    }
+  }
   const node = new AudioWorkletNode(ctx, "loopback-player", {
     numberOfOutputs: 1,
     outputChannelCount: [2],
@@ -108,9 +125,17 @@ export async function startLoopbackAudio(
   node.connect(destination);
 
   let nodeReady = true;
+  let chunkCount = 0;
+  let signalFirstChunk: (() => void) | null = null;
+  const firstChunk = new Promise<void>((resolve) => {
+    signalFirstChunk = resolve;
+  });
   const channel = new Channel<string>();
   channel.onmessage = (payload) => {
     if (!nodeReady) return;
+    chunkCount += 1;
+    signalFirstChunk?.();
+    signalFirstChunk = null;
     // base64 → 字节 → i16 交错立体声 → f32
     const raw = atob(payload);
     const bytes = new Uint8Array(raw.length);
@@ -122,20 +147,33 @@ export async function startLoopbackAudio(
     node.port.postMessage({ type: "chunk", samples }, [samples.buffer]);
   };
 
+  const cleanup = async (): Promise<void> => {
+    unlistenLost?.();
+    try {
+      await invoke("stop_loopback_capture");
+    } catch {
+      /* 停止失败不阻塞调用方 */
+    }
+    try {
+      track?.stop();
+    } catch {
+      /* noop */
+    }
+    void ctx.close().catch(() => {});
+  };
+
   const info = await invoke<{ sampleRate: number; channels: number }>("start_loopback_capture", {
     onChunk: channel,
   });
   if (info.sampleRate !== ctx.sampleRate) {
     // Rust 侧固定 48k，正常不会走到；防御性处理：格式对不上直接判失败
-    await invoke("stop_loopback_capture");
-    ctx.close().catch(() => {});
+    await cleanup();
     throw new Error(`采样率不匹配（采集 ${info.sampleRate}，图 ${ctx.sampleRate}）`);
   }
 
   const [track] = destination.stream.getAudioTracks();
   if (!track) {
-    await invoke("stop_loopback_capture");
-    void ctx.close().catch(() => {});
+    await cleanup();
     throw new Error("音频图没有产出音轨");
   }
 
@@ -148,19 +186,26 @@ export async function startLoopbackAudio(
     } catch {
       /* 音频图可能已关 */
     }
-    unlistenLost?.();
-    try {
-      await invoke("stop_loopback_capture");
-    } catch {
-      /* 停止失败不阻塞停播 */
-    }
-    try {
-      track.stop();
-    } catch {
-      /* noop */
-    }
-    void ctx.close().catch(() => {});
+    await cleanup();
   };
+
+  // **等到第一块 PCM 才算启动成功**：链路任何一环断了（Rust 线程死亡、
+  // Channel 不通、worklet 静音）都会在这里现形，而不是变成哑故障
+  const timeout = new Promise<never>((_, reject) => {
+    window.setTimeout(() => {
+      reject(
+        new Error(
+          `内置采集 4 秒内没有产出音频数据（收到 ${chunkCount} 块）——已按无声音处理`,
+        ),
+      );
+    }, FIRST_CHUNK_TIMEOUT_MS);
+  });
+  try {
+    await Promise.race([firstChunk, timeout]);
+  } catch (error) {
+    await cleanup();
+    throw error;
+  }
 
   return { track, stop };
 }
