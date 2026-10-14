@@ -365,8 +365,18 @@ async function subscribeScreenInner(
   // 所有收到的轨并进同一个 MediaStream：<video> 一个 srcObject 全搞定
   // （视频轨渲染画面、音频轨经元素出声——用户在放大层里控制音量）。
   const stream = new MediaStream();
+  // 抖动缓冲拉满（规范上限 4000ms）：跨境链路的晚包/突发抖动在缓冲里排队
+  // 再解码，牺牲 4 秒延迟换画面平滑——"围炉看屏"场景延迟不敏感。
+  // （注意：这只治"抖"，持续带宽不足仍需降清晰度/帧率来匹配网络。）
   pc.ontrack = (event) => {
     stream.addTrack(event.track);
+    if (event.receiver) {
+      try {
+        event.receiver.jitterBufferTarget = 4000;
+      } catch {
+        /* 个别实现不支持时忽略 */
+      }
+    }
   };
 
   const session = await postJson("/sessions/new", null);
