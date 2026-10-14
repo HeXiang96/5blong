@@ -20,6 +20,16 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.3.0",
+    date: "2026-10-14",
+    lines: [
+      "共享屏幕更清晰：不再一开局就糊成马赛克",
+      "传输默认自动：人少直连、人多自动中转",
+      "优先显卡硬件编码，画质更稳、CPU 更省",
+      "网络抖动自动缓冲，断线自动重连恢复",
+    ],
+  },
+  {
     // bump 自动插入（发版时保证首条 = 本次版本）；内容按需补充，留空 = 公告栏展示上一条有内容版本
     version: "1.2.1",
     date: "2026-10-14",
