@@ -268,6 +268,8 @@ Chromium 用 `MediaFoundationUseSWBRCForH264Desktop` 让自带码率控制器接
 <!-- AUTO-LOG:START -->
 ### 近期提交（自动生成）
 
+- `127cc49` docs: README 补「共享屏幕优化」专题（根因/改动清单/验收/红线）供后续维护者与 AI 阅读（10-14 18:06）
+- `d455f0b` perf(screen-share): 共享屏幕全面优化——P2P 下发码率/抖动分级/硬编择优/传输自动/simulcast/断线自愈（10-14 18:04）
 - `9d6bbab` release: v1.2.1（10-14 13:56）
 - `2708fc2` docs: SCREENSHARE-PLAN 更新为 P2P 优先 + SFU 兜底双模式架构（10-14 13:56）
 - `8a9d123` feat: 屏幕共享传输架构升级——P2P 直连为默认（复用语音 PeerJS 通道），SFU 转发保留为可选项；共享菜单加方式选择与 ? 悬停优缺点说明（10-14 13:53）
@@ -275,7 +277,6 @@ Chromium 用 `MediaFoundationUseSWBRCForH264Desktop` 让自带码率控制器接
 - `b61530d` perf: 灯箱打开时暂停小幕布解码（省一路 1080p）+ 灯箱实时链路数据条（分辨率/帧率/码率/编码器）（10-14 13:22）
 - `3b094ed` release: v1.2.0（共享屏幕带系统声音 + 点幕布调音量）（10-14 13:15）
 - `58f9ec0` docs: 主页客户端推荐文案注明网页端共享画质受浏览器后台降帧限制（10-14 13:10）
-- `94682a2` fix: 移除 Pages 发布登记表（isolate 不一致误杀观众 403→雪花）+ 观众订阅退避重试自愈（10-14 13:08）
 <!-- AUTO-LOG:END -->
 
 ## 怎么用
