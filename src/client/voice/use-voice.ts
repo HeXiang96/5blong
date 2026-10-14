@@ -20,6 +20,8 @@ import {
   debugTvDemoFrom,
   debugTvFrom,
   pickerHints,
+  preferredRidFor,
+  probeHardwareEncoders,
   publishScreen,
   randomSessionId,
   shareVideoConstraints,
@@ -28,7 +30,7 @@ import {
   type ScreenSubscription,
   type ShareQuality,
 } from "./screen-share";
-import type { ScreenShareState } from "./protocol";
+import type { ScreenViewPreference } from "./protocol";
 
 /**
  * 提示条停留多久（毫秒）。
@@ -46,6 +48,7 @@ import {
   type InteractKind,
   type Invite,
   type JoinTarget,
+  type ScreenShareState,
 } from "./protocol";
 import { refreshIceServers } from "./ice";
 import { loadSettings, saveSettings, type VoiceSettings } from "./settings";
@@ -128,6 +131,8 @@ export function useVoice() {
 
   const sharePubRef = useRef<ScreenPublication | null>(null);
   const shareSubRef = useRef<ScreenSubscription | null>(null);
+  /** 当前订阅所用的画质偏好（变化时才重订阅）。 */
+  const shareSubModeRef = useRef<ScreenViewPreference>("auto");
   /** 共享者本机采集的流（自己电视的播放源；订阅流供其他端用）。 */
   const shareLocalStreamRef = useRef<MediaStream | null>(null);
   /** 最新成员数：开播时据此决定 P2P 还是 SFU（避免闭包里的陈旧值）。 */
@@ -141,6 +146,7 @@ export function useVoice() {
     sharePubRef.current = null;
     shareSubRef.current?.stop();
     shareSubRef.current = null;
+    shareSubModeRef.current = "auto";
     setSharePc(null);
     for (const track of shareLocalStreamRef.current?.getTracks() ?? []) track.stop();
     shareLocalStreamRef.current = null;
@@ -379,7 +385,13 @@ export function useVoice() {
     }
     // 调试假状态 / 已在订阅同一场：跳过
     if (screenShare.sessionId === "demo-local") return;
-    if (shareSubRef.current) return;
+    if (shareSubRef.current) {
+      // 画质偏好变了（SFU 模式）：偏好映射成订阅层，需要重新订阅；
+      // 其它情况下保持不变（避免因成员数变化反复重订阅）。
+      if (shareSubModeRef.current === settings.shareViewMode) return;
+      shareSubRef.current.stop();
+      shareSubRef.current = null;
+    }
 
     // P2P 直连模式：观众被动应答共享者的画面呼叫（引擎经 screenStream 事件送流），
     // 这里无需主动动作；只处理 SFU 模式的拉流。
@@ -393,15 +405,20 @@ export function useVoice() {
     const attempt = () => {
       const trackNames = [TRACK_VIDEO];
       if (screenShare.trackNameAudio) trackNames.push(TRACK_AUDIO);
-      // 共享者用了 simulcast 就按层订阅（默认最高层、带宽不足自动退层）；
+      // 共享者用了 simulcast 就按层订阅：优先层由本机偏好决定
+      // （清晰优先 = f 满档、流畅优先 = h 半档），带宽不足时 SFU 自动退层。
       // 没标 simulcast 的老房主按单档订阅，行为与以前一致。
-      void subscribeScreen(screenShare.sessionId, trackNames, { simulcast: screenShare.simulcast === true })
+      void subscribeScreen(screenShare.sessionId, trackNames, {
+        simulcast: screenShare.simulcast === true,
+        preferredRid: preferredRidFor(settings.shareViewMode),
+      })
         .then((sub) => {
           if (cancelled) {
             sub.stop();
             return;
           }
           shareSubRef.current = sub;
+          shareSubModeRef.current = settings.shareViewMode;
           setSharePc(sub.pc);
           setShareStream(sub.stream);
         })
@@ -424,7 +441,7 @@ export function useVoice() {
       window.clearTimeout(retryTimer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [screenShare, members.length]);
+  }, [screenShare, members.length, settings.shareViewMode]);
 
   /** 共享者本机：采集流变化时同步给电视（开播瞬间先有画面）。 */
   useEffect(() => {
@@ -490,6 +507,15 @@ export function useVoice() {
         const decision = autoTransportFor(settings.shareTransport, memberCountRef.current);
         let transport = decision.transport;
         stepNoticeShown.current = false;
+        /*
+         * AV1 的**双端判断**：本机有 AV1 硬编，且房间里每一位观众都报了 AV1 硬解
+         * （hello/名册里的 av1Decode），才允许把 AV1 提到 H.264 之前。
+         * 只要有一位观众得软解 1080p60，对他是灾难（AV1 软解比 H.264 还重）。
+         * 单人共享（没有别人）时按本机能力放开。
+         */
+        const probe = await probeHardwareEncoders(quality);
+        const everyViewerAv1 = members.every((member) => member.local || member.av1Decode === true);
+        const preferAv1 = probe.av1 && everyViewerAv1;
         // SFU 模式：先向 SFU 发布并拿会话 id；P2P 模式：直接用随机会话 id（画面走直连）
         let sessionId: string;
         let simulcast = false;
@@ -498,15 +524,16 @@ export function useVoice() {
           try {
             const pub = await publishScreen(stream, {
               quality,
+              preferAv1,
               // simulcast：一条轨编 3 档，SFU 按每个观众的网络挑层（P1-12）。
               // 发布失败会自动回落单档；整条 SFU 发布再失败则退回 P2P（见下）。
               simulcast: true,
-              onStep: (step) => {
+              onStep: (point) => {
                 if (stepNoticeShown.current) return;
                 stepNoticeShown.current = true;
                 setNotice({
                   kind: "info",
-                  text: `网络吃紧，画质已自动降到 ${RESOLUTION_LADDER_LABEL[step] ?? "更低档"} 继续直播`,
+                  text: `网络吃紧，画质已自动降到 ${RESOLUTION_LADDER_LABEL[point.step] ?? "更低档"} · ${point.fps}fps 继续直播`,
                 });
               },
             });
@@ -536,6 +563,8 @@ export function useVoice() {
             label: videoTrack.label || "屏幕共享",
             hasAudio,
             transport,
+            // 订阅端据此把"实收分辨率"换算成订阅层（f/h/q）显示在灯箱上
+            quality,
             ...(simulcast ? { simulcast: true } : {}),
           },
           transport === "p2p" ? stream : undefined,
@@ -586,8 +615,9 @@ export function useVoice() {
         return false;
       }
     },
-    // settings 必须在依赖里：菜单里刚改完"共享方式"就点开始，闭包得拿到新值
-    [screenShare, settings],
+    // settings 必须在依赖里：菜单里刚改完"共享方式"就点开始，闭包得拿到新值；
+    // members 用于 AV1 双端判断（每位观众是否都支持 AV1 硬解）。
+    [screenShare, settings, members],
   );
 
   /** 停播：通知房主 + 停 SFU 发布 + 停采集。订阅侧由副作用自动清理。 */
@@ -644,6 +674,7 @@ export function useVoice() {
             label: "演示画面",
             hasAudio: false,
             transport,
+            quality: "fhd1080",
             ...(simulcast ? { simulcast: true } : {}),
           },
           transport === "p2p" ? demo : undefined,
@@ -855,6 +886,21 @@ export function useVoice() {
   const setShareTransport = useCallback(
     (transport: "p2p" | "sfu" | "auto") => {
       persistSettings({ ...settings, shareTransport: transport });
+    },
+    [persistSettings, settings],
+  );
+
+  /**
+   * 观众端切换画质偏好（自动 / 清晰优先 / 流畅优先）。
+   *
+   * 三条落点：① 落盘（下次进房还用这个偏好）；② 告诉引擎——P2P 模式下由它
+   * 经房主转达给共享者、只影响本机这一路发送链；③ SFU 模式下订阅副作用会
+   * 因为偏好变化自动重订阅到对应层（见 shareViewMode 的依赖）。
+   */
+  const setShareViewMode = useCallback(
+    (mode: ScreenViewPreference) => {
+      persistSettings({ ...settings, shareViewMode: mode });
+      engineRef.current?.setScreenViewPreference(mode);
     },
     [persistSettings, settings],
   );
@@ -1152,5 +1198,7 @@ export function useVoice() {
     setShareQuality,
     shareTransport: settings.shareTransport,
     setShareTransport,
+    shareViewMode: settings.shareViewMode,
+    setShareViewMode,
   };
 }

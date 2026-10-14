@@ -290,6 +290,10 @@ async function syncProjectEnv(token, account, project, required = false) {
 // ------------------------------------------------------------------- 主流程
 
 async function main() {
+  // 注意：这两个路径在下面的部署表单阶段（main 尾部）还要用，
+  // 声明必须留在 main() 函数作用域，不能挪进 if 块（const 是块级作用域，踩过坑）。
+  const workerSource = path.join(root, "worker", "_worker.pages.js");
+  const workerTarget = path.join(directory, "_worker.js");
   if (!envOnly) {
     if (!existsSync(directory) || !existsSync(path.join(directory, "index.html"))) {
       throw new Error(`${directory} 不像是构建产物（缺少 index.html），请先构建`);
@@ -298,8 +302,6 @@ async function main() {
     // 屏幕共享同域接口：把 worker/_worker.pages.js 作为 _worker.js 附到部署里
     // （Pages 高级模式；非 /sfu 请求回落静态资源）。**始终覆盖**——
     // dist-deploy 会被复用，残留的旧 _worker.js 会把新修复顶掉（踩过坑）。
-    const workerSource = path.join(root, "worker", "_worker.pages.js");
-    const workerTarget = path.join(directory, "_worker.js");
     if (existsSync(workerSource)) {
       const { copyFileSync } = await import("node:fs");
       copyFileSync(workerSource, workerTarget);

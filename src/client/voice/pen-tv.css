@@ -633,6 +633,16 @@ html[data-daypart="night"] .vx-proj-beam {
   padding: 10px 14px;
 }
 .vx-tv-bigfoot .vx-range { flex: 0 1 220px; }
+/* 观众的画质开关（自动 / 清晰优先 / 流畅优先）：一组小胶囊按钮 */
+.vx-tv-viewmode {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.vx-tv-viewmode .vx-menu-btn {
+  font-size: 12px;
+  padding: 4px 10px;
+}
 /* 实时链路数据条（发送端/接收端共用）：等宽数字，读数不跳行 */
 .vx-tv-stats {
   flex: 0 1 auto;

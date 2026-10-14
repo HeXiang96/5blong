@@ -67,7 +67,7 @@ import { PigActor, PenFrame, PenScatter, useElementSize, ENTRY_TOTAL_MS } from "
 import { NpcVisitor, PenPropsLayer, type PenPropEntry } from "./PenProps";
 import { Campfire, PenTV, PenTvLightbox } from "./PenTV";
 import { NPC_NAME, feetViewportPx, phaseForActor, tvSlotFor } from "../pen";
-import type { ScreenShareState } from "../protocol";
+import type { ScreenShareState, ScreenViewPreference } from "../protocol";
 import type { ShareQuality } from "../settings";
 import pigJoinUrl from "../assets/pig-join.webp?url";
 import pigHoistUrl from "../assets/pig-hoist.webp?url";
@@ -147,6 +147,8 @@ export function RoomView({
   onSetShareQuality,
   shareTransport,
   onSetShareTransport,
+  shareViewMode,
+  onSetShareViewMode,
 }: {
   status: EngineStatus;
   members: Member[];
@@ -223,6 +225,9 @@ export function RoomView({
   /** 屏幕共享传输方式（auto 自动 / p2p 直连 / sfu 转发）与切换。 */
   shareTransport: "p2p" | "sfu" | "auto";
   onSetShareTransport: (transport: "p2p" | "sfu" | "auto") => void;
+  /** 观众端画质偏好（自动 / 清晰优先 / 流畅优先）与切换。 */
+  shareViewMode: ScreenViewPreference;
+  onSetShareViewMode: (mode: ScreenViewPreference) => void;
 }) {
   const self = members.find((member) => member.local) ?? null;
   const muted = self?.muted ?? true;
@@ -870,6 +875,9 @@ export function RoomView({
             stream={shareStream}
             pc={sharePc}
             sharerName={displayNames.get(screenShare.sharerId) ?? "成员"}
+            viewMode={shareViewMode}
+            onViewMode={onSetShareViewMode}
+            isSharer={selfSharing}
             onClose={() => setTvExpanded(false)}
           />
         ) : null}

@@ -536,3 +536,83 @@ describe("isJoinInFlight（进房进行中的判定）", () => {
     }
   });
 });
+
+describe("观众画质偏好与 AV1 能力（1.4.1 新增）", () => {
+  it("guest → host 的 screen-pref：三种取值都通过，非法值丢弃", () => {
+    expect(parseGuestMessage({ t: "screen-pref", mode: "detail" })).toEqual({
+      t: "screen-pref",
+      mode: "detail",
+    });
+    expect(parseGuestMessage({ t: "screen-pref", mode: "motion" })).toEqual({
+      t: "screen-pref",
+      mode: "motion",
+    });
+    expect(parseGuestMessage({ t: "screen-pref", mode: "auto" })).toEqual({
+      t: "screen-pref",
+      mode: "auto",
+    });
+    expect(parseGuestMessage({ t: "screen-pref", mode: "hd" })).toBeNull();
+    expect(parseGuestMessage({ t: "screen-pref" })).toBeNull();
+  });
+
+  it("host → 共享者 的 screen-pref：必须带 from，非法值丢弃", () => {
+    expect(parseHostMessage({ t: "screen-pref", from: "5b-g-a", mode: "motion" })).toEqual({
+      t: "screen-pref",
+      from: "5b-g-a",
+      mode: "motion",
+    });
+    expect(parseHostMessage({ t: "screen-pref", from: "", mode: "motion" })).toBeNull();
+    expect(parseHostMessage({ t: "screen-pref", from: "5b-g-a", mode: "nope" })).toBeNull();
+  });
+
+  it("hello 里的 av1Decode：true 才带（缺省即不支持）", () => {
+    const base = { t: "hello", nonce: "n", proof: "p", name: "甲", color: "#fff" };
+    const withAv1 = parseGuestMessage({ ...base, av1Decode: true });
+    expect(withAv1?.t === "hello" && withAv1.av1Decode).toBe(true);
+    const without = parseGuestMessage({ ...base });
+    expect(without?.t === "hello" && "av1Decode" in without).toBe(false);
+  });
+
+  it("名册成员透传 av1Decode（双端判断的输入）", () => {
+    const parsed = parseHostMessage({
+      t: "roster",
+      members: [
+        { id: "a", name: "甲", av1Decode: true },
+        { id: "b", name: "乙" },
+      ],
+    });
+    expect(parsed?.t).toBe("roster");
+    if (parsed?.t === "roster") {
+      expect(parsed.members[0]?.av1Decode).toBe(true);
+      expect(parsed.members[1]?.av1Decode).toBeUndefined();
+    }
+  });
+
+  it("共享状态与申报里的 quality 会被保留（订阅层显示用）", () => {
+    const state = parseHostMessage({
+      t: "screen-share",
+      state: {
+        active: true,
+        sharerId: "a",
+        sessionId: "s",
+        trackName: "screen",
+        startedAt: 1,
+        quality: "fhd1080",
+      },
+    });
+    expect(state?.t === "screen-share" && state.state?.quality).toBe("fhd1080");
+
+    const pub = parseGuestMessage({
+      t: "screen-share-start",
+      session: { sessionId: "s", trackName: "screen", quality: "hd720" },
+    });
+    expect(pub?.t === "screen-share-start" && pub.session.quality).toBe("hd720");
+
+    // 非法档位不凭空造字段
+    const bogus = parseGuestMessage({
+      t: "screen-share-start",
+      session: { sessionId: "s", trackName: "screen", quality: "8k" },
+    });
+    expect(bogus?.t === "screen-share-start" && "quality" in bogus.session).toBe(false);
+  });
+});

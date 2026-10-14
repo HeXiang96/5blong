@@ -88,9 +88,86 @@ export const SHARE_QUALITY_PRESETS: Record<ShareQuality, ShareQualityPreset> = {
  * 转发，保留大缓冲换平滑（这类场景延迟不敏感）。
  */
 export const JITTER_BUFFER_MS = {
-  p2p: 600,
+  /** P2P 的**上限**（详见 JITTER_ADAPTIVE_MS：实际取值在 150~1200ms 间自适应）。 */
+  p2p: 1200,
   sfu: 3000,
 } as const;
+
+/**
+ * P2P 抖动缓冲的自适应区间（ms）。
+ *
+ * 固定的 600ms 是个折中值：同城直连嫌大（白等半秒、围炉对不上嘴），
+ * 跨城/移动网络又可能不够（一抖就卡顿）。改成按**实测抖动**动态取值：
+ * 目标 ≈ 4 × 抖动，夹在 150~1200ms 之间（见 `jitterBufferTargetFor`）。
+ * SFU 是跨境转发、延迟不敏感，仍用固定的 `JITTER_BUFFER_MS.sfu` 换平滑。
+ */
+export const JITTER_ADAPTIVE_MS = { min: 150, max: 1200, interval: 2500 } as const;
+
+/**
+ * 由实测抖动（秒）算抖动缓冲目标（ms）。纯函数，便于把取值边界钉在单测里。
+ *
+ * 取 4 倍抖动：缓冲只要盖住"抖动的峰-峰波动"即可，官方 W3C 示例也是这个量级；
+ * 拿不到抖动读数（0/NaN）时取**下限**——宁可让画面更跟手。
+ */
+export function jitterBufferTargetFor(
+  jitterSeconds: number,
+  min: number = JITTER_ADAPTIVE_MS.min,
+  max: number = JITTER_ADAPTIVE_MS.max,
+): number {
+  if (!Number.isFinite(jitterSeconds) || jitterSeconds <= 0) return min;
+  const target = Math.round(jitterSeconds * 1000 * 4);
+  return Math.min(max, Math.max(min, target));
+}
+
+/**
+ * 给接收端挂"自适应抖动缓冲"：每 `interval` 毫秒读一次 inbound-rtp 的实测 jitter，
+ * 换算成目标值下发到所有 receiver。返回停止函数（连接关闭时调用）。
+ *
+ * 只作用于**接收方向**（P2P 观众端、以及共享者本机看不到的 SFU 链路不用它）。
+ */
+export function createJitterBufferTuner(
+  pc: RTCPeerConnection,
+  options: { minMs?: number; maxMs?: number; intervalMs?: number } = {},
+): () => void {
+  const minMs = options.minMs ?? JITTER_ADAPTIVE_MS.min;
+  const maxMs = options.maxMs ?? JITTER_ADAPTIVE_MS.max;
+  let stopped = false;
+
+  const apply = (targetMs: number) => {
+    if (stopped) return;
+    for (const receiver of pc.getReceivers()) {
+      try {
+        receiver.jitterBufferTarget = targetMs;
+      } catch {
+        /* 个别实现不支持时忽略 */
+      }
+    }
+  };
+
+  const tick = async () => {
+    if (stopped || pc.connectionState === "closed") return;
+    let jitter = 0;
+    try {
+      const stats = await pc.getStats();
+      stats.forEach((report) => {
+        if (report.type === "inbound-rtp" && (report as { kind?: string }).kind === "video") {
+          const value = (report as { jitter?: number }).jitter;
+          if (typeof value === "number" && value > jitter) jitter = value;
+        }
+      });
+    } catch {
+      return; // 连接关闭后的取数失败
+    }
+    apply(jitterBufferTargetFor(jitter, minMs, maxMs));
+  };
+
+  apply(minMs);
+  const timer = window.setInterval(() => void tick(), options.intervalMs ?? JITTER_ADAPTIVE_MS.interval);
+  return () => {
+    stopped = true;
+    window.clearInterval(timer);
+  };
+}
 
 /**
  * P2P 模式下"每路画面"的码率上限。
@@ -117,6 +194,136 @@ export const RESOLUTION_LADDER = [1, 1.5, 2, 2.85] as const;
 
 /** 阶梯档位的可读标签（界面提示用）。 */
 export const RESOLUTION_LADDER_LABEL = ["原始", "720p", "540p", "380p"] as const;
+
+// ---------------------------------------------------------------------------
+// 降档策略：帧率阶梯 + 观众偏好（清晰优先 / 流畅优先）
+// ---------------------------------------------------------------------------
+
+/**
+ * 帧率阶梯（fps）。
+ *
+ * 屏幕内容多半是**准静态**的（文档、PPT、代码、桌面），30 帧在阅读时几乎无感，
+ * 所以链路吃紧时应当**先让帧率、后让分辨率**——省下的码率全留给清晰度，
+ * 比"1080p 满屏马赛克"耐看得多（这也是 B站 ABR 的选择）。
+ */
+export const FPS_LADDER = [60, 45, 30, 24] as const;
+
+/** 观众端画质偏好：自动 / 清晰优先 / 流畅优先。 */
+export type ScreenViewPreference = "auto" | "detail" | "motion";
+
+/** 一个降档档位：分辨率阶梯下标 + 目标帧率。 */
+export interface TunePoint {
+  /** `RESOLUTION_LADDER` 下标（0 = 原分辨率）。 */
+  step: number;
+  fps: number;
+}
+
+/**
+ * 由"观众偏好"生成**降档序列**（索引 0 = 最好，越大越省）。
+ *
+ * 三种策略（都从"原分辨率 + 最高帧率"出发）：
+ * - `auto`：帧率先让到 30（60→45→30），再逐档降分辨率，最后帧率再让到 24；
+ * - `detail`：先保清晰——帧率一路让到 24，再降分辨率；
+ * - `motion`：先保帧率——分辨率逐档降到底，帧率只让到 30（不再往下）。
+ *
+ * 抽成纯函数：降档顺序是"画质观感"的核心策略，必须能用单测钉住，
+ * 不能散落在定时器回调里靠肉眼验证。
+ */
+export function tuneLadder(preference: ScreenViewPreference, maxFps: number): TunePoint[] {
+  const cap = Number.isFinite(maxFps) && maxFps > 0 ? Math.round(maxFps) : 60;
+  const rungs = [...new Set([...FPS_LADDER.filter((fps) => fps < cap), cap])].sort((a, b) => b - a);
+  const best = rungs[0]!;
+  const worst = rungs[rungs.length - 1]!;
+  const last = RESOLUTION_LADDER.length - 1;
+  const points: TunePoint[] = [];
+  if (preference === "motion") {
+    // 保帧率：分辨率逐档降到底，帧率最低只让到 30
+    for (let step = 0; step <= last; step += 1) points.push({ step, fps: best });
+    for (const fps of rungs) if (fps < best && fps >= 30) points.push({ step: last, fps });
+  } else if (preference === "detail") {
+    // 保清晰：帧率先让到最低，再降分辨率
+    for (const fps of rungs) points.push({ step: 0, fps });
+    for (let step = 1; step <= last; step += 1) points.push({ step, fps: worst });
+  } else {
+    // 自动：帧率先让到 30（阅读无感的区间），再降分辨率，最后帧率让到最低
+    const floor = rungs.filter((fps) => fps >= 30);
+    const mid = floor[floor.length - 1] ?? best;
+    for (const fps of floor) points.push({ step: 0, fps });
+    for (let step = 1; step <= last; step += 1) points.push({ step, fps: mid });
+    if (worst < mid) points.push({ step: last, fps: worst });
+  }
+  // 去掉连续重复点（例如档位少的组合），保证每一步都真的变了什么
+  return points.filter(
+    (point, index) =>
+      index === 0 || point.step !== points[index - 1]!.step || point.fps !== points[index - 1]!.fps,
+  );
+}
+
+/** 在阶梯里找与目标档位最接近的下标（切换偏好时保持大致画质，避免跳变）。 */
+export function nearestLadderIndex(ladder: TunePoint[], point: TunePoint): number {
+  let bestIndex = 0;
+  let bestScore = Number.POSITIVE_INFINITY;
+  for (const [index, candidate] of ladder.entries()) {
+    const score = Math.abs(candidate.step - point.step) * 1000 + Math.abs(candidate.fps - point.fps);
+    if (score < bestScore) {
+      bestScore = score;
+      bestIndex = index;
+    }
+  }
+  return bestIndex;
+}
+
+/**
+ * SFU simulcast 三档（f/h/q）的码率分配（bps）。
+ *
+ * 原实现是"逐层减半"（8M → 4M → 2M）——问题出在 **q 层**：它被缩到 1/4 分辨率，
+ * 2 Mbps 却仍按"够大"的路数让 SFU 在上面放大 4 倍，观众端看到的就是马赛克。
+ * 改成按"层该有的像素量"配：f = 档位上限、h ≈ f×31%（上限 2.5M）、q ≈ h/3（上限 800k）。
+ * 1080p 档即 8M / 2.48M / 800k，与直播平台的层配比一致。
+ */
+export function simulcastLayerBitrates(baseBitrate: number): { f: number; h: number; q: number } {
+  const f = Math.max(150_000, Math.round(baseBitrate));
+  const h = Math.max(150_000, Math.min(2_500_000, Math.round(f * 0.31)));
+  const q = Math.max(120_000, Math.min(800_000, Math.round(h / 3)));
+  return { f, h, q };
+}
+
+/**
+ * 观众端"当前订阅到哪一层"的可读标签：用发布档位高度 ÷ 实际收到高度 估算层号
+ * （f=1×、h=2×、q=4×）。偏差过大时返回 null（不猜、不误导）。
+ */
+export function simulcastLayerLabel(sourceHeight: number, receivedHeight: number): string | null {
+  if (!(sourceHeight > 0) || !(receivedHeight > 0)) return null;
+  const ratio = sourceHeight / receivedHeight;
+  const layers: readonly (readonly [number, string])[] = [
+    [1, "f 满档"],
+    [2, "h 半档"],
+    [4, "q 省流"],
+  ];
+  let best = layers[0]!;
+  for (const layer of layers) {
+    if (Math.abs(layer[0] - ratio) < Math.abs(best[0] - ratio)) best = layer;
+  }
+  return Math.abs(best[0] - ratio) > best[0] * 0.35 ? null : best[1];
+}
+
+/**
+ * 把多位观众的偏好聚合成轨道的 `contentHint`：**只要有一位要"流畅优先"就按
+ * motion 走**。轨道只有一个 hint，不能逐人不同；宁可让"清晰优先"那位掉几帧，
+ * 也不要让"流畅优先"那位卡住（卡顿的观感损失更大，且对方是明确提过要求的人）。
+ */
+export function screenHintFor(prefs: Iterable<ScreenViewPreference>): "motion" | "detail" {
+  for (const pref of prefs) if (pref === "motion") return "motion";
+  return "detail";
+}
+
+/**
+ * 观众偏好 → SFU 订阅层：清晰优先/自动都取满档 f，流畅优先退半档 h。
+ * （q 档只有 1/4 分辨率，文字会糊，不作为观众主动选择的目标。）
+ */
+export function preferredRidFor(pref: ScreenViewPreference): "f" | "h" {
+  return pref === "motion" ? "h" : "f";
+}
 
 /**
  * P2P / SFU 传输方式的自动选择（SCREENSHARE-PERF-PLAN §P1-11）。
@@ -199,13 +406,18 @@ export async function applyScreenSenderParams(
         const params = sender.getParameters();
         if (!params.encodings || params.encodings.length === 0) params.encodings = [{}];
         if (params.encodings.length > 1) {
-          // simulcast 发布：逐层分配码率（层按 rid 顺序 f > h > q，逐层减半）；
+          // simulcast 发布：逐层分配码率（层按 rid 顺序 f > h > q）。
           // 保留各层原有的 scaleResolutionDownBy / rid——那是发布时按 rid 定好的
           // 层结构，在这里改掉会把"多档"变成"三档一样大"。
+          const tiers = simulcastLayerBitrates(baseBitrate);
+          const byRid: Record<string, number> = { f: tiers.f, h: tiers.h, q: tiers.q };
           params.encodings = params.encodings.map((encoding, index) => ({
             ...encoding,
-            maxBitrate: Math.round(baseBitrate / 2 ** index),
+            maxBitrate: byRid[encoding.rid ?? ""] ?? (index === 0 ? tiers.f : index === 1 ? tiers.h : tiers.q),
             maxFramerate: framerate,
+            // 语音永远优先于画面：全屏共享（8 Mbps 上行）与语音抢带宽时，
+            // 先牺牲画面的清晰度/帧率，绝不让语音断续（P0-6）。
+            priority: "low",
           }));
         } else {
           params.encodings[0] = {
@@ -213,6 +425,7 @@ export async function applyScreenSenderParams(
             maxBitrate: baseBitrate,
             maxFramerate: framerate,
             scaleResolutionDownBy: scale,
+            priority: "low",
           };
         }
         return sender.setParameters(params);
@@ -513,20 +726,64 @@ const CAPACITY_FLOOR = 0.6;
 export interface ScreenSenderTunerOptions {
   /** 码率上限（P2P 分摊后的值；缺省取档位值）。 */
   maxBitrate?: number;
-  /** 起始阶梯档（0 = 原始分辨率）。 */
+  /** 起始阶梯档（0 = 原始分辨率）。仅当没有档位记忆时生效。 */
   startStep?: number;
   /** 是否 simulcast 发布（多档编码时不做"总码率偏低"的推断）。 */
   simulcast?: boolean;
+  /** 观众偏好（决定降档顺序，见 tuneLadder）。缺省 auto。 */
+  preference?: ScreenViewPreference;
+  /**
+   * 档位记忆：把当前档位写进 localStorage，下次开播/重连**从上次的档位起步**
+   * （而不是每次从 1080p 重新爬），坏链路因此不用再花 ~18 秒才收敛。
+   */
+  memory?: boolean;
   /** 档位变化回调（界面可提示"已自动降到 720p"）。 */
-  onStep?: (step: number, reason: string) => void;
+  onStep?: (point: TunePoint, reason: string) => void;
 }
 
 export interface ScreenSenderTuner {
   stop: () => void;
-  /** 码率上限变化（观众数增减）时重新下发，**保持当前阶梯档**。 */
+  /** 码率上限变化（观众数增减）时重新下发，**保持当前档位**。 */
   retune: (maxBitrate?: number) => void;
+  /** 切换观众偏好：按"最接近当前观感"的档位续走，不跳变。 */
+  setPreference: (preference: ScreenViewPreference) => void;
   step: () => number;
+  fps: () => number;
   applied: () => number;
+}
+
+/** 档位记忆的存储键（与 settings/theme 同一命名空间）。 */
+const TUNE_MEMORY_KEY = "5blong:v1:screen-tune";
+
+interface TuneMemory {
+  quality: ShareQuality;
+  preference: ScreenViewPreference;
+  point: TunePoint;
+}
+
+function readTuneMemory(quality: ShareQuality, preference: ScreenViewPreference): TunePoint | null {
+  try {
+    const raw = localStorage.getItem(TUNE_MEMORY_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<TuneMemory>;
+    if (parsed.quality !== quality || parsed.preference !== preference) return null;
+    const point = parsed.point;
+    if (!point || typeof point.step !== "number" || typeof point.fps !== "number") return null;
+    return { step: point.step, fps: point.fps };
+  } catch {
+    return null;
+  }
+}
+
+function writeTuneMemory(quality: ShareQuality, preference: ScreenViewPreference, point: TunePoint): void {
+  try {
+    localStorage.setItem(
+      TUNE_MEMORY_KEY,
+      JSON.stringify({ quality, preference, point } satisfies TuneMemory),
+    );
+  } catch {
+    /* 存不下也不影响本次生效 */
+  }
 }
 
 /**
@@ -582,7 +839,8 @@ export function createScreenSenderTuner(
   options: ScreenSenderTunerOptions = {},
 ): ScreenSenderTuner {
   const preset = SHARE_QUALITY_PRESETS[quality];
-  let step = Math.min(Math.max(0, options.startStep ?? 0), RESOLUTION_LADDER.length - 1);
+  let preference: ScreenViewPreference = options.preference ?? "auto";
+  let ladder = tuneLadder(preference, preset.fps);
   let baseBitrate = options.maxBitrate;
   let strikes = 0;
   let healthy = 0;
@@ -590,17 +848,31 @@ export function createScreenSenderTuner(
   let applications = 0;
   let prev: RateSample | null = null;
 
+  // 档位记忆：上次同一档位/偏好停在哪儿，就从哪儿起步（坏链路不用再爬 18 秒）
+  const remembered = options.memory === true ? readTuneMemory(quality, preference) : null;
+  const startStep = Math.min(Math.max(0, options.startStep ?? 0), RESOLUTION_LADDER.length - 1);
+  const startIndex = Math.max(
+    0,
+    ladder.findIndex((item) => item.step >= startStep),
+  );
+  let index = remembered ? nearestLadderIndex(ladder, remembered) : startIndex;
+
+  const point = (): TunePoint => ladder[index] ?? { step: 0, fps: preset.fps };
+
   const apply = () => {
     if (stopped || pc.connectionState === "closed") return;
-    const scale = RESOLUTION_LADDER[step]!;
+    const current = point();
     void applyScreenSenderParams(pc, quality, {
       maxBitrate: baseBitrate,
-      scaleResolutionDownBy: scale,
-      // 降到 540p 及以下还带不动 60 帧，多半是 CPU/带宽双重吃紧：帧率也让一步
-      maxFramerate: step >= 2 ? Math.min(30, preset.fps) : preset.fps,
+      scaleResolutionDownBy: RESOLUTION_LADDER[current.step]!,
+      maxFramerate: current.fps,
     }).then((ok) => {
       if (ok) applications += 1;
     });
+  };
+
+  const remember = () => {
+    if (options.memory === true) writeTuneMemory(quality, preference, point());
   };
 
   const tick = async () => {
@@ -621,25 +893,28 @@ export function createScreenSenderTuner(
     if (screenLinkStrained(summary, baseBitrate ?? 0, options.simulcast === true)) {
       healthy = 0;
       strikes += 1;
-      if (strikes >= LIMIT_STRIKES && step < RESOLUTION_LADDER.length - 1) {
-        step += 1;
+      if (strikes >= LIMIT_STRIKES && index < ladder.length - 1) {
+        index += 1;
         strikes = 0;
         apply();
-        options.onStep?.(step, summary.limitation === "cpu" ? "cpu" : "bandwidth");
+        remember();
+        options.onStep?.(point(), summary.limitation === "cpu" ? "cpu" : "bandwidth");
       }
       return;
     }
     strikes = 0;
     healthy += 1;
-    if (healthy >= RECOVER_SAMPLES && step > 0) {
-      step -= 1;
+    if (healthy >= RECOVER_SAMPLES && index > 0) {
+      index -= 1;
       healthy = 0;
       apply();
-      options.onStep?.(step, "recover");
+      remember();
+      options.onStep?.(point(), "recover");
     }
   };
 
   apply();
+  remember();
   const timer = window.setInterval(() => void tick(), TUNE_INTERVAL_MS);
   return {
     stop: () => {
@@ -650,7 +925,19 @@ export function createScreenSenderTuner(
       if (typeof maxBitrate === "number") baseBitrate = maxBitrate;
       apply();
     },
-    step: () => step,
+    setPreference: (next: ScreenViewPreference) => {
+      if (next === preference) return;
+      const current = point();
+      preference = next;
+      ladder = tuneLadder(preference, preset.fps);
+      index = nearestLadderIndex(ladder, current);
+      strikes = 0;
+      healthy = 0;
+      apply();
+      remember();
+    },
+    step: () => point().step,
+    fps: () => point().fps,
     applied: () => applications,
   };
 }
@@ -754,11 +1041,27 @@ export interface HardwareCodecProbe {
   h264: boolean;
   /** 有 AV1 硬件编码单元（RTX 40+ / Intel Arc / M3+ / RDNA3）——只有它才能把 AV1 提前。 */
   av1: boolean;
+  /** 有 H.264 硬件**解码**单元（观众端能不能轻松解 1080p60）。 */
+  decH264: boolean;
+  /**
+   * 有 AV1 硬件**解码**单元。
+   *
+   * 双端判断的依据：AV1 的收益（同码率画质高约 30%）建立在本机硬件编码 +
+   * **每个观众都能硬件解码**之上；只要有一位观众得软解 1080p60，对他是灾难
+   * （软解 AV1 比软解 H.264 还重）。所以发端只有在"所有观众都报了 AV1 硬解"时才启用。
+   */
+  decAv1: boolean;
   /** 预检是否真的跑过（浏览器没有 WebCodecs 时为 false，一律按"未探到"处理）。 */
   checked: boolean;
 }
 
-const NO_PROBE: HardwareCodecProbe = { h264: false, av1: false, checked: false };
+const NO_PROBE: HardwareCodecProbe = {
+  h264: false,
+  av1: false,
+  decH264: false,
+  decAv1: false,
+  checked: false,
+};
 
 /** 预检结果按会话缓存（同一台机器同一个浏览器，结果不会变）。 */
 let probeCache: Promise<HardwareCodecProbe> | null = null;
@@ -787,7 +1090,7 @@ export function probeHardwareEncoders(quality: ShareQuality): Promise<HardwareCo
     const isConfigSupported = (Encoder as { isConfigSupported?: (config: unknown) => Promise<VideoEncoderSupportResult> })
       ?.isConfigSupported;
     if (typeof isConfigSupported !== "function") return NO_PROBE;
-    const ask = async (codec: string): Promise<boolean> => {
+    const askEncoder = async (codec: string): Promise<boolean> => {
       try {
         const result = await isConfigSupported.call(Encoder, {
           codec,
@@ -802,8 +1105,33 @@ export function probeHardwareEncoders(quality: ShareQuality): Promise<HardwareCo
         return false;
       }
     };
-    const [h264, av1] = await Promise.all([ask("avc1.640028"), ask("av01.0.08M.08")]);
-    return { h264, av1, checked: true };
+    // 解码侧也问一遍（观众端才有意义的读数）：发端据此决定能不能上 AV1，
+    // 观众端把它报给房主/共享者（见 hello / roster 里的 av1 字段）。
+    const Decoder = (globalThis as { VideoDecoder?: { isConfigSupported?: unknown } }).VideoDecoder;
+    const decodeIsConfigSupported = (
+      Decoder as { isConfigSupported?: (config: unknown) => Promise<VideoEncoderSupportResult> }
+    )?.isConfigSupported;
+    const askDecoder = async (codec: string): Promise<boolean> => {
+      if (typeof decodeIsConfigSupported !== "function") return false;
+      try {
+        const result = await decodeIsConfigSupported.call(Decoder, {
+          codec,
+          codedWidth: preset.width,
+          codedHeight: preset.height,
+          hardwareAcceleration: "require-hardware",
+        });
+        return result?.supported === true;
+      } catch {
+        return false;
+      }
+    };
+    const [h264, av1, decH264, decAv1] = await Promise.all([
+      askEncoder("avc1.640028"),
+      askEncoder("av01.0.08M.08"),
+      askDecoder("avc1.640028"),
+      askDecoder("av01.0.08M.08"),
+    ]);
+    return { h264, av1, decH264, decAv1, checked: true };
   })();
   return probeCache;
 }
@@ -825,65 +1153,186 @@ export function resetHardwareProbeCache(): void {
 function setPreferredVideoCodecs(transceiver: RTCRtpTransceiver, preferAv1 = false): void {
   const caps = RTCRtpSender.getCapabilities("video");
   if (!caps || caps.codecs.length === 0) return;
-  const score = (mimeType: string): number => {
-    switch (mimeType.toLowerCase()) {
+  /** 只用到这两个字段（lib 里 RTCRtpCodecCapability 的别名不一定存在）。 */
+  type CodecCap = { mimeType: string; sdpFmtpLine?: string };
+  const score = (codec: CodecCap): number => {
+    switch (codec.mimeType.toLowerCase()) {
       case "video/h264":
-        return preferAv1 ? 1 : 0;
+        return preferAv1 ? 10 : 0;
       case "video/av1":
-        return preferAv1 ? 0 : 1;
+        return preferAv1 ? 0 : 10;
       case "video/vp9":
-        return 2;
+        return 20;
       case "video/vp8":
-        return 3;
+        return 30;
       default:
-        return 9; // rtx/red/flexfec 等辅助载荷保持原序靠后
+        return 90; // rtx/red/flexfec 等辅助载荷保持靠后
     }
   };
   try {
-    transceiver.setCodecPreferences([...caps.codecs].sort((a, b) => score(a.mimeType) - score(b.mimeType)));
+    transceiver.setCodecPreferences(
+      [...caps.codecs].sort(
+        (a, b) =>
+          score(a) - score(b) ||
+          // 同一编码内：H.264 的 High Profile 优先（见 h264ProfileRank 的说明）
+          (score(a) === 0 ? h264ProfileRank(b.sdpFmtpLine ?? "") - h264ProfileRank(a.sdpFmtpLine ?? "") : 0),
+      ),
+    );
   } catch {
     /* 忽略：回落浏览器默认编解码器 */
   }
 }
 
 /**
- * P2P 画面链路的 SDP 改写：把 `m=video` 里的 **H.264 载荷类型提到最前**。
+ * H.264 `profile-level-id` 的档位打分（High > Main > Baseline）。
+ *
+ * 为什么要在同编码里挑 profile：Baseline 是**软编的典型产物**（OpenH264 只会出
+ * Baseline），而硬件编码单元在支持时可以直接出 High/Main——High 有 CABAC 与
+ * 8×8 变换，**同码率下文字边缘更干净**（Discord 用的就是这个手法）。
+ * 把 High 排前，既提升画质，又能顺带把"硬编"钓出来；Baseline 仍在列表里兜底，
+ * 不会因为对端不支持 High 而协商失败。
+ */
+export function h264ProfileRank(sdpFmtpLine: string): number {
+  const match = /profile-level-id=([0-9a-fA-F]{6})/.exec(sdpFmtpLine ?? "");
+  if (!match) return 0;
+  const profile = Number.parseInt(match[1]!.slice(0, 2), 16);
+  if (profile === 0x64) return 3; // High
+  if (profile === 0x4d) return 2; // Main
+  if (profile === 0x42) return 1; // Baseline / Constrained Baseline
+  return 0;
+}
+
+/**
+ * 把 SDP 的 `m=video` 里**指定编码的载荷类型提到最前**（P2P 链路用）。
  *
  * 为什么必须这么做（这是"P2P 也糊"的直接原因之一）：
  * PeerJS 自己创建 RTCPeerConnection、自己出 offer，我们**没有机会**在协商前调用
  * `setCodecPreferences`（那条路只有 SFU 的 `publishScreen` 走得到）。而浏览器默认的
  * `m=video` 顺序是 **VP8 在前** → P2P 画面协商到 VP8，**软件编码**；
  * 1080p60 下 VP8 软编 CPU 吃紧，编码器只能疯狂降质量 → 观众看到的就是"糊"。
- * 把 H264 提到首位后，对端（Chrome / Edge / Safari 都支持 H264）会协商到
- * **硬件编码**，同样的码率下画面干净得多。
+ *
+ * H.264 内部再按 profile 排序（High 优先）；AV1 只在本机与**观众端都**探到
+ * 硬件编解码时才被提前（见 `probeHardwareEncoders` 与引擎里的双端判断）。
  *
  * PeerJS 恰好留了一个口子：`peer.call(id, stream, { sdpTransform })` 会被
  * `Negotiator._makeOffer` 在 `createOffer` 之后、`setLocalDescription` 之前调用
  * （已读 peerjs 1.5.5 的 bundler.mjs:837 核对）。这里只重排顺序，不改任何语义。
  */
-export function preferH264Sdp(sdp: string): string {
+export function preferCodecSdp(sdp: string, codec: "h264" | "av1"): string {
   if (!sdp) return sdp;
   const eol = sdp.includes("\r\n") ? "\r\n" : "\n";
   const lines = sdp.split(eol);
   const codecOf = new Map<string, string>(); // 载荷类型 → 编码名（小写）
+  const fmtpOf = new Map<string, string>();
   for (const line of lines) {
-    const match = /^a=rtpmap:(\d+)\s+([^/\s]+)/.exec(line);
-    if (match) codecOf.set(match[1]!, match[2]!.toLowerCase());
+    const rtpmap = /^a=rtpmap:(\d+)\s+([^/\s]+)/.exec(line);
+    if (rtpmap) codecOf.set(rtpmap[1]!, rtpmap[2]!.toLowerCase());
+    const fmtp = /^a=fmtp:(\d+)\s+(.*)$/.exec(line);
+    if (fmtp) fmtpOf.set(fmtp[1]!, fmtp[2]!);
   }
-  const isH264 = (pt: string): boolean => codecOf.get(pt) === "h264";
+  // 打分：目标编码 ≥ 1（H.264 内部再按 profile 细排），其余 0 保持原序
+  const rankOf = (pt: string): number => {
+    if (codecOf.get(pt) !== codec) return 0;
+    return codec === "h264" ? 1 + h264ProfileRank(fmtpOf.get(pt) ?? "") / 10 : 1;
+  };
   let changed = false;
   const out = lines.map((line) => {
     if (!line.startsWith("m=video")) return line;
     const fields = line.split(" ");
     if (fields.length <= 3) return line;
     const payloads = fields.slice(3);
-    // Array.prototype.sort 是稳定排序：H264 整体前移，其余保持浏览器给的原序
-    const ordered = [...payloads].sort((a, b) => Number(isH264(b)) - Number(isH264(a)));
+    // Array.prototype.sort 是稳定排序：目标编码整体前移，其余保持浏览器给的原序
+    const ordered = [...payloads].sort((a, b) => rankOf(b) - rankOf(a));
     if (ordered.join(" ") === payloads.join(" ")) return line;
     changed = true;
     return [...fields.slice(0, 3), ...ordered].join(" ");
   });
   return changed ? out.join(eol) : sdp;
+}
+
+/** 兼容入口：P2P 画面链路把协商拉回 H.264。 */
+export function preferH264Sdp(sdp: string): string {
+  return preferCodecSdp(sdp, "h264");
+}
+
+/**
+ * 在 SDP 的 `m=video` 里注入 `x-google-start-bitrate`（跳开"开局爬坡"）。
+ *
+ * 现象：Chrome 的发送端起始码率只有几百 kbps，需要 5~10 秒才爬到目标码率——
+ * 观众看到的就是"刚开播几秒糊得看不清"。显式声明起始码率后，编码器直接
+ * 从高档起步（同一条流的总量不变，只是把爬坡那段省掉）。
+ *
+ * 只动 `m=video` 段里**真正的编码**（rtx/red/ulpfec/flexfec 跳过）；
+ * 已有 fmtp 行的追加、没有的补一条；已含该键时原样返回（幂等）。
+ */
+export function injectStartBitrate(sdp: string, kbps: number): string {
+  if (!sdp || !(kbps > 0)) return sdp;
+  const value = Math.round(kbps);
+  const KEY = "x-google-start-bitrate";
+  const eol = sdp.includes("\r\n") ? "\r\n" : "\n";
+  const lines = sdp.split(eol);
+  const helpers = new Set(["rtx", "red", "ulpfec", "flexfec"]);
+  const videoPts = new Set<string>();
+  const hasFmtp = new Set<string>();
+  const hasKey = new Set<string>();
+  let inVideo = false;
+  for (const line of lines) {
+    if (line.startsWith("m=")) {
+      inVideo = line.startsWith("m=video");
+      continue;
+    }
+    if (!inVideo) continue;
+    const rtpmap = /^a=rtpmap:(\d+)\s+([^/\s]+)/.exec(line);
+    if (rtpmap && !helpers.has(rtpmap[2]!.toLowerCase())) videoPts.add(rtpmap[1]!);
+    const fmtp = /^a=fmtp:(\d+)\s+(.*)$/.exec(line);
+    if (fmtp && videoPts.has(fmtp[1]!)) {
+      hasFmtp.add(fmtp[1]!);
+      if (fmtp[2]!.includes(KEY)) hasKey.add(fmtp[1]!);
+    }
+  }
+  if (videoPts.size === 0) return sdp;
+
+  const out: string[] = [];
+  let changed = false;
+  inVideo = false;
+  for (const line of lines) {
+    if (line.startsWith("m=")) {
+      inVideo = line.startsWith("m=video");
+      out.push(line);
+      continue;
+    }
+    if (!inVideo) {
+      out.push(line);
+      continue;
+    }
+    const fmtp = /^a=fmtp:(\d+)\s+(.*)$/.exec(line);
+    if (fmtp && videoPts.has(fmtp[1]!) && !hasKey.has(fmtp[1]!)) {
+      out.push(`${line};${KEY}=${value}`);
+      changed = true;
+      continue;
+    }
+    out.push(line);
+    const rtpmap = /^a=rtpmap:(\d+)\s+([^/\s]+)/.exec(line);
+    if (rtpmap && videoPts.has(rtpmap[1]!) && !hasFmtp.has(rtpmap[1]!)) {
+      out.push(`a=fmtp:${rtpmap[1]} ${KEY}=${value}`);
+      changed = true;
+    }
+  }
+  return changed ? out.join(eol) : sdp;
+}
+
+/**
+ * P2P 画面 offer 的统一改写：编码优先（H.264 High / 或双端硬编时的 AV1）
+ * + 起始码率（跳过开局爬坡）。
+ */
+export function boostScreenOfferSdp(
+  sdp: string,
+  options: { codec?: "h264" | "av1"; startBitrateKbps?: number } = {},
+): string {
+  const preferred = preferCodecSdp(sdp, options.codec ?? "h264");
+  return options.startBitrateKbps && options.startBitrateKbps > 0
+    ? injectStartBitrate(preferred, options.startBitrateKbps)
+    : preferred;
 }
 
 /** 画质档位与发送参数（P2P / SFU 两条链路共用同一套档位定义）。 */
@@ -906,8 +1355,18 @@ export interface PublishScreenOptions {
    * 发布失败会自动回落单档重试（老 SFU / 意外情况都能出画面）。
    */
   simulcast?: boolean;
-  /** 档位变化提示（自适应降分辨率时回调，界面可显示"已自动降到 720p"）。 */
-  onStep?: (step: number, reason: string) => void;
+  /**
+   * 是否允许把 AV1 提到 H.264 之前（默认 false = 一律 H.264）。
+   *
+   * 必须由调用方做**双端判断**（本机有 AV1 硬编 + 所有观众都报了 AV1 硬解，
+   * 见 use-voice 里的 preferAv1 计算）：只要有一位观众得软解 1080p60，
+   * 对他是灾难，宁可用 H.264。
+   */
+  preferAv1?: boolean;
+  /** 起始码率（kbps）；缺省按档位上限的 75% 起步，跳过编码器的开局爬坡。 */
+  startBitrateKbps?: number;
+  /** 档位变化提示（自适应降档时回调，界面可显示"已自动降到 720p"）。 */
+  onStep?: (point: TunePoint, reason: string) => void;
 }
 
 /**
@@ -949,7 +1408,7 @@ async function publishScreenOnce(
   if (!videoTrack && !audioTrack) throw new Error("没有可发布的媒体轨");
   const useSimulcast = options.simulcast === true;
   if (videoTrack) {
-    // 有硬件编码才允许把 AV1 提到 H.264 之前（P1-10）；预检结果进程内缓存
+    // AV1 只在"本机有硬编 **且** 调用方确认所有观众都能硬解"时才提前（双端判断，P1-10）
     const probe = await probeHardwareEncoders(quality);
     const transceiver = pc.addTransceiver(videoTrack, {
       direction: "sendonly",
@@ -963,12 +1422,19 @@ async function publishScreenOnce(
           }
         : {}),
     });
-    setPreferredVideoCodecs(transceiver, probe.av1);
+    setPreferredVideoCodecs(transceiver, options.preferAv1 === true && probe.av1);
   }
   if (audioTrack) pc.addTransceiver(audioTrack, { direction: "sendonly" });
 
+  // 跳过开局爬坡：Chrome 的起始码率只有几百 kbps，要爬 5~10 秒才到目标，
+  // 观众看到的就是"刚开播几秒糊"。显式给个起始值，编码器直接高档起步。
   const offer = await pc.createOffer();
-  await pc.setLocalDescription(offer);
+  const startKbps =
+    options.startBitrateKbps ?? Math.round((SHARE_QUALITY_PRESETS[quality].maxBitrate * 0.75) / 1000);
+  const boostedSdp = injectStartBitrate(offer.sdp ?? "", startKbps);
+  await pc.setLocalDescription(
+    boostedSdp === offer.sdp ? offer : { type: offer.type, sdp: boostedSdp },
+  );
 
   // ICE 候选收集与 SFU 会话创建互不依赖：并行发起，省掉一次串行往返（~1s）。
   const [, session] = await Promise.all([gatherIce(pc), postJson("/sessions/new", null)]);

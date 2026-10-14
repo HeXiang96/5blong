@@ -169,6 +169,8 @@ export function App() {
         onSetShareQuality={voice.setShareQuality}
         shareTransport={voice.shareTransport}
         onSetShareTransport={voice.setShareTransport}
+        shareViewMode={voice.shareViewMode}
+        onSetShareViewMode={voice.setShareViewMode}
       />
       {settingsOverRoom ? (
         <div className="vx-overlay-layer">

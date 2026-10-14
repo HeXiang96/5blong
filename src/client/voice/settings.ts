@@ -36,6 +36,16 @@ export interface VoiceSettings {
    */
   shareTransport: "p2p" | "sfu" | "auto";
   /**
+   * 观众端画质偏好（**看别人共享时**生效）：
+   * - `"auto"`（默认）：跟随共享者的自动调节；
+   * - `"detail"` 清晰优先：宁可掉帧也要文字清楚（看文档/代码/PPT）；
+   * - `"motion"` 流畅优先：宁可变糊也要跟得上（看游戏/视频）。
+   *
+   * P2P 下经房主转达给共享者、只影响本机这一路发送链；SFU 下映射成订阅层
+   * （清晰 = f 满档、流畅 = h 半档），切换时会重新订阅。
+   */
+  shareViewMode: "auto" | "detail" | "motion";
+  /**
    * 设置结构版本（用于迁移）。
    * v2 起把"传输方式"的缺省从 p2p 改成 auto——旧配置里的 p2p 是当年的**默认值**
    * 而不是用户主动选择，所以无版本号时按 auto 迁移；用户之后手动选过就保留。
@@ -88,6 +98,7 @@ export function defaultSettings(): VoiceSettings {
     peerMuted: {},
     shareQuality: "fhd1080",
     shareTransport: "auto",
+    shareViewMode: "auto",
     settingsVersion: 2,
   };
 }
@@ -126,6 +137,11 @@ export function loadSettings(): VoiceSettings {
           ? "sfu"
           : "auto",
     settingsVersion: 2,
+    // 观众端画质偏好：存量配置没有该字段时走默认"自动"
+    shareViewMode:
+      stored.shareViewMode === "detail" || stored.shareViewMode === "motion"
+        ? stored.shareViewMode
+        : "auto",
     processing: {
       echoCancellation: processing.echoCancellation !== false,
       noiseSuppression: processing.noiseSuppression !== false,

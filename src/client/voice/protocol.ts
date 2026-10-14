@@ -390,6 +390,13 @@ export function parseInteractEvent(input: unknown): InteractEvent | null {
  * 设计约束（见 SCREENSHARE-PLAN.md §H）：这是**房间状态上的一个可空字段**，
  * 成员表与语音链路完全不读也不写它——共享链路崩了只表现为"电视雪花"。
  */
+/** 观众端画质偏好：`auto` 自动 / `detail` 清晰优先 / `motion` 流畅优先。 */
+export type ScreenViewPreference = "auto" | "detail" | "motion";
+
+export function isScreenViewPreference(value: unknown): value is ScreenViewPreference {
+  return value === "auto" || value === "detail" || value === "motion";
+}
+
 /** 画面数据的传输方式：P2P 直连（默认，质量最好）或 SFU 转发（兜底）。 */
 export type ScreenShareTransport = "p2p" | "sfu";
 
@@ -413,6 +420,12 @@ export interface ScreenShareState {
    * 订阅端据此在拉流时声明优先层与降级策略——缺省 = 单档发布。
    */
   simulcast?: boolean;
+  /**
+   * 发布档位（`hd720` / `fhd1080`）。
+   * 订阅端用它 + 实收分辨率推算"当前订阅到哪一层"（f/h/q），显示在灯箱里。
+   * 缺省 = 旧版本房主，不显示层信息。
+   */
+  quality?: "hd720" | "fhd1080";
 }
 
 /** 校验从线上收到的屏幕共享状态；形状不对就丢弃。 */
@@ -437,6 +450,9 @@ export function parseScreenShareState(input: unknown): ScreenShareState | null {
     transport: raw["transport"] === "p2p" ? "p2p" : "sfu",
     // 缺省不带这个键（旧房主不广播它，订阅端按单档拉流）
     ...(raw["simulcast"] === true ? { simulcast: true } : {}),
+    ...(raw["quality"] === "hd720" || raw["quality"] === "fhd1080"
+      ? { quality: raw["quality"] }
+      : {}),
   };
 }
 
@@ -450,6 +466,8 @@ export interface ScreenSharePublication {
   transport: ScreenShareTransport;
   /** SFU 发布是否用了 simulcast 多档（缺省 = 单档）。 */
   simulcast?: boolean;
+  /** 发布档位（订阅端据实收分辨率推算订阅层）。 */
+  quality?: "hd720" | "fhd1080";
 }
 
 export function parseScreenSharePublication(input: unknown): ScreenSharePublication | null {
@@ -467,6 +485,9 @@ export function parseScreenSharePublication(input: unknown): ScreenSharePublicat
     hasAudio: raw["hasAudio"] === true,
     transport: raw["transport"] === "sfu" ? "sfu" : "p2p",
     ...(raw["simulcast"] === true ? { simulcast: true } : {}),
+    ...(raw["quality"] === "hd720" || raw["quality"] === "fhd1080"
+      ? { quality: raw["quality"] }
+      : {}),
   };
 }
 
@@ -485,11 +506,17 @@ export interface WireMember {  id: string;
   serverMuted?: boolean;
   /** 是否闭听（戴耳罩，闭听时一定静音）。 */
   deafened?: boolean;
+  /**
+   * 汇报自己是否支持 AV1 **硬件解码**。
+   * 共享者据此做"双端判断"：只有全部观众都能硬解时才敢上 AV1。
+   * 缺省（旧客户端）= 不支持，宁可用 H.264。
+   */
+  av1Decode?: boolean;
 }
 
 /** 访客 → 房主。 */
 export type GuestMessage =
-  | { t: "hello"; personId: string; sessionId: string; name: string; avatar: string; color: string; hasMic: boolean; muted: boolean; nonce: string; proof: string }
+  | { t: "hello"; personId: string; sessionId: string; name: string; avatar: string; color: string; hasMic: boolean; muted: boolean; av1Decode?: boolean; nonce: string; proof: string }
   | { t: "identity"; name: string; avatar: string; color: string }
   | { t: "joined" }
   | { t: "chat"; text: string }
@@ -498,6 +525,11 @@ export type GuestMessage =
   | { t: "interact"; to: string; kind: InteractKind }
   | { t: "screen-share-start"; session: ScreenSharePublication }
   | { t: "screen-share-stop" }
+  /**
+   * 观众的画质偏好（只对当前共享会话有效）。
+   * 访客只能给房主发消息，房主再把它转给共享者（共享者不一定是房主）。
+   */
+  | { t: "screen-pref"; mode: ScreenViewPreference }
   | { t: "ping"; ts: number }
   | { t: "pong"; ts: number };
 
@@ -511,6 +543,8 @@ export type HostMessage =
   | { t: "interact"; event: InteractEvent }
   /** state 为 null 表示停播（电视回雪花）。 */
   | { t: "screen-share"; state: ScreenShareState | null }
+  /** 转发给共享者的观众画质偏好（from = 提出偏好的成员 id）。 */
+  | { t: "screen-pref"; from: string; mode: ScreenViewPreference }
   | { t: "chat"; id: string; name: string; text: string; ts: number }
   | { t: "roster"; members: WireMember[] }
   | { t: "peer-join"; member: WireMember }
@@ -572,6 +606,7 @@ export function parseGuestMessage(data: unknown): GuestMessage | null {
         color: str(msg["color"], LIMITS.color),
         hasMic: msg["hasMic"] === true,
         muted: msg["muted"] === true,
+        ...(msg["av1Decode"] === true ? { av1Decode: true } : {}),
         nonce: str(msg["nonce"], 64),
         proof: str(msg["proof"], 128),
       };
@@ -605,6 +640,10 @@ export function parseGuestMessage(data: unknown): GuestMessage | null {
     }
     case "screen-share-stop":
       return { t: "screen-share-stop" };
+    case "screen-pref": {
+      // 观众的画质偏好：形状不对就丢弃（旧房主收到也会安全忽略）
+      return isScreenViewPreference(msg["mode"]) ? { t: "screen-pref", mode: msg["mode"] } : null;
+    }
     case "ping": {
       const ts = num(msg["ts"]);
       return ts === null ? null : { t: "ping", ts };
@@ -668,6 +707,11 @@ export function parseHostMessage(data: unknown): HostMessage | null {
     }
     case "lock":
       return { t: "lock", locked: msg["locked"] === true };
+    case "screen-pref": {
+      const from = str(msg["from"], 64);
+      if (!from || !isScreenViewPreference(msg["mode"])) return null;
+      return { t: "screen-pref", from, mode: msg["mode"] };
+    }
     case "interact": {
       const event = parseInteractEvent(msg["event"]);
       return event ? { t: "interact", event } : null;
@@ -771,6 +815,7 @@ function parseMember(value: unknown): WireMember | null {
     isHost: m["isHost"] === true,
     serverMuted: m["serverMuted"] === true,
     deafened: m["deafened"] === true,
+    ...(m["av1Decode"] === true ? { av1Decode: true } : {}),
   };
 }
 

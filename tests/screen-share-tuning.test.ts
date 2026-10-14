@@ -14,12 +14,24 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  JITTER_ADAPTIVE_MS,
   RESOLUTION_LADDER,
   autoTransportFor,
+  boostScreenOfferSdp,
+  h264ProfileRank,
+  injectStartBitrate,
+  jitterBufferTargetFor,
+  nearestLadderIndex,
   perViewerBitrate,
+  preferCodecSdp,
   preferH264Sdp,
+  preferredRidFor,
+  screenHintFor,
   screenLinkStrained,
+  simulcastLayerBitrates,
+  simulcastLayerLabel,
   summarizeScreenStats,
+  tuneLadder,
   type StatsEntry,
 } from "../src/client/voice/screen-share";
 import { loadSettings } from "../src/client/voice/settings";
@@ -402,5 +414,221 @@ describe("设置迁移：传输方式缺省从 p2p 改成 auto", () => {
   it("v2 配置里显式选的 p2p 保留（不再被迁走）", () => {
     stub({ settingsVersion: 2, shareTransport: "p2p" });
     expect(loadSettings().shareTransport).toBe("p2p");
+  });
+});
+
+describe("H.264 profile 择优与编码重排（1.4.1）", () => {
+  it("h264ProfileRank：High > Main > Baseline > 未知", () => {
+    expect(h264ProfileRank("profile-level-id=640028")).toBe(3);
+    expect(h264ProfileRank("profile-level-id=4d0032")).toBe(2);
+    expect(h264ProfileRank("profile-level-id=42e01f")).toBe(1);
+    expect(h264ProfileRank("packetization-mode=1")).toBe(0);
+    expect(h264ProfileRank("")).toBe(0);
+  });
+
+  it("同一路 H.264 里把 High Profile 排到 Baseline 前面（硬编优先被选中）", () => {
+    const sdp = [
+      "v=0",
+      "m=video 9 UDP/TLS/RTP/SAVPF 96 98 99",
+      "a=rtpmap:96 VP8/90000",
+      "a=rtpmap:98 H264/90000",
+      "a=fmtp:98 profile-level-id=42e01f;packetization-mode=1",
+      "a=rtpmap:99 H264/90000",
+      "a=fmtp:99 profile-level-id=640028;packetization-mode=1",
+      "m=audio 9 UDP/TLS/RTP/SAVPF 111",
+      "a=rtpmap:111 opus/48000/2",
+    ].join("\r\n");
+    const out = preferH264Sdp(sdp);
+    // High（99）提到 Baseline（98）之前，VP8（96）垫后
+    expect(out).toContain("m=video 9 UDP/TLS/RTP/SAVPF 99 98 96");
+    // 音频段与 fmtp 行都不许被动
+    expect(out).toContain("m=audio 9 UDP/TLS/RTP/SAVPF 111");
+    expect(out).toContain("a=fmtp:99 profile-level-id=640028;packetization-mode=1");
+    // 幂等
+    expect(preferH264Sdp(out)).toBe(out);
+  });
+
+  it("preferCodecSdp('av1') 只把 AV1 提前（双端硬编通过时才用）", () => {
+    const sdp = [
+      "v=0",
+      "m=video 9 UDP/TLS/RTP/SAVPF 96 97",
+      "a=rtpmap:96 H264/90000",
+      "a=rtpmap:97 AV1/90000",
+    ].join("\r\n");
+    expect(preferCodecSdp(sdp, "av1")).toContain("m=video 9 UDP/TLS/RTP/SAVPF 97 96");
+  });
+});
+
+describe("injectStartBitrate（跳过开局爬坡）", () => {
+  it("已有 fmtp 行 → 追加键；没有 fmtp 的编码 → 补一条", () => {
+    const sdp = [
+      "v=0",
+      "m=video 9 UDP/TLS/RTP/SAVPF 96 98",
+      "a=rtpmap:96 VP8/90000",
+      "a=rtpmap:98 H264/90000",
+      "a=fmtp:98 profile-level-id=640028",
+      "a=rtpmap:97 rtx/90000",
+      "a=fmtp:97 apt=98",
+      "m=audio 9 UDP/TLS/RTP/SAVPF 111",
+      "a=rtpmap:111 opus/48000/2",
+    ].join("\r\n");
+    const out = injectStartBitrate(sdp, 6000);
+    // H.264 的 fmtp 追加
+    expect(out).toContain("a=fmtp:98 profile-level-id=640028;x-google-start-bitrate=6000");
+    // VP8 原本没有 fmtp：在它 rtpmap 后面补一条
+    expect(out).toContain("a=fmtp:96 x-google-start-bitrate=6000");
+    // rtx 是辅助载荷，不许注入
+    expect(out).not.toContain("a=fmtp:97 apt=98;x-google-start-bitrate");
+    // 音频段完全不动
+    expect(out).toContain("m=audio 9 UDP/TLS/RTP/SAVPF 111");
+    expect(out).not.toContain("a=fmtp:111");
+    // 幂等
+    expect(injectStartBitrate(out, 6000)).toBe(out);
+  });
+
+  it("kbps 非法 / 没有 video 段时原样返回", () => {
+    expect(injectStartBitrate("v=0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96", 0)).toBe(
+      "v=0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96",
+    );
+    expect(injectStartBitrate("", 6000)).toBe("");
+  });
+
+  it("boostScreenOfferSdp：一次完成编码重排 + 起始码率", () => {
+    const sdp = [
+      "v=0",
+      "m=video 9 UDP/TLS/RTP/SAVPF 96 98",
+      "a=rtpmap:96 VP8/90000",
+      "a=rtpmap:98 H264/90000",
+      "a=fmtp:98 profile-level-id=640028",
+    ].join("\r\n");
+    const out = boostScreenOfferSdp(sdp, { codec: "h264", startBitrateKbps: 4000 });
+    expect(out).toContain("m=video 9 UDP/TLS/RTP/SAVPF 98 96");
+    expect(out).toContain("x-google-start-bitrate=4000");
+  });
+});
+
+describe("tuneLadder（降档顺序：帧率先让 vs 分辨率先让）", () => {
+  it("auto：帧率先让到 30，再降分辨率，最后帧率让到 24", () => {
+    expect(tuneLadder("auto", 60)).toEqual([
+      { step: 0, fps: 60 },
+      { step: 0, fps: 45 },
+      { step: 0, fps: 30 },
+      { step: 1, fps: 30 },
+      { step: 2, fps: 30 },
+      { step: 3, fps: 30 },
+      { step: 3, fps: 24 },
+    ]);
+  });
+
+  it("detail（清晰优先）：帧率一路让到 24 才开始降分辨率", () => {
+    const ladder = tuneLadder("detail", 60);
+    expect(ladder.slice(0, 4)).toEqual([
+      { step: 0, fps: 60 },
+      { step: 0, fps: 45 },
+      { step: 0, fps: 30 },
+      { step: 0, fps: 24 },
+    ]);
+    // 之后每一步才降分辨率，帧率保持最低
+    expect(ladder[4]).toEqual({ step: 1, fps: 24 });
+    expect(ladder[ladder.length - 1]).toEqual({ step: 3, fps: 24 });
+  });
+
+  it("motion（流畅优先）：先降分辨率保帧率，帧率最低只让到 30", () => {
+    const ladder = tuneLadder("motion", 60);
+    expect(ladder.slice(0, 4)).toEqual([
+      { step: 0, fps: 60 },
+      { step: 1, fps: 60 },
+      { step: 2, fps: 60 },
+      { step: 3, fps: 60 },
+    ]);
+    expect(ladder[ladder.length - 1]!.fps).toBeGreaterThanOrEqual(30);
+    expect(ladder.every((point) => point.fps >= 30)).toBe(true);
+  });
+
+  it("档位上限低于阶梯时按上限收敛（例如 30 帧档位不会出现 45/24）", () => {
+    const ladder = tuneLadder("auto", 30);
+    expect(ladder[0]).toEqual({ step: 0, fps: 30 });
+    expect(ladder.some((point) => point.fps > 30)).toBe(false);
+  });
+
+  it("相邻档位不重复（每一步都真的变了什么）", () => {
+    for (const pref of ["auto", "detail", "motion"] as const) {
+      const ladder = tuneLadder(pref, 60);
+      for (let i = 1; i < ladder.length; i += 1) {
+        expect(
+          ladder[i]!.step !== ladder[i - 1]!.step || ladder[i]!.fps !== ladder[i - 1]!.fps,
+        ).toBe(true);
+      }
+    }
+  });
+});
+
+describe("nearestLadderIndex（切换偏好时不跳变）", () => {
+  it("阶梯里有完全一致的档位就取它；没有就取观感最接近的", () => {
+    const motion = tuneLadder("motion", 60);
+    // 当前是"原始分辨率 60 帧"→ motion 阶梯里就是第 0 项
+    expect(nearestLadderIndex(motion, { step: 0, fps: 60 })).toBe(0);
+    // 380p30 在 motion 阶梯里正好存在（第 5 项）
+    expect(nearestLadderIndex(motion, { step: 3, fps: 30 })).toBe(5);
+
+    const auto = tuneLadder("auto", 60);
+    // auto 阶梯里没有 380p60 这个组合：最接近的是"380p30"（第 5 项，档位一致优先）
+    expect(nearestLadderIndex(auto, { step: 3, fps: 60 })).toBe(5);
+  });
+});
+
+describe("simulcastLayerBitrates（分层码率：q 层不再被放大）", () => {
+  it("1080p 档：8M / 2.48M / 800k（q 层封顶 800k）", () => {
+    const tiers = simulcastLayerBitrates(8_000_000);
+    expect(tiers.f).toBe(8_000_000);
+    expect(tiers.h).toBe(2_480_000);
+    expect(tiers.q).toBe(800_000);
+  });
+
+  it("720p 档按比例缩放，任何层都不会超过上一层", () => {
+    const tiers = simulcastLayerBitrates(5_000_000);
+    expect(tiers.f).toBe(5_000_000);
+    expect(tiers.h).toBeLessThan(tiers.f);
+    expect(tiers.q).toBeLessThan(tiers.h);
+  });
+});
+
+describe("simulcastLayerLabel（观众看到的是哪一层）", () => {
+  it("1080p 源：收到 1080 / 540 / 270 分别对应 f / h / q", () => {
+    expect(simulcastLayerLabel(1080, 1080)).toContain("f");
+    expect(simulcastLayerLabel(1080, 540)).toContain("h");
+    expect(simulcastLayerLabel(1080, 270)).toContain("q");
+  });
+
+  it("比例对不上（被发送端降档过）时不猜，返回 null", () => {
+    expect(simulcastLayerLabel(1080, 760)).toBeNull();
+    expect(simulcastLayerLabel(0, 540)).toBeNull();
+  });
+});
+
+describe("jitterBufferTargetFor（抖动缓冲自适应）", () => {
+  it("拿不到抖动读数时取下限（画面更跟手）", () => {
+    expect(jitterBufferTargetFor(0)).toBe(JITTER_ADAPTIVE_MS.min);
+    expect(jitterBufferTargetFor(Number.NaN)).toBe(JITTER_ADAPTIVE_MS.min);
+  });
+
+  it("按 4 倍抖动取值，并夹在 150~1200ms 之间", () => {
+    expect(jitterBufferTargetFor(0.01)).toBe(150); // 40ms → 下限
+    expect(jitterBufferTargetFor(0.05)).toBe(200); // 50ms × 4
+    expect(jitterBufferTargetFor(0.5)).toBe(1200); // 500ms × 4 → 上限
+  });
+});
+
+describe("观众偏好聚合（多人共用一条轨时的取舍）", () => {
+  it("只要有一位要流畅优先，整条轨就按 motion 走", () => {
+    expect(screenHintFor(["auto", "detail"])).toBe("detail");
+    expect(screenHintFor(["detail", "motion"])).toBe("motion");
+    expect(screenHintFor([])).toBe("detail");
+  });
+
+  it("SFU 订阅层：清晰优先/自动取满档，流畅优先退半档", () => {
+    expect(preferredRidFor("auto")).toBe("f");
+    expect(preferredRidFor("detail")).toBe("f");
+    expect(preferredRidFor("motion")).toBe("h");
   });
 });

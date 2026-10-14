@@ -3,8 +3,13 @@ import { createPortal } from "react-dom";
 import { Volume2, VolumeX, X } from "lucide-react";
 
 import { FIRE_POS, PROJ_POS, SCREEN_POS, feetViewportPx } from "../pen";
-import type { ScreenShareState } from "../protocol";
-import { summarizeScreenReport, type RateSample } from "../screen-share";
+import type { ScreenShareState, ScreenViewPreference } from "../protocol";
+import {
+  SHARE_QUALITY_PRESETS,
+  simulcastLayerLabel,
+  summarizeScreenReport,
+  type RateSample,
+} from "../screen-share";
 
 /**
  * 围炉看投影：坡上内嵌幕布（常驻）+ 投影仪（共享时从天而降）+ 光束 + 放大灯箱。
@@ -253,11 +258,19 @@ interface PenTvLightboxProps {
    * 两端共用同一条数据条，方向由报告里实际存在的流自动判定。
    */
   pc?: RTCPeerConnection | null;
+  /**
+   * 观众端的画质偏好（只有观众才显示这三个按钮）。
+   * 共享者看不到自己画面的"观感"，这个开关归观众。
+   */
+  viewMode?: ScreenViewPreference;
+  onViewMode?: (mode: ScreenViewPreference) => void;
+  /** 本机就是共享者时为 true（不显示观众的画质开关）。 */
+  isSharer?: boolean;
   onClose: () => void;
 }
 
 /** 点击幕布弹出的放大层：16:9 大画面 + 来源标签 + 音量（共享带声音时）。 */
-export function PenTvLightbox({ state, stream, sharerName, pc, onClose }: PenTvLightboxProps) {
+export function PenTvLightbox({ state, stream, sharerName, pc, viewMode, onViewMode, isSharer, onClose }: PenTvLightboxProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   // 打开灯箱是用户点击手势，可以直接出声（默认开音量；场景里的小幕布保持静音防双声）
   const [muted, setMuted] = useState(false);
@@ -286,14 +299,27 @@ export function PenTvLightbox({ state, stream, sharerName, pc, onClose }: PenTvL
         const summary = summarizeScreenReport(await pc.getStats(), prev);
         prev = summary.sample;
         if (!summary.text) return;
-        setStats(summary.text);
+        let text = summary.text;
+        /*
+         * 观众端额外显示"当前订阅到哪一层"：simulcast 发布时 SFU 会按观众网络
+         * 挑层（f/h/q），实收分辨率 ÷ 发布档位高度就能推出来。
+         * 有了这行，观众第一次能看见"我其实只拿到了 1/4 的层"（而不是只看到"糊"）。
+         */
+        if (state.simulcast && summary.role === "recv" && state.quality) {
+          const layer = simulcastLayerLabel(
+            SHARE_QUALITY_PRESETS[state.quality].height,
+            summary.height,
+          );
+          if (layer) text += ` · 订阅层 ${layer}`;
+        }
+        setStats(text);
         setStatsRole(summary.role);
       } catch {
         /* 连接关闭后的取数失败，忽略 */
       }
     }, 2000);
     return () => window.clearInterval(timer);
-  }, [pc]);
+  }, [pc, state.simulcast, state.quality]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -357,6 +383,29 @@ export function PenTvLightbox({ state, stream, sharerName, pc, onClose }: PenTvL
           ) : null}
           {stream ? (
             <>
+              {/* 观众的画质开关：换来的是"发送端按你的偏好降档"（P2P）
+                  或"订阅到哪一层"（SFU）。共享者不显示。 */}
+              {!isSharer && onViewMode ? (
+                <div className="vx-tv-viewmode" role="group" aria-label="画质偏好">
+                  {(
+                    [
+                      { key: "auto", name: "自动" },
+                      { key: "detail", name: "清晰优先" },
+                      { key: "motion", name: "流畅优先" },
+                    ] as const
+                  ).map((item) => (
+                    <button
+                      key={item.key}
+                      type="button"
+                      className={`vx-menu-btn${(viewMode ?? "auto") === item.key ? " vx-menu-btn-active" : ""}`}
+                      onClick={() => onViewMode(item.key)}
+                      aria-pressed={(viewMode ?? "auto") === item.key}
+                    >
+                      {item.name}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
               <button
                 type="button"
                 className={`vx-menu-btn${muted ? "" : " vx-menu-btn-active"}`}

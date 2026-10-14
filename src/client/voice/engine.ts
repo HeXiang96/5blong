@@ -38,18 +38,23 @@ import {
   type PenPose,
   type ScreenSharePublication,
   type ScreenShareState,
+  type ScreenViewPreference,
   type WireMember,
 } from "./protocol";
 import { sessionScopedId, type Identity } from "./identity";
 import {
-  JITTER_BUFFER_MS,
   RESOLUTION_LADDER_LABEL,
+  boostScreenOfferSdp,
+  createJitterBufferTuner,
   createScreenSenderTuner,
   healScreenConnection,
   perViewerBitrate,
-  preferH264Sdp,
+  probeHardwareEncoders,
+  screenHintFor,
+  type HardwareCodecProbe,
   type ScreenSenderTuner,
   type ShareQuality,
+  type TunePoint,
 } from "./screen-share";
 import { NPC_NAME, PenDirector, VEGETABLE_KINDS, type PenEvent } from "./pen";
 import { readPenSnapshots } from "./pen-registry";
@@ -129,6 +134,8 @@ export interface Member {
   serverMuted?: boolean;
   /** 是否闭听（戴耳罩，闭听时一定静音）。 */
   deafened?: boolean;
+  /** 该端是否报了 AV1 **硬件解码**（决定共享者能不能上 AV1；缺省 = 不能）。 */
+  av1Decode?: boolean;
 }
 
 export interface ChatMessage {
@@ -312,6 +319,26 @@ export class VoiceMesh {
    * 只是房间状态上的一个可空字段——成员表、语音、媒体连接都不读它。
    */
   private screenShareState: ScreenShareState | null = null;
+  /**
+   * 本机硬件编解码预检（WebCodecs，进程内缓存）。
+   *
+   * 用途有二：① 加入房间时把"本机支持 AV1 硬解吗"报给房主/全员（hello 与 roster
+   * 的 av1Decode 字段）；② 自己开共享时判断能不能上 AV1（还要求**所有观众**都支持）。
+   */
+  private hwProbe: HardwareCodecProbe | null = null;
+  /** 预检的并发去重（host/join 与 sendHello 都可能会要）。 */
+  private hwProbePromise: Promise<HardwareCodecProbe> | null = null;
+  /** 本机是否支持 AV1 硬解（join 前探一次；没探到 = false）。 */
+  private myAv1Decode = false;
+  /** 各观众对当前共享会话的画质偏好（key = 成员 id）。 */
+  private viewerScreenPrefs = new Map<string, ScreenViewPreference>();
+  /** 本机作为观众时选的画质偏好（点了"清晰优先/流畅优先"后本地留着）。 */
+  private localScreenPref: ScreenViewPreference = "auto";
+  /**
+   * P2P 观众端的自适应抖动缓冲停止函数（按连接记录）。
+   * 原先是开播时设一次固定的 600ms，同城嫌大、跨城可能不够。
+   */
+  private viewerJitters = new WeakMap<MediaConnection, () => void>();
   /** 本机是否闭听（deaf：同时闭麦且不听任何人）。 */
   private deafened = false;
   /** 是否正在等房主的 welcome（用于断线重连时的超时判定）。 */
@@ -393,6 +420,8 @@ export class VoiceMesh {
     // PeerJS 只在构造 Peer 那一刻读 config，所以 TURN 凭据必须在这之前就绪。
     // 超时上限 2.5s，拿不到就先用纯 STUN 开始打洞——不为了中继把建房卡住。
     await ensureIceServers();
+    // 硬件编解码预检（不碰权限、只问 WebCodecs）：名册里要带上"本机能否 AV1 硬解"
+    await this.startHardwareProbe();
 
     let attempt = 0;
     while (!this.destroyed && attempt < 3) {
@@ -421,6 +450,7 @@ export class VoiceMesh {
           hasMic: !!this.localStream,
           isHost: true,
           local: true,
+          ...(this.myAv1Decode ? { av1Decode: true } : {}),
         };
         this.members.set(id, this.me);
         const monitorStream = this.outgoingStream ?? this.localStream;
@@ -472,6 +502,8 @@ export class VoiceMesh {
      * 这正是"跨网进不去"的现场。故与建房一样，先把凭据备好。
      */
     await ensureIceServers();
+    // 握手包里要报"本机能否 AV1 硬解"，共享者据此判断能不能上 AV1
+    await this.startHardwareProbe();
 
     const outcome = await this.openPeer(guestPeerId(randomToken(12)));
     if (this.destroyed) return;
@@ -492,6 +524,7 @@ export class VoiceMesh {
       hasMic: !!this.localStream,
       isHost: false,
       local: true,
+      ...(this.myAv1Decode ? { av1Decode: true } : {}),
     };
     this.members.set(this.myId, this.me);
     this.emitMembers();
@@ -512,6 +545,19 @@ export class VoiceMesh {
     }
     this.hostId = hostId;
     this.dialHost();
+  }
+
+  /**
+   * 探一次本机硬件编解码能力（WebCodecs，进程内缓存 + 并发去重）。
+   * 结果进 `hwProbe` / `myAv1Decode`，用于：报到名册（双端判断 AV1）与开播选码。
+   */
+  private startHardwareProbe(): Promise<HardwareCodecProbe> {
+    this.hwProbePromise ??= probeHardwareEncoders("fhd1080").then((probe) => {
+      this.hwProbe = probe;
+      this.myAv1Decode = probe.decAv1;
+      return probe;
+    });
+    return this.hwProbePromise;
   }
 
   /**
@@ -891,6 +937,7 @@ export class VoiceMesh {
             startedAt: Date.now(),
             transport: pub.transport,
             ...(pub.simulcast ? { simulcast: true } : {}),
+            ...(pub.quality ? { quality: pub.quality } : {}),
           },
           true,
         );
@@ -901,6 +948,12 @@ export class VoiceMesh {
         if (this.screenShareState?.sharerId === guest.member.id) {
           this.applyScreenShare(null, true);
         }
+        break;
+      }
+      case "screen-pref": {
+        // 观众的画质偏好：共享者是房主 → 本地应用；是访客 → 转给他那条连接
+        // （访客之间没有数据直连，必须由房主转一手）。
+        this.routeScreenPref(guest.member.id, message.mode);
         break;
       }
       case "ping": {
@@ -970,6 +1023,8 @@ export class VoiceMesh {
       // 同 ID 断线重连要保留此前的禁言状态。
       serverMuted: previous?.member.serverMuted ?? false,
       deafened: previous?.member.deafened ?? false,
+      // AV1 硬解能力：共享者据此做双端判断（缺省 = 不支持）
+      ...(message.av1Decode === true ? { av1Decode: true } : {}),
     };
     this.guests.set(peerId, {
       conn,
@@ -1044,6 +1099,42 @@ export class VoiceMesh {
     }
   }
 
+  /**
+   * 把某个观众的画质偏好送到**共享者**手里（房主侧）：共享者是房主就本地应用，
+   * 是访客就经他那条数据连接转过去。
+   */
+  private routeScreenPref(from: string, mode: ScreenViewPreference): void {
+    const sharer = this.screenShareState?.sharerId;
+    if (!sharer) return;
+    if (sharer === this.myId) {
+      this.applyViewerScreenPref(from, mode);
+      return;
+    }
+    const record = this.guests.get(sharer);
+    if (record) this.send(record.conn, { t: "screen-pref", from, mode });
+  }
+
+  /**
+   * 共享者侧：应用某个观众的画质偏好。
+   *
+   * P2P 模式下每个观众一条发送链，偏好**逐连接**生效（tuner.setPreference）；
+   * 轨道 contentHint 是全轨共享的，按"有一位要流畅优先就取 motion"聚合
+   * （宁可让清晰优先的那位降帧，也不要让要流畅的那位卡）。
+   */
+  private applyViewerScreenPref(from: string, mode: ScreenViewPreference): void {
+    if (mode === "auto") this.viewerScreenPrefs.delete(from);
+    else this.viewerScreenPrefs.set(from, mode);
+    this.screenTuners.get(from)?.setPreference(mode);
+    this.applyScreenContentHint();
+  }
+
+  /** 观众偏好聚合到轨道 contentHint（detail 保清晰 / motion 保帧率）。 */
+  private applyScreenContentHint(): void {
+    if (!this.screenStream) return;
+    const hint = screenHintFor(this.viewerScreenPrefs.values());
+    for (const track of this.screenStream.getVideoTracks()) track.contentHint = hint;
+  }
+
   private roster(): WireMember[] {
     return Array.from(this.members.values(), (member) => ({
       id: member.id,
@@ -1057,6 +1148,9 @@ export class VoiceMesh {
       isHost: member.isHost,
       serverMuted: member.serverMuted ?? false,
       deafened: member.deafened ?? false,
+      // 能力字段必须随名册广播：共享者（可能是房主、也可能是访客）要据此判断
+      // "是不是所有人都能硬解 AV1"，只有全员支持才敢上 AV1。
+      av1Decode: member.av1Decode === true,
     }));
   }
 
@@ -1135,8 +1229,9 @@ export class VoiceMesh {
     this.screenStream = pub.transport === "p2p" ? (stream ?? null) : null;
     // P2P 链路没有 publishScreen 那道工序，contentHint 得在这里补上：
     // 不设它时浏览器按默认策略走，带宽一紧就先压质量（画面变糊）。
-    // 与 SFU 路径口径一致：保清晰，宁可掉帧。
-    for (const track of this.screenStream?.getVideoTracks() ?? []) track.contentHint = "detail";
+    // 口径与 SFU 路径一致（保清晰），并按观众偏好聚合（见 applyScreenContentHint）。
+    this.viewerScreenPrefs.clear();
+    this.applyScreenContentHint();
     if (this.hosting) {
       this.applyScreenShare(
         {
@@ -1149,6 +1244,7 @@ export class VoiceMesh {
           startedAt: Date.now(),
           transport: pub.transport,
           ...(pub.simulcast ? { simulcast: true } : {}),
+          ...(pub.quality ? { quality: pub.quality } : {}),
         },
         true,
       );
@@ -1157,6 +1253,36 @@ export class VoiceMesh {
     if (!this.hostConn || !this.hostConn.open) return false;
     this.send(this.hostConn, { t: "screen-share-start", session: pub });
     return true;
+  }
+
+  /**
+   * 观众端设置自己的画质偏好（自动 / 清晰优先 / 流畅优先）。
+   *
+   * 观众对本机收到的画面最清楚，所以这个开关交给观众：
+   * - P2P：偏好经房主转给共享者，**只影响这一条观众的发送链**（逐连接生效）；
+   * - SFU：偏好映射成订阅层（清晰优先 = f 满档、流畅优先 = h 半档），
+   *   由调用方在重订阅时带上。
+   * 没有人在共享时也记住选择，等下次开播/重订阅时生效。
+   */
+  setScreenViewPreference(mode: ScreenViewPreference): void {
+    this.localScreenPref = mode;
+    const sharer = this.screenShareState?.sharerId;
+    if (!sharer || sharer === this.myId) return;
+    if (this.hosting) {
+      this.routeScreenPref(this.myId, mode);
+      return;
+    }
+    this.send(this.hostConn, { t: "screen-pref", mode });
+  }
+
+  /** 本机作为观众时选的画质偏好（供界面回显）。 */
+  get screenViewPreference(): ScreenViewPreference {
+    return this.localScreenPref;
+  }
+
+  /** 本机是否支持 AV1 硬解（预检结果；未探到 = false）。 */
+  get supportsAv1Decode(): boolean {
+    return this.myAv1Decode;
   }
 
   /** 停播（本人主动停止；房主侧也会在共享者掉线时代为清理）。 */
@@ -1213,6 +1339,8 @@ export class VoiceMesh {
       this.startScreenCalls();
     }
     if (!state) {
+      // 停播：观众偏好与发送端调谐器都由 closeScreenCalls 收线，这里清掉映射
+      this.viewerScreenPrefs.clear();
       this.closeScreenCalls();
     }
   }
@@ -1547,6 +1675,9 @@ export class VoiceMesh {
     if (this.destroyed || !this.me) return;
     const nonce = randomToken(16);
     this.nonces.set(conn, nonce);
+    // 握手包必须带上"本机能否 AV1 硬解"——共享者据此做双端判断；
+    // 拿不到预检结果（老浏览器没 WebCodecs）就报 false，宁可用 H.264。
+    await this.startHardwareProbe();
     const proof = this.roomKey
       ? await signGuestProof(this.roomKey, nonce, this.myId, this.code)
       : "";
@@ -1560,6 +1691,7 @@ export class VoiceMesh {
       color: this.me.color,
       hasMic: this.me.hasMic,
       muted: this.me.muted,
+      ...(this.myAv1Decode ? { av1Decode: true } : {}),
       nonce,
       proof,
     });
@@ -1629,6 +1761,7 @@ export class VoiceMesh {
           isHost: member.isHost,
           serverMuted: member.serverMuted ?? false,
           deafened: member.deafened ?? false,
+          ...(member.av1Decode === true ? { av1Decode: true } : {}),
           local: false,
         });
       }
@@ -1658,7 +1791,15 @@ export class VoiceMesh {
         // 停播（房主代停/自己申报的广播回来）时收线。
         if (message.state?.sharerId === this.myId && !prev) this.startScreenCalls();
         if (!message.state && prev?.sharerId === this.myId) this.closeScreenCalls();
+        if (!message.state) this.viewerScreenPrefs.clear();
         this.events.screenShare?.(message.state);
+        break;
+      }
+      case "screen-pref": {
+        // 我是共享者才需要处理（房主把某位观众的偏好转过来）
+        if (this.screenShareState?.sharerId === this.myId) {
+          this.applyViewerScreenPref(message.from, message.mode);
+        }
         break;
       }
       case "roster": {
@@ -1691,6 +1832,7 @@ export class VoiceMesh {
             hasMic: member.hasMic,
             isHost: member.isHost,
             serverMuted: member.serverMuted ?? false,
+            ...(member.av1Decode === true ? { av1Decode: true } : {}),
             local: false,
           });
         }
@@ -1719,6 +1861,7 @@ export class VoiceMesh {
           isHost: message.member.isHost,
           serverMuted: message.member.serverMuted ?? false,
           deafened: message.member.deafened ?? false,
+          ...(message.member.av1Decode === true ? { av1Decode: true } : {}),
           local: false,
         });
         this.emitMembers();
@@ -2000,12 +2143,21 @@ export class VoiceMesh {
 
   private callScreenPeer(peerId: string): void {
     if (!this.peer || !this.screenStream || this.screenCalls.has(peerId)) return;
+    const viewer = this.members.get(peerId);
+    const viewers = Math.max(1, this.members.size - 1);
+    // 双端 AV1 判断（逐观众）：本机有 AV1 硬编，且**这一位观众**报了 AV1 硬解，
+    // 才把 AV1 提到 H.264 之前。任何一位观众不支持，给他的流仍是 H.264。
+    const useAv1 = this.hwProbe?.av1 === true && viewer?.av1Decode === true;
+    // 起始码率：按这位观众分摊后的码率起步（上限的 75%），跳过编码器的开局爬坡。
+    const startKbps = Math.round((perViewerBitrate(this.screenQuality, viewers) * 0.75) / 1000);
     // 与语音同一套 PeerJS 传输；metadata 标记让对端知道这是画面呼叫（不给流、只收）。
-    // sdpTransform：把 offer 里的 H264 提到 m=video 首位——PeerJS 自己出 offer，
-    // 我们没机会调 setCodecPreferences，不重排就会协商到 VP8 软编（1080p60 下必糊）。
+    // sdpTransform：把 offer 里的 H.264（High Profile 优先）——或双端都支持时的 AV1
+    // ——提到 m=video 首位，并注入起始码率。PeerJS 自己出 offer，我们没机会调
+    // setCodecPreferences，不重排就会协商到 VP8 软编（1080p60 下必糊）。
     const call = this.peer.call(peerId, this.screenStream, {
       metadata: { kind: "screen-share", sessionId: this.screenShareState?.sessionId ?? "" },
-      sdpTransform: preferH264Sdp,
+      sdpTransform: (sdp: string) =>
+        boostScreenOfferSdp(sdp, { codec: useAv1 ? "av1" : "h264", startBitrateKbps: startKbps }),
     });
     if (!call) return;
     this.screenCalls.set(peerId, call);
@@ -2020,17 +2172,20 @@ export class VoiceMesh {
     // applyScreenSenderParams，所以 P2P 链路必须自己下发码率/帧率/降级阶梯，
     // 否则菜单里选的档位对这条链路完全无效（"P2P 看着糊"的直接原因之一）。
     //
-    // 下发交给调谐器（它自己会按协商时机重试、并在链路吃紧时降分辨率）；
+    // 下发交给调谐器（它自己会按协商时机重试、并在链路吃紧时按观众偏好降档）；
     // 这里只补两个"更早一次"的触发点：① 同步（PeerJS 构造时已 addTrack）；
     // ② 协商进入 stable（此时 setParameters 才一定被接受）。
-    const viewers = Math.max(1, this.members.size - 1);
     const tuner = createScreenSenderTuner(pc, this.screenQuality, {
       maxBitrate: perViewerBitrate(this.screenQuality, viewers),
-      onStep: (step, reason) => {
-        // 观众端的画面分辨率会随之变化，共享者这边给一条可读提示（不弹窗）
+      // 观众自己选的偏好（清晰/流畅）逐连接生效；没选过 = auto
+      preference: this.viewerScreenPrefs.get(peerId) ?? "auto",
+      // 档位记忆：重连/下次开播从上次稳定档位起步，坏链路不再重爬 18 秒
+      memory: true,
+      onStep: (point: TunePoint, reason: string) => {
+        // 观众端的画面会随之变化，共享者这边给一条可读提示（不弹窗）
         if (reason === "recover") return;
         console.info(
-          `[screen-share] 链路受限（${reason}），已自动降到 ${RESOLUTION_LADDER_LABEL[step] ?? "更低分辨率"}`,
+          `[screen-share] 链路受限（${reason}），已自动降到 ${RESOLUTION_LADDER_LABEL[point.step] ?? "更低分辨率"} · ${point.fps}fps`,
         );
       },
     });
@@ -2112,23 +2267,18 @@ export class VoiceMesh {
     this.screenStream = null;
   }
 
-  /** P2P 画面连接是**直连**（同网/近距，RTT 通常 <50ms）：抖动缓冲取小值，
-   *  让"围炉看屏"对得上嘴；原先与 SFU 一样拉满 4000ms，白白多等 3 秒多。 */
+  /**
+   * P2P 画面接收端：挂**自适应**抖动缓冲（150~1200ms，按实测 jitter 取 4 倍抖动）。
+   *
+   * 原来是固定 600ms 一刀切：同城直连白等半秒（围炉对不上嘴）、跨城/移动网又可能
+   * 不够（一抖就卡顿）。现在按链路实测抖动动态取值，两端都合适。
+   * 返回值只做记录，停止函数存进 viewerJitters（连接关闭时收）。
+   */
   private smoothScreenReceivers(call: MediaConnection): void {
     const pc = this.screenPeerConnection(call);
     if (!pc) return;
-    const apply = () => {
-      for (const receiver of pc.getReceivers()) {
-        try {
-          receiver.jitterBufferTarget = JITTER_BUFFER_MS.p2p;
-        } catch {
-          /* 个别实现不支持时忽略 */
-        }
-      }
-    };
-    apply();
-    // 轨可能分批到达：延迟再补一轮
-    this.timers.after(1200, apply);
+    const stop = createJitterBufferTuner(pc);
+    this.viewerJitters.set(call, stop);
   }
 
   /** 观众端：应答共享者的画面呼叫（只收不发），流经事件交给界面。 */
@@ -2151,8 +2301,9 @@ export class VoiceMesh {
         }
         return;
       }
-      // 观众端抖动缓冲取直连档（P0-5），并在短暂抖动时自愈（P2-13）：
-      // 先 restartIce，而不是让画面就此冻住。
+      // 观众端抖动缓冲按实测抖动自适应（P0-5 的改进版），
+      // 并在短暂抖动时自愈（P2-13）：先 restartIce，而不是让画面就此冻住。
+      this.viewerJitters.get(call)?.();
       this.smoothScreenReceivers(call);
       const pc = this.screenPeerConnection(call);
       if (pc && !this.viewerHeals.has(call)) {
@@ -2163,6 +2314,8 @@ export class VoiceMesh {
     call.on("close", () => {
       this.viewerHeals.get(call)?.();
       this.viewerHeals.delete(call);
+      this.viewerJitters.get(call)?.();
+      this.viewerJitters.delete(call);
     });
   }
 
@@ -2241,6 +2394,10 @@ export class VoiceMesh {
         if (tries++ < 15 && !this.destroyed) this.timers.after(200, attach);
         return;
       }
+      // 语音优先于画面：上行紧张时（全屏共享 8 Mbps 会跟语音抢带宽）先牺牲
+      // 画面的清晰度/帧率，绝不让语音断续。画面侧的 priority:low 在
+      // applyScreenSenderParams 里设，两边口径一致。
+      this.boostVoicePriority(pc);
       const classify = async () => {
         const ice = pc.iceConnectionState;
         if (ice === "connected" || ice === "completed") {
@@ -2274,6 +2431,36 @@ export class VoiceMesh {
       void classify();
     };
     attach();
+  }
+
+  /**
+   * 把这条语音连接上的音频发送端标成"高优先级"（P0-6）。
+   *
+   * 为什么必须做：观众的语音和画面通常走同一张网卡/同一条上行。画面是
+   * "丢几帧无所谓"，语音是"丢一帧就断续"。显式声明优先级后，浏览器的
+   * 带宽分配会先保语音；配合画面侧的 `priority:"low"`，两者形成一条完整策略。
+   * 个别浏览器不支持该参数时静默忽略（不影响功能）。
+   */
+  private boostVoicePriority(pc: RTCPeerConnection): void {
+    try {
+      for (const sender of pc.getSenders()) {
+        if (sender.track?.kind !== "audio") continue;
+        const params = sender.getParameters() as RTCRtpSendParameters & {
+          encodings: (RTCRtpEncodingParameters & { networkPriority?: string })[];
+        };
+        if (!params.encodings || params.encodings.length === 0) params.encodings = [{}];
+        params.encodings = params.encodings.map((encoding) => ({
+          ...encoding,
+          priority: "high",
+          networkPriority: "high",
+        }));
+        void sender.setParameters(params).catch(() => {
+          /* 参数被拒（协商时序/实现不支持）不影响语音本身 */
+        });
+      }
+    } catch {
+      /* getSenders/setParameters 不可用时忽略 */
+    }
   }
 
   private playStream(peerId: string, stream: MediaStream): void {

@@ -20,6 +20,16 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.4.1",
+    date: "2026-10-14",
+    lines: [
+      "共享画质更稳：先让帧率再降清晰",
+      "观众可自选：清晰优先/流畅优先",
+      "开局不糊、语音优先、抖动自适应",
+      "修好云端部署，网页版回到最新",
+    ],
+  },
+  {
     version: "1.4.0",
     date: "2026-10-14",
     lines: [

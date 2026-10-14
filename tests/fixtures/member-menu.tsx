@@ -118,6 +118,8 @@ function Fixture() {
     onSetShareQuality: (quality) => record("share-quality", quality),
     shareTransport: "p2p" as const,
     onSetShareTransport: (transport) => record("share-transport", transport),
+    shareViewMode: "auto" as const,
+    onSetShareViewMode: (mode) => record("share-view-mode", mode),
   };
   return <RoomView {...props} />;
 }
