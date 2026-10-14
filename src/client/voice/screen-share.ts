@@ -331,6 +331,8 @@ export interface ScreenSubscription {
   stream: MediaStream;
   /** 停止订阅（关 PC，尽力通知 SFU）。 */
   stop: () => void;
+  /** 底层连接（放大层用它拉 getStats 显示实时分辨率/帧率/码率/编码器）。 */
+  pc: RTCPeerConnection;
 }
 
 /**
@@ -399,6 +401,7 @@ async function subscribeScreenInner(
 
   return {
     stream,
+    pc,
     stop: () => {
       try {
         pc.close();
