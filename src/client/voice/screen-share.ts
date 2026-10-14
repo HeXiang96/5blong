@@ -70,6 +70,8 @@ export function pickerHints(): Record<string, unknown> {
     selfBrowserSurface: "exclude",
     surfaceSwitching: "exclude",
     monitorTypeSurfaces: "include",
+    // 共享屏幕时带上系统声音（Windows 10 2004+ / 标签页声音）
+    systemAudio: "include",
   };
 }
 

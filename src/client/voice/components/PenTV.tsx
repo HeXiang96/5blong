@@ -248,7 +248,8 @@ interface PenTvLightboxProps {
 /** 点击幕布弹出的放大层：16:9 大画面 + 来源标签 + 音量（共享带声音时）。 */
 export function PenTvLightbox({ state, stream, sharerName, onClose }: PenTvLightboxProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  const [muted, setMuted] = useState(true);
+  // 打开灯箱是用户点击手势，可以直接出声（默认开音量；场景里的小幕布保持静音防双声）
+  const [muted, setMuted] = useState(false);
   const [volume, setVolume] = useState(1);
 
   useEffect(() => {

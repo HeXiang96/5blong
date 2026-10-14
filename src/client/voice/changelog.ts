@@ -20,6 +20,16 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.2.0",
+    date: "2026-10-14",
+    lines: [
+      "共享屏幕带上系统声音了，游戏声也能听",
+      "点开幕布即可调音量；建议戴耳机防回声",
+      "共享画质对齐直播推流（1080p60 高码率）",
+      "修好：观众雪花、桌面端共享失败等问题",
+    ],
+  },
+  {
     // 纯修复/调优版：lines 留空 → 公告栏展示上一条有内容版本
     version: "1.1.3",
     date: "2026-10-14",
