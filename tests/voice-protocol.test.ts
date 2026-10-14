@@ -11,6 +11,7 @@ import {
   guestPeerId,
   hostPeerId,
   hostProofMessage,
+  isJoinInFlight,
   isRoomCode,
   makeRoomCode,
   normalizeCode,
@@ -517,5 +518,21 @@ describe("pen-poses（房主权威猪位）", () => {
     expect(parseHostMessage({ t: "pen-poses", ts: 1, poses: [{ id: "a" }] })).toBeNull();
     expect(parseHostMessage({ t: "pen-poses", poses: [{ id: "a", x: 0, lane: 0 }] })).toBeNull();
     expect(parseHostMessage({ t: "pen-poses", ts: 1, poses: "nope" })).toBeNull();
+  });
+});
+
+describe("isJoinInFlight（进房进行中的判定）", () => {
+  it("preparing / connecting / reconnecting 都算进行中", () => {
+    expect(isJoinInFlight("preparing")).toBe(true);
+    expect(isJoinInFlight("connecting")).toBe(true);
+    // 关键回归：自动重拨期也必须算"在连"。以前只认前两种，确认页会在这 24 秒里
+    // 把按钮变回"加入并开麦"，看着像没在连；重复点击还会重置 12 秒超时。
+    expect(isJoinInFlight("reconnecting")).toBe(true);
+  });
+
+  it("其余状态都不算进行中", () => {
+    for (const status of ["idle", "connected", "error"]) {
+      expect(isJoinInFlight(status)).toBe(false);
+    }
   });
 });

@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 
 import { preloadRnnoise } from "./engine";
+import { isJoinInFlight } from "./protocol";
 import { useVoice } from "./use-voice";
 import { ConfirmView, LandingView } from "./components/pages";
 import { RoomView } from "./components/RoomView";
@@ -41,6 +42,13 @@ export function App() {
    * 现在设置页是覆盖层，猪圈在下面继续走、广播不断，回来无缝。
    */
   const settingsOverRoom = voice.view === "settings" && voice.settingsReturn === "room";
+
+  /*
+   * "正在进房"的统一定义（preparing / connecting / reconnecting），
+   * 首页与确认页共用一份。reconnecting 必须算进来：那是超时后的自动整体重拨，
+   * 以前不认它，确认页会在那 24 秒里把按钮变回"加入并开麦"，看着像没在连。
+   */
+  const joinInFlight = isJoinInFlight(voice.status);
 
   /*
    * 桌面端标题栏颜色跟随主题与时段（覆盖层/房间/首页都协调）：
@@ -92,7 +100,7 @@ export function App() {
         code={voice.pending.code}
         hostId={voice.pending.hostId || voice.pending.code}
         identity={voice.identity}
-        joining={voice.status === "preparing" || voice.status === "connecting"}
+        joining={joinInFlight}
         error={voice.joinError}
         onJoin={(muted) => void voice.joinRoom(voice.pending!, muted)}
         onCancel={voice.cancelJoin}
@@ -195,6 +203,11 @@ export function App() {
         onCopyId={() => {
           void voice.copyText(voice.identity.personId, "个人 ID 已复制");
         }}
+        joining={joinInFlight}
+        retrying={voice.status === "reconnecting"}
+        error={voice.joinError}
+        onCancelJoin={voice.cancelJoin}
+        onDismissError={() => voice.setJoinError(null)}
       />
       {voice.ended ? (
         <div className="vx-overlay">

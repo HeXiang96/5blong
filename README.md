@@ -123,6 +123,94 @@ Chromium 用 `MediaFoundationUseSWBRCForH264Desktop` 让自带码率控制器接
 
 ***
 
+## 跨网进不去房间？先看这一节：打洞与 TURN 中继（2026-10-14 深夜）
+
+**症状**：同一台机器 / 同一局域网里开两个窗口能互相进房，**跨网络怎么都进不去**；
+界面只转圈、不报错。
+
+### 一句话根因
+
+**进房握手本身也是一条 `RTCPeerConnection`**（PeerJS 的数据通道），和音视频一样要过 ICE。
+同机时两端走 `host` 候选（本机 / 局域网地址），不碰 STUN/TURN 所以必通；跨网就必须先靠
+STUN 拿到公网映射地址才有打洞资格，而**对称 NAT / 公司网 / 校园网 / 运营商 CGNAT 打不通，
+必须靠 TURN 中继兜底**——当时唯一的 TURN 兜底已经死了。
+
+### 两条实测证据（别凭感觉，去看数字）
+
+1. `openrelay.metered.ca` **解析到 `192.0.2.1`** —— RFC 5737 里专门留作文档示例的
+   **不可路由黑洞地址**。本机 DNS 与腾讯 DoH 两次独立解析结果一致。
+   所以它的问题不是"被限流"，是**服务已经关停**。
+2. 换成 Cloudflare TURN 后，`turn.cloudflare.com` 的 3478 / 443 / 5349 / 80 四个端口
+   **全部可达**，`stun.cloudflare.com:3478` UDP 有响应。
+
+### 现在的做法
+
+* 服务端 `/ice` 现场签发 **Cloudflare Realtime TURN 短期凭据**（TTL 24 小时），
+  长密钥只存在 Worker 的 secret 里，**永不进前端**。
+* 客户端 `src/client/voice/ice.ts` 负责拉取、结构校验、缓存（12 小时）与降级；
+  首页启动即预热，进房路径最多再等 2.5 秒。
+* **铁律：拿不到 ICE 也必须能进房。** 拉取失败 / 超时一律退回纯 STUN 打洞，
+  绝不为中继把进房卡住。
+
+### 需要配的两样（一次性）
+
+TURN key 与 SFU 的 appId/secret **是两套**，分别创建：
+
+1. Cloudflare 后台 → Realtime → **创建 TURN 服务器应用**，拿到 *Turn 令牌 ID* 与 *API 令牌*
+   （API 令牌只显示一次，务必当场复制）。
+2. 写进本机 `.dev-secrets.json`（已在 `.gitignore`，不会入库）：
+
+   ```json
+   { "turnKeyId": "……", "turnKeyApiToken": "……" }
+   ```
+
+   之后 `npm run deploy:pages` 会把 `TURN_KEY_ID` / `TURN_KEY_API_TOKEN` 自动写进
+   Pages 项目的环境变量（与 `SFU_APP_ID` 同一路径，日志里只打印键名、不打印值）。
+   只想同步密钥、不想重发站点时用 `npm run pages:env`（等价 `--env-only`）——
+   Pages 是**整站替换**，顺手跑一次普通部署会把线上的 `/desktop/` 更新源一起删掉。
+   环境变量在**部署时**注入运行环境，所以写完变量还得有一次部署才生效。
+
+> **没配也能跑**：`/ice` 返回 501，客户端静默退回纯 STUN —— 同网可用、跨网打不通。
+> 这是**有意为之**的降级，不是 bug。
+
+### 红线（改这里时不要破坏）
+
+* `/ice` 的**状态码语义是契约**：`200` 有凭据 / `501` 没配 / `502` 签发失败。
+  客户端据此决定是否降级，改掉语义会静默破坏降级路径。
+* 不要在前端写死任何 TURN 凭据。历史上就是这么干的，服务一关停就全线崩且毫无线索。
+* `iceServers()` 必须**同步**返回——PeerJS 只在构造 `Peer` 那一刻读 `config`。
+
+### 附：进房"没提示 / 看着没在连"（本轮已修）
+
+这是同一现象里混着的**纯前端问题，与网络无关**，本轮一并修掉了。三处原因与修法：
+
+* **失败原因压根没人渲染**。输 4 位房间码是**直接进房**（不经过确认页），而引擎写进
+  `voice.joinError` 的值，`App.tsx` 给 `LandingView` 的 props 里**没有它**——
+  `LandingView` 只用自己那份局部 state（只在"输入格式不对"时才赋值）。
+  → 表现：弹窗一关、屏幕上什么都不剩（这就是"自动回到首页、也没提示"）。
+  **修**：`LandingView` 新增 `error` / `joining` / `retrying` / `onCancelJoin` /
+  `onDismissError`，`App.tsx` 用 `voice.joinError` 与 `isJoinInFlight(status)` 喂进去；
+  首页现在直接显示"正在进入房间…"和失败原因，并带一个「知道了」收起。
+  （顺带：提交后**不再清空输入**，失败后一键即可重试；进房中把首页两个按钮**禁用**，
+  避免重复点"加入"再跑一次 `joinRoom` 把 12 秒超时重置掉。）
+* **重拨期看着像没在连**。进房等待最长约 36 秒（welcome 12s 超时 × 最多 3 次整体重拨），
+  期间引擎置 `reconnecting`，而确认页的"正在进入…"只认 `preparing`/`connecting`
+  → 按钮变回"加入并开麦"，用户重复点击还会重置 12 秒超时，等于自己把进房拖更久。
+  **修**：判定抽成 `isJoinInFlight()`（`protocol.ts`：三种状态都算进行中），首页与确认页
+  共用一份；确认页补一行等待说明 `JOIN_WAIT_HINT`。
+* **`peer-unavailable` 被吞掉**。信令服务器明确回答"目标 ID 不在注册表"时（PeerJS 的
+  Expire，消息里带目标 ID），`openPeer` 的 `finish()` 有 `settled` 守卫（peer 一 open
+  就为真），这条专用错误**永远报不出来**，只能等满 12s×3 才知道是"房主不在线"。
+  **修**：新增 `onLatePeerError()` 处理 "open 之后才到达的错误"——还有重拨机会就
+  **立刻**换新 ID 重拨（省掉 12 秒空等），机会用完就直说"房主不在线，邀请可能已失效"。
+  只认消息里带**房主 ID** 的那一类：访客之间的媒体呼叫失败不该把整个进房判死。
+
+回归测试：`tests/engine-join-handshake.test.ts`「房主不在线 → 立刻报错，不空等超时」
+（实测过：摘掉修复该用例即失败，状态停在 `connecting`）、
+`tests/voice-protocol.test.ts`「isJoinInFlight」。
+
+***
+
 ## 最近更新（2026-10-14）
 
 **围炉看投影：房间共享屏幕（本地方案验证 + 双端 E2E 通过）**
@@ -203,6 +291,11 @@ Chromium 用 `MediaFoundationUseSWBRCForH264Desktop` 让自带码率控制器接
 * ICE 从单个 STUN 扩为 **4 个公共 STUN（Cloudflare / Google / 小米 / B站）+ 免费 OpenRelay
   TURN 中继（80 / 443 / 443-TCP）**，多数对称 NAT、公司网、校园网也能打通；
   OpenRelay 是公共免费服务、可能限流，若要 100% 连通建议自建 coturn（`iceServers()` 已预留位置）。
+
+  > ⚠️ **2026-10-14 深夜订正**：OpenRelay 已**整体关停**（`openrelay.metered.ca` 现在解析到
+  > `192.0.2.1`，RFC 5737 的黑洞地址），上面这条结论当时就已经不成立了——中继不通，
+  > 跨网一律进不去。现已改为由服务端 `/ice` 签发 Cloudflare Realtime TURN 短期凭据，
+  > 详见上面「跨网进不去房间？先看这一节」。
 
 **小猪全面重做（3D 质感与生活感）**
 
@@ -370,12 +463,19 @@ A：早期链接里的地址是你电脑的地址（`localhost` 或局域网 `19
 
 **Q：个别网络连不通 / 一直"连接中"？**
 
-A：WebRTC 在大多数家庭宽带和手机热点可直连。本版本按 0 成本设计：配置了 4 个免费公共
-STUN（Cloudflare / Google / 小米 / B站）**并接入免费的 OpenRelay TURN 中继**（80/443/TCP），
-多数公司网、校园网、对称 NAT 也能打通。但 OpenRelay 是公共免费服务、可能被限流，
-极端网络下仍可能连不通——这时界面会如实提示而不是假装还在连。若要做到几乎 100% 连通，
-最稳妥是自建一台最便宜的 VPS 跑 coturn，把地址填进 `engine.ts` 的 `iceServers()`（已预留位置）。
-小猪头顶的状态点会显示当前是"直连"还是"走中继"，方便判断通话质量。
+A：**先分清"进不去房间"和"进去了画质差"——它们走两条独立链路，别混着治。**
+
+* **进不去**：走的是信令握手（PeerJS 公共云）＋ 数据通道的 ICE。同机 / 同网能进、
+  跨网进不去，说明**打洞失败且没有可用中继**。这正是 2026-10-14 定位到并修掉的问题：
+  当时唯一的 TURN 兜底（OpenRelay）已经关停（解析到 `192.0.2.1`）。现在改用服务端
+  `/ice` 签发的 Cloudflare Realtime TURN 短期凭据——**但前提是服务端配了
+  `TURN_KEY_ID` / `TURN_KEY_API_TOKEN`**（见「打洞与 TURN 中继」）。没配就自动退回纯
+  STUN，跨网仍然打不通；此时 `/ice` 返回 501，属预期降级而非故障。
+* **画质差**：走媒体链路，才轮到带宽与中继限速。看灯箱数据条上的「直连 / 经中继」与
+  「可用 XXXX kbps」判断——够 8~10 Mbps 就能稳 1080p，只有 1~2 Mbps 就得治链路。
+* 要做到国内几乎 100% 连通、且延迟最低，最稳妥仍是**自建一台国内 VPS 跑 coturn**，
+  地址与凭据挂在 `src/client/voice/ice.ts` 的 `FALLBACK` 旁边即可。
+* 小猪头顶的状态点显示当前是"直连"还是"走中继"，方便判断通话质量。
 
 **Q：房主离开会怎样？**
 
@@ -472,10 +572,11 @@ npm install                 # 安装依赖
 npm run dev                 # 本地开发服务器（网页）
 npm run tauri dev           # 桌面端开发模式（自动起 dev 服务器 + Tauri 窗口）
 npm run typecheck           # 类型检查
-npm test                    # 单元测试（155 项）
+npm test                    # 单元测试（187 项）
 npm run build:web:pages     # 构建静态网页到 dist-web
 npm run tauri build         # 本地出桌面安装包（更新签名需要环境变量，一般直接用 CI）
 npm run deploy:pages        # 手动部署网页到 Cloudflare Pages（复用本机 wrangler 凭据）
+npm run pages:env           # 只把 .dev-secrets.json 的密钥写进 Pages 环境变量，不上传站点
 npm run publish:desktop     # 手动发布桌面端更新源到 Pages（CI 通常自动做，此为兜底）
 npm run status:pages        # 查看 Pages 部署状态
 npm run bump -- 1.0.2       # 发新版本：改版本号 → 提交 → 打 tag 推送（CI 出包并自动发布到 Pages）
@@ -527,6 +628,7 @@ npm run bump -- 1.0.2       # 发新版本：改版本号 → 提交 → 打 tag
   * `protocol.ts`：房间码 / 邀请解析 / 握手证明 / 准入裁决 / 线上消息校验（纯逻辑，可单测）
   * `engine.ts`：mesh 引擎（准入握手、心跳、媒体连接、RNNoise 降噪链、说话检测、资源回收）
   * `devices.ts`：麦克风采集、扬声器绑定、设备枚举、麦克风测试
+  * `ice.ts`：ICE 配置（STUN 兜底 + 拉取 /ice 的 Cloudflare TURN 短期凭据，带缓存与降级）
   * `identity.ts` / `settings.ts` / `storage.ts`：本机身份与设置持久化
   * `screen-share.ts`：屏幕共享链路（采集约束、码率/降级/自适应调谐器、H264 协商重排
     `preferH264Sdp`、抖动缓冲分级、simulcast 发布、ICE 自愈）

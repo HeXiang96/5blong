@@ -5,13 +5,16 @@
  * Cloudflare Realtime SFU 的 App Secret 只能放在可信后端（见 SCREENSHARE-PLAN.md §B）。
  * 本地验证时用这个 ~100 行的 Node 代理扮演 Worker 的角色：
  *   前端 → /sfu/*（无密钥） → 这里补 Bearer 密钥 → rtc.live.cloudflare.com
+ *   前端 → /ice    （无密钥） → 这里补 TURN key → 签发短期凭据
  *
  * 生产环境的等价物是 worker/index.js（Wrangler 部署），接口完全一致，
  * 所以前端代码在"本地代理"与"线上 Worker"之间零改动切换。
  *
  * 用法：
  *   node scripts/dev-sfu-server.mjs
- * 凭证读取顺序：环境变量 SFU_APP_ID / SFU_APP_SECRET → .dev-secrets.json。
+ * 凭证读取顺序：环境变量 → .dev-secrets.json。两组独立凭证，缺哪组跳哪组：
+ *   SFU_APP_ID / SFU_APP_SECRET      → /sfu/*
+ *   TURN_KEY_ID / TURN_KEY_API_TOKEN → /ice
  * 凭证文件已进 .gitignore，绝不入库。
  */
 
@@ -39,7 +42,24 @@ function loadSecrets() {
   return null;
 }
 
+/** TURN key（与 SFU 的 appId/secret 是两套）：环境变量优先，其次 .dev-secrets.json。 */
+function loadTurnSecrets() {
+  if (process.env.TURN_KEY_ID && process.env.TURN_KEY_API_TOKEN) {
+    return { keyId: process.env.TURN_KEY_ID, apiToken: process.env.TURN_KEY_API_TOKEN };
+  }
+  try {
+    const raw = JSON.parse(readFileSync(path.join(HERE, "..", ".dev-secrets.json"), "utf8"));
+    if (typeof raw.turnKeyId === "string" && typeof raw.turnKeyApiToken === "string") {
+      return { keyId: raw.turnKeyId, apiToken: raw.turnKeyApiToken };
+    }
+  } catch {
+    /* 见 /health 的 turn 字段 */
+  }
+  return null;
+}
+
 const secrets = loadSecrets();
+const turnSecrets = loadTurnSecrets();
 
 /*
  * 发布登记表（防串流双保险）。
@@ -139,7 +159,50 @@ const server = createServer(async (req, res) => {
 
   if (url.pathname === "/health") {
     res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ ok: true, secrets: Boolean(secrets), appId: secrets?.appId ?? null }));
+    res.end(
+      JSON.stringify({
+        ok: true,
+        secrets: Boolean(secrets),
+        appId: secrets?.appId ?? null,
+        turn: Boolean(turnSecrets),
+      }),
+    );
+    return;
+  }
+
+  // /ice → TURN 短期凭据（与 worker/_worker.pages.js 的契约一致）。
+  // 本地双窗口自测走 host candidate 直连，用不到 TURN；但保持接口一致，
+  // 让"本地能跑"不会掩盖"线上才炸"的差异。
+  if (url.pathname === "/ice") {
+    if (!turnSecrets) {
+      res.writeHead(501, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "turn key not configured" }));
+      return;
+    }
+    try {
+      const upstream = await fetch(
+        `${SFU_BASE}/turn/keys/${turnSecrets.keyId}/credentials/generate-ice-servers`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${turnSecrets.apiToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ ttl: 86400 }),
+        },
+      );
+      if (!upstream.ok) {
+        res.writeHead(502, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: `turn credential failed: ${upstream.status}` }));
+        return;
+      }
+      const data = await upstream.json();
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ iceServers: data.iceServers ?? [] }));
+    } catch (error) {
+      res.writeHead(502, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: `turn upstream unreachable: ${error.message}` }));
+    }
     return;
   }
 

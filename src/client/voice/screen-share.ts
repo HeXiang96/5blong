@@ -332,8 +332,16 @@ export interface ScreenStatsSummary {
   powerEfficient: boolean;
   /** 发送端：受限原因（none / bandwidth / cpu / other）。 */
   limitation: string;
-  /** 发送端：链路可用带宽估计（kbps）。 */
+  /**
+   * 链路可用带宽估计（kbps）。
+   *
+   * 取自 `candidate-pair.availableOutgoingBitrate`——**链路真实容量**。
+   * 原实现读的是 `outbound-rtp` 上的同名字段，而 Chrome 不往那里报，
+   * 导致发送端永远看不到"可用 XXX kbps"这一项（调参等于闭眼掷骰子）。
+   */
   availableKbps: number;
+  /** 这条链路实际走通的候选对类型：直连 / 经中继（relay = 走了 TURN 中继）。 */
+  linkType: "direct" | "relay" | "unknown";
   /** 发送端：单帧编码耗时（ms）——持续走高＝没吃到硬编。 */
   encodeMs: number;
   /** 接收端：卡顿/冻结计数。 */
@@ -356,6 +364,7 @@ const EMPTY_SUMMARY: ScreenStatsSummary = {
   powerEfficient: false,
   limitation: "none",
   availableKbps: 0,
+  linkType: "unknown",
   encodeMs: 0,
   frozen: 0,
   lossPct: 0,
@@ -402,6 +411,20 @@ export function summarizeScreenStats(entries: StatsEntry[], prev: RateSample | n
   const target = outbound ?? inbound;
   if (!target) return EMPTY_SUMMARY;
 
+  // ICE 候选对里藏着两件"链路真相"，而 outbound-rtp 上都没有：
+  // ① availableOutgoingBitrate = 链路真实可用带宽（发送端判断"到底够不够"的唯一可靠依据）；
+  // ② 本地候选类型 relay = 画面经 TURN 中继（公共免费 TURN 常被限速，
+  //    是国内"糊成马赛克"的高频元凶；之前界面完全看不到这一项）。
+  let linkType: "direct" | "relay" | "unknown" = "unknown";
+  let linkAvailable = 0;
+  for (const entry of entries) {
+    if (entry.type !== "candidate-pair") continue;
+    if (entry["state"] !== "succeeded" && entry["nominated"] !== true) continue;
+    const local = byId.get(String(entry["localCandidateId"] ?? ""));
+    linkType = local?.["candidateType"] === "relay" ? "relay" : "direct";
+    linkAvailable = Math.max(linkAvailable, num(entry["availableOutgoingBitrate"]));
+  }
+
   const send = target === outbound;
   const codecEntry = target.codecId ? byId.get(String(target.codecId)) : undefined;
   const codec = (codecEntry?.mimeType ? String(codecEntry.mimeType) : "").replace(/^video\//i, "") || fallbackCodec;
@@ -417,7 +440,8 @@ export function summarizeScreenStats(entries: StatsEntry[], prev: RateSample | n
   const implementation = str(target[send ? "encoderImplementation" : "decoderImplementation"]);
   const powerEfficient = target[send ? "powerEfficientEncoder" : "powerEfficientDecoder"] === true;
   const limitation = send ? str(target["qualityLimitationReason"]) || "none" : "none";
-  const availableKbps = Math.round(num(target["availableOutgoingBitrate"]) / 1000);
+  // 优先 candidate-pair（真实容量）；outbound-rtp 上的同名字段留作老浏览器兜底
+  const availableKbps = Math.round((linkAvailable || num(target["availableOutgoingBitrate"])) / 1000);
   const frames = num(target["framesEncoded"]);
   const encodeMs = send && frames > 0 ? Number((num(target["totalEncodeTime"]) / frames * 1000).toFixed(1)) : 0;
   const frozen = num(target["freezeCount"]);
@@ -431,6 +455,8 @@ export function summarizeScreenStats(entries: StatsEntry[], prev: RateSample | n
   parts.push(`${kbps || "?"} kbps`);
   const accel = powerEfficient ? (send ? "硬编" : "硬解") : send ? "软编" : "软解";
   parts.push([codec, implementation, accel].filter(Boolean).join(" ") || "编码器?");
+  // 走没走中继直接写在数据条里：中继被限速时，"码率上不去"就不是编码参数能救的
+  if (linkType !== "unknown") parts.push(linkType === "relay" ? "经中继" : "直连");
   if (send) {
     if (limitation !== "none") parts.push(LIMITATION_TEXT[limitation] ?? limitation);
     if (encodeMs) parts.push(`编码 ${encodeMs}ms/帧`);
@@ -451,6 +477,7 @@ export function summarizeScreenStats(entries: StatsEntry[], prev: RateSample | n
     powerEfficient,
     limitation,
     availableKbps,
+    linkType,
     encodeMs,
     frozen,
     lossPct,
@@ -476,6 +503,12 @@ const TUNE_INTERVAL_MS = 3000;
 const LIMIT_STRIKES = 2;
 /** 连续几次"健康"才回升一档（迟滞，避免振荡）。 */
 const RECOVER_SAMPLES = 6;
+/**
+ * "链路吃紧"的判据：**可用带宽**低于码率上限的这个比例才算不够。
+ *
+ * 比旧判据（实际码率 < 上限 30%）宽松，且看的是链路真实容量、不是"发出去了多少"。
+ */
+const CAPACITY_FLOOR = 0.6;
 
 export interface ScreenSenderTunerOptions {
   /** 码率上限（P2P 分摊后的值；缺省取档位值）。 */
@@ -497,13 +530,50 @@ export interface ScreenSenderTuner {
 }
 
 /**
+ * 发送端此刻是否"链路吃紧"（该降档）。纯函数，便于把判据钉死在单测里。
+ *
+ * ① 发送端自述受限（`bandwidth` / `cpu`）→ 是；
+ * ② 否则看链路**真实可用带宽**是否明显低于我们要的码率上限（低于 60% 才算）；
+ * ③ 两者都拿不到 → **判为不吃紧**（宁可不降档，也不误降）。
+ *
+ * ⚠️ 绝对不要用"实际码率远低于上限"来反推：静态画面（PPT、看文档、桌面不动）
+ * 本来就只产出几百 kbps 且 `limitation === "none"`，那会把"画面没动"读成"带宽不够"，
+ * 每 6 秒降一档一路降到底；而回升判据若同样基于码率，静态画面永远不满足 →
+ * 掉到最低档再也回不来（实测：2 人 P2P 房 1920×1080 自行走到 674×379）。
+ *
+ * simulcast 多档发布时不做 ② 的推断：这条链路的容量由 SFU 按观众分层消化，
+ * 源头降分辨率会连累所有观众。
+ */
+export function screenLinkStrained(
+  summary: ScreenStatsSummary,
+  maxBitrate: number,
+  simulcast = false,
+): boolean {
+  if (summary.limitation === "bandwidth" || summary.limitation === "cpu") return true;
+  if (simulcast) return false;
+  if (!(maxBitrate > 0) || !(summary.availableKbps > 0)) return false;
+  // ⚠️ 单位陷阱：availableKbps 是 kbps，maxBitrate 是 bps，必须统一后再比。
+  // 原实现的判据 `summary.kbps < baseBitrate * 0.3` 正是栽在这里——
+  // 62 kbps < 8_000_000 bps × 0.3（=2.4 Mbps）**恒为真**，
+  // 于是 P2P 发送端开播后每 6 秒无条件降一档，约 20 秒降到底（674×379）。
+  return summary.availableKbps * 1000 < maxBitrate * CAPACITY_FLOOR;
+}
+
+/**
  * 给一条画面发送链路挂上"自适应降档"（SCREENSHARE-PERF-PLAN §P0-4 / §P2-14）。
  *
- * 依据 `outbound-rtp.qualityLimitationReason` 决策：
- * - `bandwidth`：链路不够 —— 降分辨率（降多少像素就省多少码率，且比压质量耐看）；
- * - `cpu`：编码器跟不上 —— 同样降分辨率，并把帧率压到 30（多半是没吃到硬编）；
- * - 持续健康：缓慢回升一档（迟滞 6 次采样 ≈ 18s，避免来回跳）。
+ * 两条依据：
+ * - `outbound-rtp.qualityLimitationReason`（发送端自述）：`bandwidth` 链路不够、
+ *   `cpu` 编码器跟不上 —— 都降分辨率（省像素比压质量耐看），`cpu` 时另把帧率压到 30；
+ * - `candidate-pair.availableOutgoingBitrate`（链路真实容量）：容量低于上限 60% 才算吃紧。
  *
+ * ⚠️ 这里**绝不能**拿"实际码率远低于上限"当判据（原实现就是这么写的）：
+ * 静态画面（PPT、看文档、桌面不动）本来就只产出几百 kbps，且此时
+ * `limitation === "none"`——它把"画面没动"误读成"带宽不够"，于是每 6 秒降一档、
+ * 一路降到底；而回升判据同样基于码率，静态画面永远不满足 →
+ * 掉到最低档就再也回不来（实测故障：2 人 P2P 房，1920×1080 自行走到 674×379）。
+ *
+ * 持续健康：缓慢回升一档（迟滞 6 次采样 ≈ 18s，避免来回跳）。
  * 只在"确实受限"时动，且一次只动一档；`stop()` 后不再改参数。
  */
 export function createScreenSenderTuner(
@@ -546,10 +616,9 @@ export function createScreenSenderTuner(
     if (summary.role !== "send") return;
     prev = summary.sample;
 
-    const limited = summary.limitation === "bandwidth" || summary.limitation === "cpu";
-    // 兜底：个别浏览器不报 limitation，但实际码率远低于上限，同样按受限处理
-    const starved = !options.simulcast && !!baseBitrate && summary.kbps > 0 && summary.kbps < baseBitrate * 0.3;
-    if (limited || starved) {
+    // 判据抽成纯函数（screenLinkStrained）：让"静态画面不许降档"这条有单测钉住，
+    // 不至于哪天又被改回"用实际码率反推链路"。
+    if (screenLinkStrained(summary, baseBitrate ?? 0, options.simulcast === true)) {
       healthy = 0;
       strikes += 1;
       if (strikes >= LIMIT_STRIKES && step < RESOLUTION_LADDER.length - 1) {

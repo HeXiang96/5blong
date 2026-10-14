@@ -13,8 +13,12 @@
  * 部署（上线时执行，本地验证不需要它）：
  *   1. wrangler secret put SFU_APP_ID
  *   2. wrangler secret put SFU_APP_SECRET
- *   3. wrangler deploy
- *   4. 前端把 SFU_BASE 指到 Worker 域名（或在 Pages 域名上挂 /sfu 路由）。
+ *   3. wrangler secret put TURN_KEY_ID          ← /ice 用（P2P 打洞失败时的中继）
+ *   4. wrangler secret put TURN_KEY_API_TOKEN
+ *   5. wrangler deploy
+ *   6. 前端把 SFU_BASE 指到 Worker 域名（或在 Pages 域名上挂 /sfu 路由）。
+ *
+ * TURN key 与 SFU 的 appId/secret 是两套：前者管中继，后者管 SFU。
  */
 
 const SFU_BASE = "https://rtc.live.cloudflare.com/v1";
@@ -76,7 +80,16 @@ export default {
     const url = new URL(request.url);
 
     if (url.pathname === "/health") {
-      return json({ ok: true, configured: Boolean(env.SFU_APP_ID && env.SFU_APP_SECRET) });
+      return json({
+        ok: true,
+        configured: Boolean(env.SFU_APP_ID && env.SFU_APP_SECRET),
+        turn: Boolean(env.TURN_KEY_ID && env.TURN_KEY_API_TOKEN),
+      });
+    }
+
+    // /ice → Cloudflare TURN 短期凭据（签发不需要 SFU 的绑定，故放在凭据检查之前）
+    if (url.pathname === "/ice") {
+      return handleIce(request, env);
     }
 
     if (!env.SFU_APP_ID || !env.SFU_APP_SECRET || !env.REGISTRY) {
@@ -94,7 +107,6 @@ export default {
           "Access-Control-Max-Age": "86400",
         },
       });
-    }
     }
 
     // /sfu/sessions/...（或旧的单数写法）→ SFU 的 /apps/{appId}/sessions/...
@@ -166,4 +178,84 @@ function json(data, status = 200) {
     status,
     headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" },
   });
+}
+
+// ---------------------------------------------------------------------------
+// /ice —— Cloudflare Realtime TURN 凭据签发（与 _worker.pages.js 同一契约）
+// ---------------------------------------------------------------------------
+
+const TURN_API = "https://rtc.live.cloudflare.com/v1";
+const TURN_TTL_SECONDS = 86400;
+let iceCache = null;
+
+/**
+ * 签发 ICE 配置。状态码契约（客户端据此决定是否降级，不要改）：
+ *   200 → { iceServers: [...] }
+ *   501 → 没配 TURN key（客户端静默降级为纯 STUN）
+ *   502 → 配了但签发失败
+ */
+async function handleIce(request, env) {
+  if (request.method === "OPTIONS") {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+        "Access-Control-Max-Age": "86400",
+      },
+    });
+  }
+  if (request.method !== "GET") return json({ error: "method not allowed" }, 405);
+
+  const now = Date.now();
+  if (iceCache && iceCache.until > now) {
+    return new Response(iceCache.body, { status: 200, headers: iceHeaders() });
+  }
+
+  if (!env.TURN_KEY_ID || !env.TURN_KEY_API_TOKEN) {
+    return json({ error: "turn key not configured" }, 501);
+  }
+
+  let upstream;
+  try {
+    upstream = await fetch(
+      `${TURN_API}/turn/keys/${env.TURN_KEY_ID}/credentials/generate-ice-servers`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${env.TURN_KEY_API_TOKEN}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ ttl: TURN_TTL_SECONDS }),
+      },
+    );
+  } catch (error) {
+    return json({ error: `turn upstream unreachable: ${error.message}` }, 502);
+  }
+  if (!upstream.ok) {
+    return json({ error: `turn credential failed: ${upstream.status}` }, 502);
+  }
+
+  let data;
+  try {
+    data = await upstream.json();
+  } catch {
+    return json({ error: "turn credential not json" }, 502);
+  }
+  if (!Array.isArray(data?.iceServers) || data.iceServers.length === 0) {
+    return json({ error: "turn credential malformed" }, 502);
+  }
+
+  const body = JSON.stringify({ iceServers: data.iceServers });
+  iceCache = { body, until: now + (TURN_TTL_SECONDS - 3600) * 1000 };
+  return new Response(body, { status: 200, headers: iceHeaders() });
+}
+
+function iceHeaders() {
+  return {
+    "Content-Type": "application/json",
+    "Access-Control-Allow-Origin": "*",
+    "Cache-Control": "no-store",
+  };
 }

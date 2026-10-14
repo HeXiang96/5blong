@@ -857,6 +857,67 @@ html[data-theme="dark"] .vx-identity .vx-link-btn:hover {
   font-size: 16px;
 }
 
+/* ------------------------------------------------------------------
+   首页的进房进行中 / 失败原因。
+   以前首页既不显示"正在连"也不显示失败原因（输房间码不经确认页，
+   而引擎的 joinError 没人接），于是进不去时完全静默——弹窗一关什么都没有。
+   ------------------------------------------------------------------ */
+
+.vx-landing-note {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin-top: 12px;
+  padding: 11px 14px;
+  border-radius: var(--vx-radius-sm);
+  border: 1px solid var(--vx-line);
+  background: var(--vx-bg-2);
+  text-align: left;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.vx-landing-note-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.vx-landing-note-text b {
+  font-weight: 600;
+  font-size: 13.5px;
+}
+
+.vx-landing-note-text small {
+  color: var(--vx-text-faint);
+  font-size: 12px;
+}
+
+.vx-landing-note .vx-link-btn {
+  flex: 0 0 auto;
+}
+
+.vx-landing-note-busy {
+  color: var(--vx-text-dim);
+  border-color: var(--vx-accent);
+  background: var(--vx-accent-soft);
+}
+
+.vx-landing-note-busy .vx-landing-note-text b {
+  color: var(--vx-text);
+}
+
+.vx-landing-note-error {
+  border-color: var(--vx-danger);
+}
+
+.vx-landing-note-error .vx-landing-note-text b {
+  color: var(--vx-danger);
+}
+
 .vx-facts {
   display: flex;
   flex-wrap: wrap;
@@ -940,6 +1001,22 @@ html[data-theme="dark"] .vx-identity .vx-link-btn:hover {
 .vx-confirm-toggle small {
   color: var(--vx-text-faint);
   font-size: 12.5px;
+}
+
+/* 等待期说明（最长 ~36 秒：12s 超时 × 3 次拨号），让人知道"在等、别重复点"。 */
+.vx-confirm-wait {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0 0;
+  padding: 9px 12px;
+  border-radius: var(--vx-radius-sm);
+  border: 1px solid var(--vx-accent);
+  background: var(--vx-accent-soft);
+  color: var(--vx-text-dim);
+  font-size: 12.5px;
+  line-height: 1.45;
+  text-align: left;
 }
 
 .vx-confirm-actions {

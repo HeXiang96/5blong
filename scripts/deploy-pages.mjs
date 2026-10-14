@@ -14,8 +14,11 @@
  *   5. POST /pages/assets/upsert-hashes
  *   6. POST /accounts/:id/pages/projects/:name/deployments（multipart manifest）
  *
- * 用法：node scripts/deploy-pages.mjs [目录] [项目名] [分支]
+ * 用法：node scripts/deploy-pages.mjs [目录] [项目名] [分支] [--env-only]
  * 默认：dist-web / 5blong / main
+ * --env-only：只把 .dev-secrets.json 里的服务端凭证写进 Pages 环境变量，不上传站点
+ *             （Pages 是整站替换，单独跑一次普通部署会把线上的 /desktop/ 更新源删掉，
+ *              所以"只想同步密钥"时必须用这个开关）。
  */
 
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
@@ -26,9 +29,13 @@ import { fileURLToPath } from "node:url";
 import { blake3Hex } from "./lib/blake3.mjs";
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-const directory = path.resolve(root, process.argv[2] ?? "dist-web");
-const projectName = process.argv[3] ?? "5blong";
-const branch = process.argv[4] ?? "main";
+const flags = process.argv.slice(2).filter((arg) => arg.startsWith("--"));
+const positional = process.argv.slice(2).filter((arg) => !arg.startsWith("--"));
+const directory = path.resolve(root, positional[0] ?? "dist-web");
+const projectName = positional[1] ?? "5blong";
+const branch = positional[2] ?? "main";
+/** 只写 Pages 项目环境变量，不上传站点。 */
+const envOnly = flags.includes("--env-only");
 
 const API = "https://api.cloudflare.com/client/v4";
 /** wrangler 的公开 OAuth 客户端；refresh 用 PKCE，不需要 client secret。 */
@@ -216,22 +223,88 @@ function multipart(fields) {
   return { body: Buffer.concat(chunks), contentType: `multipart/form-data; boundary=${boundary}` };
 }
 
+// ------------------------------------------------------------- 环境变量
+
+/**
+ * 把本机 `.dev-secrets.json` 的两组服务端凭证写进 Pages 项目的生产环境变量。
+ *
+ * 两组独立凭证，缺哪组就跳过哪组（与 `scripts/dev-sfu-server.mjs` 的读取顺序一致）：
+ *   SFU_APP_ID / SFU_APP_SECRET      → `/sfu/*` 屏幕共享
+ *   TURN_KEY_ID / TURN_KEY_API_TOKEN → `/ice`   打洞失败时的中继（TURN key 与 SFU 是两套）
+ *
+ * 为什么要有 `--env-only`：Pages 的部署是**整站替换**，单独跑一次普通部署会把线上的
+ * `/desktop/` 更新源一起删掉。只想同步密钥时就用它，别顺手把站点重发了。
+ *
+ * 注意：环境变量是在**部署时**注入运行环境的，所以写完变量还得有一次部署才生效
+ * （CI 里没有 `.dev-secrets.json`，靠项目上的历史配置带到下一次部署）。
+ * 日志只打印键名，永不打印值。
+ */
+async function syncProjectEnv(token, account, project, required = false) {
+  const secretsFile = path.join(root, ".dev-secrets.json");
+  if (!existsSync(secretsFile)) {
+    const hint = `未找到 ${secretsFile}，无法同步 Pages 环境变量`;
+    if (required) throw new Error(hint);
+    log("env", `跳过：${hint}`);
+    return;
+  }
+  try {
+    const secrets = JSON.parse(readFileSync(secretsFile, "utf8"));
+    const wanted = {};
+    const appId = secrets.sfuAppId ?? secrets.appId;
+    const appSecret = secrets.sfuAppSecret ?? secrets.appSecret;
+    if (appId && appSecret) {
+      wanted.SFU_APP_ID = appId;
+      wanted.SFU_APP_SECRET = appSecret;
+    }
+    if (secrets.turnKeyId && secrets.turnKeyApiToken) {
+      wanted.TURN_KEY_ID = secrets.turnKeyId;
+      wanted.TURN_KEY_API_TOKEN = secrets.turnKeyApiToken;
+    }
+    if (Object.keys(wanted).length === 0) {
+      log("env", "本机密钥文件里没有可用的凭证，跳过");
+      return;
+    }
+
+    const existing = project.deployment_configs?.production?.env_vars ?? {};
+    const changed = Object.entries(wanted).filter(([key, value]) => existing[key]?.value !== value);
+    if (changed.length === 0) {
+      log("env", "Pages 环境变量已是最新，无需写入");
+      return;
+    }
+
+    // 合并写回：不动其它变量（项目上可能还有别处加的配置）。
+    const env_vars = { ...existing };
+    for (const [key, value] of Object.entries(wanted)) env_vars[key] = { value };
+    await api(token, `/accounts/${account.id}/pages/projects/${projectName}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ deployment_configs: { production: { env_vars } } }),
+    });
+    log("env", `已写入 Pages 环境变量：${changed.map(([key]) => key).join("、")}`);
+  } catch (error) {
+    if (required) throw error;
+    log("env", `环境变量写入跳过：${error.message}`);
+  }
+}
+
 // ------------------------------------------------------------------- 主流程
 
 async function main() {
-  if (!existsSync(directory) || !existsSync(path.join(directory, "index.html"))) {
-    throw new Error(`${directory} 不像是构建产物（缺少 index.html），请先构建`);
-  }
+  if (!envOnly) {
+    if (!existsSync(directory) || !existsSync(path.join(directory, "index.html"))) {
+      throw new Error(`${directory} 不像是构建产物（缺少 index.html），请先构建`);
+    }
 
-  // 屏幕共享同域接口：把 worker/_worker.pages.js 作为 _worker.js 附到部署里
-  // （Pages 高级模式；非 /sfu 请求回落静态资源）。**始终覆盖**——
-  // dist-deploy 会被复用，残留的旧 _worker.js 会把新修复顶掉（踩过坑）。
-  const workerSource = path.join(root, "worker", "_worker.pages.js");
-  const workerTarget = path.join(directory, "_worker.js");
-  if (existsSync(workerSource)) {
-    const { copyFileSync } = await import("node:fs");
-    copyFileSync(workerSource, workerTarget);
-    log("worker", "已附加 _worker.js（/sfu 屏幕共享接口）");
+    // 屏幕共享同域接口：把 worker/_worker.pages.js 作为 _worker.js 附到部署里
+    // （Pages 高级模式；非 /sfu 请求回落静态资源）。**始终覆盖**——
+    // dist-deploy 会被复用，残留的旧 _worker.js 会把新修复顶掉（踩过坑）。
+    const workerSource = path.join(root, "worker", "_worker.pages.js");
+    const workerTarget = path.join(directory, "_worker.js");
+    if (existsSync(workerSource)) {
+      const { copyFileSync } = await import("node:fs");
+      copyFileSync(workerSource, workerTarget);
+      log("worker", "已附加 _worker.js（/sfu 屏幕共享接口）");
+    }
   }
 
   const token = await getToken();
@@ -244,40 +317,11 @@ async function main() {
   const project = await api(token, `/accounts/${account.id}/pages/projects/${projectName}`);
   log("project", `${project.name} · 生产分支 ${project.production_branch}`);
 
-  // SFU 凭证 → Pages 项目环境变量（一次配置长期生效；CI 里没有 .dev-secrets.json，
-  // 靠这里的历史配置；本机发部署时若凭证有变化会自动更新）。
-  const secretsFile = path.join(root, ".dev-secrets.json");
-  if (existsSync(secretsFile)) {
-    try {
-      const secrets = JSON.parse(readFileSync(secretsFile, "utf8"));
-      const appId = secrets.sfuAppId ?? secrets.appId;
-      const appSecret = secrets.sfuAppSecret ?? secrets.appSecret;
-      if (appId && appSecret) {
-        const existing = project.deployment_configs?.production?.env_vars ?? {};
-        const same =
-          existing.SFU_APP_ID?.value === appId && existing.SFU_APP_SECRET?.value === appSecret;
-        if (!same) {
-          await api(token, `/accounts/${account.id}/pages/projects/${projectName}`, {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              deployment_configs: {
-                production: {
-                  env_vars: {
-                    ...existing,
-                    SFU_APP_ID: { value: appId },
-                    SFU_APP_SECRET: { value: appSecret },
-                  },
-                },
-              },
-            }),
-          });
-          log("env", "SFU 凭证已写入 Pages 项目环境变量");
-        }
-      }
-    } catch (error) {
-      log("env", `环境变量写入跳过：${error.message}`);
-    }
+  await syncProjectEnv(token, account, project, envOnly);
+
+  if (envOnly) {
+    log("done", "只写了环境变量，未上传站点（线上产物保持不变）");
+    return;
   }
 
   const files = walk(directory)

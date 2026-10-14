@@ -20,6 +20,16 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.4.0",
+    date: "2026-10-14",
+    lines: [
+      "跨网进不去房间：换了可用的中继",
+      "共享画面不再自己越播越糊",
+      "进房失败会说明原因，不用干等",
+      "灯箱新增：直连/中继 · 可用带宽",
+    ],
+  },
+  {
     version: "1.3.0",
     date: "2026-10-14",
     lines: [

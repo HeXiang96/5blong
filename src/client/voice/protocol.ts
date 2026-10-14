@@ -857,3 +857,23 @@ export function rejectText(reason: RejectReason): string {
 export const CODE_HINT = `${ROOM_CODE_LEN} 位房间码`;
 export const CODE_PLACEHOLDER = `例如 ${"1234".slice(0, ROOM_CODE_LEN)} 或邀请链接`;
 export const JOIN_PARSE_ERROR = `请输入${CODE_HINT}，或粘贴完整邀请链接`;
+
+/**
+ * 引擎的这三种状态都算"正在进房"，界面必须一视同仁地显示成进行中：
+ * - `preparing`：拿麦克风 / 建发送链；
+ * - `connecting`：向房主拨号（等 welcome，上限 `WELCOME_TIMEOUT_MS`）；
+ * - `reconnecting`：超时后**自动整体重拨**（换新 ID 重新注册，最多 `MAX_DIAL_ATTEMPTS` 次）。
+ *
+ * 为什么单独抽出来：确认页以前只认前两种，于是自动重拨那 24 秒里按钮会变回
+ * "加入并开麦"，看着像根本没在连，用户会反复点击——而重点一次就会重置 12 秒
+ * 超时，等于自己把进房拖得更久。这正是"点了没反应、也没提示"的现场之一。
+ */
+export function isJoinInFlight(status: string): boolean {
+  return status === "preparing" || status === "connecting" || status === "reconnecting";
+}
+
+/**
+ * 进房等待期的说明文案。上限 = `WELCOME_TIMEOUT_MS` × `MAX_DIAL_ATTEMPTS`（约 36s）。
+ * 说清"在等多久"和"别重复点"，比留一个转圈给人的确定感高得多。
+ */
+export const JOIN_WAIT_HINT = "网络较慢时会自动换线路重试，最长约半分钟，请不要重复点击";

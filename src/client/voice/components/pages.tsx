@@ -4,9 +4,9 @@ import { getVersion } from "@tauri-apps/api/app";
 import { boardEntries } from "../changelog";
 
 import { AVATAR_COLORS, initials, type Identity } from "../identity";
-import { CODE_HINT, CODE_PLACEHOLDER, JOIN_PARSE_ERROR, ROOM_CODE_LEN } from "../protocol";
+import { CODE_HINT, CODE_PLACEHOLDER, JOIN_PARSE_ERROR, JOIN_WAIT_HINT, ROOM_CODE_LEN } from "../protocol";
 import { saveIdentity } from "../identity";
-import { Avatar, Toggle } from "./ui";
+import { Avatar, Spinner, Toggle } from "./ui";
 import { PenFrame } from "./PigPen";
 import landingPigUrl from "../assets/landing-pig.gif?url";
 
@@ -36,6 +36,11 @@ export function LandingView({
   onJoin,
   onSettings,
   onCopyId,
+  joining = false,
+  retrying = false,
+  error = null,
+  onCancelJoin,
+  onDismissError,
 }: {
   identity: Identity;
   onIdentityChange: (next: Identity) => void;
@@ -43,6 +48,14 @@ export function LandingView({
   onJoin: (raw: string) => boolean;
   onSettings: () => void;
   onCopyId: () => void;
+  /** 已提交进房、正在连接（含超时后的自动重拨）。 */
+  joining?: boolean;
+  /** 处于自动重拨阶段（换新线路重试），文案要说清"还在努力"。 */
+  retrying?: boolean;
+  /** 引擎算出来的真实失败原因。**必须显示**，否则进房失败完全静默。 */
+  error?: string | null;
+  onCancelJoin?: () => void;
+  onDismissError?: () => void;
 }) {
   /**
    * 首页公告栏：可左右翻阅的过往更新（数据源见 ../changelog.ts，
@@ -54,7 +67,12 @@ export function LandingView({
     boardItems.length > 0 ? boardItems[boardIdx % boardItems.length] : undefined;
   const [joinOpen, setJoinOpen] = useState(false);
   const [joinText, setJoinText] = useState("");
-  const [joinError, setJoinError] = useState<string | null>(null);
+  /**
+   * 只负责"输入格式对不对"。进房失败的**真实原因**由引擎给出（`error` prop）——
+   * 以前这里只有一份组件内 state，首页没接引擎的 `joinError`，于是输房间码
+   * 进不去时一个字都不显示：弹窗一关就什么都没有（实测就是这个现象）。
+   */
+  const [parseError, setParseError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [draftName, setDraftName] = useState(identity.name);
   const viewWidth = typeof window !== "undefined" ? window.innerWidth : 1000;
@@ -88,14 +106,21 @@ export function LandingView({
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
+    // 上一次的失败原因先清掉，避免它盖住这一次的结果。
+    onDismissError?.();
     const ok = onJoin(joinText);
     if (!ok) {
-      setJoinError(JOIN_PARSE_ERROR);
+      setParseError(JOIN_PARSE_ERROR);
       return;
     }
-    setJoinError(null);
+    /*
+     * 格式没问题 → 交棒给引擎。这里**只关弹窗、不清输入**：
+     * 进房成不成要等引擎回报（可能是几秒，也可能要重拨半分钟），
+     * 首页上那两条（进行中 / 失败原因）由 props 驱动；
+     * 输入留着，失败后用户点一下就能重试。
+     */
+    setParseError(null);
     setJoinOpen(false);
-    setJoinText("");
   };
 
   const commitName = () => {
@@ -174,20 +199,65 @@ export function LandingView({
         </div>
 
         <div className="vx-actions">
-          <button type="button" className="vx-btn vx-btn-primary" onClick={onCreate}>
+          {/*
+            进房中禁用这两个按钮：重复点"加入"会再跑一次 joinRoom，
+            把 welcome 的 12 秒超时重置掉（等于自己把进房越拖越久）。
+          */}
+          <button
+            type="button"
+            className="vx-btn vx-btn-primary"
+            disabled={joining}
+            onClick={onCreate}
+          >
             <Plus size={18} /> 创建语音房
           </button>
           <button
             type="button"
             className="vx-btn vx-btn-ghost"
+            disabled={joining}
             onClick={() => {
-              setJoinError(null);
+              setParseError(null);
+              onDismissError?.();
               setJoinOpen(true);
             }}
           >
             <LogIn size={18} /> 加入语音房
           </button>
         </div>
+
+        {/*
+          进房的"进行中"与"失败原因"。这两条就是以前缺的那块：
+          输房间码是直接进房的（不经过确认页），失败原因以前没有任何组件渲染，
+          所以表现成"点完没反应、也没提示"。
+        */}
+        {joining ? (
+          <div className="vx-landing-note vx-landing-note-busy" role="status">
+            <Spinner size={15} />
+            <span className="vx-landing-note-text">
+              <b>{retrying ? "连接不畅，正在自动换线路重试…" : "正在进入房间…"}</b>
+              <small>{JOIN_WAIT_HINT}</small>
+            </span>
+            {onCancelJoin ? (
+              <button type="button" className="vx-link-btn" onClick={onCancelJoin}>
+                取消
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+
+        {!joining && error ? (
+          <div className="vx-landing-note vx-landing-note-error" role="alert">
+            <span className="vx-landing-note-text">
+              <b>没能进入房间</b>
+              <small>{error}</small>
+            </span>
+            {onDismissError ? (
+              <button type="button" className="vx-link-btn" onClick={onDismissError}>
+                知道了
+              </button>
+            ) : null}
+          </div>
+        ) : null}
 
         {/* 仅网页版显示：桌面端用户已在客户端内（那里显示版本徽标）。 */}
         {!isDesktop ? (
@@ -276,10 +346,11 @@ export function LandingView({
               placeholder={CODE_PLACEHOLDER}
               onChange={(event) => {
                 setJoinText(event.target.value);
-                setJoinError(null);
+                setParseError(null);
+                onDismissError?.();
               }}
             />
-            {joinError ? <p className="vx-field-error">{joinError}</p> : null}
+            {parseError ? <p className="vx-field-error">{parseError}</p> : null}
             <p className="vx-modal-hint">
               只输{ROOM_CODE_LEN}位房间码也能直接进房；想更私密就让房主发邀请链接。
             </p>
@@ -340,6 +411,14 @@ export function ConfirmView({
         </label>
 
         {error ? <p className="vx-field-error">{error}</p> : null}
+
+        {/* 等待期最长可达 ~36 秒（12s 超时 × 3 次拨号）：说清在等、别重复点。 */}
+        {joining ? (
+          <p className="vx-confirm-wait">
+            <Spinner size={14} />
+            <span>{JOIN_WAIT_HINT}</span>
+          </p>
+        ) : null}
 
         <div className="vx-confirm-actions">
           <button

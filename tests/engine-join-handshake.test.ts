@@ -6,7 +6,8 @@
  * 2. 只输房间码（无 roomKey、空证明）的访客同样放行；
  * 3. 非空但错误的证明（伪造）被拒；
  * 4. joined 之前 ping 不回、joined 之后 ping 回 pong（守卫顺序 catch-22 回归）；
- * 5. welcome 超时后自动整体重拨（新 Peer + 新访客 ID）并成功。
+ * 5. welcome 超时后自动整体重拨（新 Peer + 新访客 ID）并成功；
+ * 6. 房主不在线（信令回 peer-unavailable）时立刻报错，不空等 12s×3。
  *
  * PeerJS 与浏览器能力全部打桩：peerjs 模块被 vi.mock 替换，
  * AudioContext / AudioWorkletNode / navigator / document 在导入前
@@ -178,7 +179,13 @@ const mocks = vi.hoisted(() => {
       // 模拟信令黑洞：第一次 connect 永不建立
       if (stallFirst && connectCalls === 1) return mine;
       if (!target) {
-        queueMicrotask(() => this.emit("error", { type: "peer-unavailable" }));
+        // 与 peerjs 1.5.5 一致：错误消息里带目标 ID（引擎据此判断"是不是房主"）
+        queueMicrotask(() =>
+          this.emit("error", {
+            type: "peer-unavailable",
+            message: `Could not connect to peer ${dst}`,
+          }),
+        );
         return mine;
       }
       const theirs = new FakeConn(this.id);
@@ -200,7 +207,12 @@ const mocks = vi.hoisted(() => {
       const mine = new FakeCall(dst);
       const target = peers.find((p) => p.id === dst);
       if (!target) {
-        queueMicrotask(() => this.emit("error", { type: "peer-unavailable" }));
+        queueMicrotask(() =>
+          this.emit("error", {
+            type: "peer-unavailable",
+            message: `Could not connect to peer ${dst}`,
+          }),
+        );
         return mine;
       }
       const theirs = new FakeCall(this.id);
@@ -443,6 +455,32 @@ describe("VoiceMesh 加入握手", () => {
       p.id.startsWith("5b-g-"),
     );
     expect(guestPeers.length).toBe(2);
+  });
+
+  it("房主不在线（信令回 peer-unavailable）→ 立刻把原因说清楚，不空等超时", async () => {
+    // 没有任何房主注册过这个码：peer.connect 会立刻收到 peer-unavailable。
+    const holder = makeEvents();
+    const guest = new VoiceMesh(holder.events as any);
+    engines.push(guest);
+    const startedAt = Date.now();
+    await guest.join(
+      { code: "9999", hostId: "", roomKey: "" },
+      identity,
+      defaultSettings(),
+      false,
+    );
+    await sleep(60);
+
+    // 这条断言是本次修复的核心：以前 peer-unavailable 被 openPeer 的 settled
+    // 守卫吞掉，只能等 12s×3 才知道"房主不在线"（表现为长时间无任何提示）。
+    expect(lastStatus(holder)).toBe("error");
+    expect(holder.statuses.at(-1)?.detail).toContain("房主不在线");
+
+    // 重拨仍然要做满 3 次（换 ID 可能换到更通的后端），但每次都是毫秒级：
+    // 远快于「250ms 超时 × 3」的旧路径。
+    const guestPeers = mocks.peers.filter((p) => p.id.startsWith("5b-g-"));
+    expect(guestPeers).toHaveLength(3);
+    expect(Date.now() - startedAt).toBeLessThan(200);
   });
 });
 

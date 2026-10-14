@@ -1,6 +1,6 @@
 {
   "name": "5blong",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "private": true,
   "type": "module",
   "license": "MIT",
@@ -19,6 +19,7 @@
     "test:watch": "vitest",
     "check": "npm run typecheck && npm test && npm run build:web:pages",
     "deploy:pages": "node scripts/deploy-pages.mjs",
+    "pages:env": "node scripts/deploy-pages.mjs --env-only",
     "publish:desktop": "node scripts/publish-desktop.mjs",
     "status:pages": "node scripts/pages-status.mjs",
     "bump": "node scripts/bump-version.mjs"

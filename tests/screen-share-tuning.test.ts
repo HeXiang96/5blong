@@ -6,6 +6,8 @@
  * - P2P 上行分摊与降级阶梯
  * - 传输方式自动选择（人多切 SFU）
  * - getStats 读数摘要（发送端/接收端两个方向）
+ * - ICE 链路类型（直连 / 经中继）与真实可用带宽的读数来源
+ * - 降档判据：只看链路容量，不看实际码率（静态画面不得误降）
  * - 协议里的 simulcast 标记
  * - 设置迁移（传输方式缺省从 p2p 改 auto）
  */
@@ -16,6 +18,7 @@ import {
   autoTransportFor,
   perViewerBitrate,
   preferH264Sdp,
+  screenLinkStrained,
   summarizeScreenStats,
   type StatsEntry,
 } from "../src/client/voice/screen-share";
@@ -196,6 +199,134 @@ describe("summarizeScreenStats（灯箱数据条）", () => {
     const s = summarizeScreenStats([{ id: "A1", type: "transport" }], null);
     expect(s.role).toBeNull();
     expect(s.text).toBe("");
+  });
+});
+
+/** 造一份发送端读数：可指定实际码率 / 自述受限原因 / 链路容量 / 候选类型。 */
+function sendStats(p: {
+  bytes: number;
+  ts: number;
+  limitation?: string;
+  available?: number;
+  localType?: string;
+}): StatsEntry[] {
+  return [
+    { id: "C1", type: "codec", mimeType: "video/H264" },
+    {
+      id: "O1",
+      type: "outbound-rtp",
+      kind: "video",
+      codecId: "C1",
+      bytesSent: p.bytes,
+      timestamp: p.ts,
+      frameWidth: 1920,
+      frameHeight: 1080,
+      framesPerSecond: 60,
+      qualityLimitationReason: p.limitation ?? "none",
+    },
+    { id: "L1", type: "local-candidate", candidateType: p.localType ?? "host" },
+    {
+      id: "P1",
+      type: "candidate-pair",
+      state: "succeeded",
+      nominated: true,
+      localCandidateId: "L1",
+      remoteCandidateId: "R1",
+      ...(p.available === undefined ? {} : { availableOutgoingBitrate: p.available }),
+    },
+  ];
+}
+
+/** 连续两次采样（第二次才有码率差值）。 */
+function readSend(p: Parameters<typeof sendStats>[0], second: Parameters<typeof sendStats>[0]) {
+  const first = summarizeScreenStats(sendStats(p), null);
+  return summarizeScreenStats(sendStats(second), first.sample);
+}
+
+describe("ICE 链路读数（链路真相在 candidate-pair 里）", () => {
+  it("可用带宽取自 candidate-pair（outbound-rtp 上没有这个字段）", () => {
+    const s = summarizeScreenStats(sendStats({ bytes: 1_000, ts: 1_000, available: 20_000_000 }), null);
+    expect(s.availableKbps).toBe(20000);
+    expect(s.text).toContain("可用 20000 kbps");
+  });
+
+  it("走 TURN 中继时数据条直说「经中继」（限速元凶一眼可见）", () => {
+    const s = summarizeScreenStats(
+      sendStats({ bytes: 1_000, ts: 1_000, localType: "relay", available: 500_000 }),
+      null,
+    );
+    expect(s.linkType).toBe("relay");
+    expect(s.text).toContain("经中继");
+  });
+
+  it("直连时标「直连」，且候选对没选出来时不乱猜", () => {
+    const direct = summarizeScreenStats(sendStats({ bytes: 1_000, ts: 1_000 }), null);
+    expect(direct.linkType).toBe("direct");
+    expect(direct.text).toContain("直连");
+
+    const unknown = summarizeScreenStats([{ id: "O1", type: "outbound-rtp", kind: "video" }], null);
+    expect(unknown.linkType).toBe("unknown");
+    expect(unknown.text).not.toContain("经中继");
+  });
+});
+
+describe("screenLinkStrained（降档判据：看链路，不看码率）", () => {
+  const CAP = 10_000_000;
+
+  it("静态画面：码率只有 62 kbps 也不许降档（链路容量充足）", () => {
+    // 1000ms 内只发了 7750 字节 ≈ 62 kbps，但链路可用 20 Mbps
+    const s = readSend(
+      { bytes: 1_000, ts: 10_000, available: 20_000_000 },
+      { bytes: 8_750, ts: 11_000, available: 20_000_000 },
+    );
+    expect(s.kbps).toBe(62);
+    expect(screenLinkStrained(s, CAP)).toBe(false);
+  });
+
+  it("链路容量真的不够（如公共 TURN 被限速）→ 该降", () => {
+    const s = readSend(
+      { bytes: 1_000, ts: 10_000, available: 800_000 },
+      { bytes: 8_750, ts: 11_000, available: 800_000 },
+    );
+    expect(screenLinkStrained(s, CAP)).toBe(true);
+    // 同一份读数：链路容量充足时就不该降——判据看的是容量，不是码率
+    const ok = readSend(
+      { bytes: 1_000, ts: 10_000, available: 20_000_000 },
+      { bytes: 501_000, ts: 11_000, available: 20_000_000 },
+    );
+    expect(ok.kbps).toBe(4000); // 码率看着很健康
+    expect(screenLinkStrained(ok, CAP)).toBe(false);
+  });
+
+  it("发送端自述受限（bandwidth / cpu）→ 该降，与容量读数无关", () => {
+    const bw = readSend(
+      { bytes: 1_000, ts: 10_000, available: 20_000_000, limitation: "bandwidth" },
+      { bytes: 400_000, ts: 11_000, available: 20_000_000, limitation: "bandwidth" },
+    );
+    expect(screenLinkStrained(bw, CAP)).toBe(true);
+
+    const cpu = summarizeScreenStats(
+      sendStats({ bytes: 1_000, ts: 1_000, limitation: "cpu", available: 20_000_000 }),
+      null,
+    );
+    expect(screenLinkStrained(cpu, CAP)).toBe(true);
+  });
+
+  it("浏览器不报可用带宽时宁可不动（不误降）", () => {
+    const s = readSend(
+      { bytes: 1_000, ts: 10_000 },
+      { bytes: 3_000, ts: 11_000 },
+    );
+    expect(s.availableKbps).toBe(0);
+    expect(screenLinkStrained(s, CAP)).toBe(false);
+  });
+
+  it("simulcast 多档发布不看容量（分层交给 SFU，源头降会连累观众）", () => {
+    const s = readSend(
+      { bytes: 1_000, ts: 10_000, available: 800_000 },
+      { bytes: 8_750, ts: 11_000, available: 800_000 },
+    );
+    expect(screenLinkStrained(s, CAP, true)).toBe(false);
   });
 });
 

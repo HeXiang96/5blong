@@ -21,9 +21,15 @@ export default defineConfig({
     host: true,
     port: 8787,
     strictPort: true,
-    // 屏幕共享：/sfu/* 转发到本地 SFU 代理（scripts/dev-sfu-server.mjs，需先启动）。
+    // /sfu/*（屏幕共享）与 /ice（TURN 凭据）都转发到本地代理
+    // （scripts/dev-sfu-server.mjs，需先启动）。两条路径在线上都由
+    // worker/_worker.pages.js 提供，保持同源才能"本地能跑 = 线上能跑"。
     proxy: {
       "/sfu": {
+        target: "http://127.0.0.1:8789",
+        changeOrigin: true,
+      },
+      "/ice": {
         target: "http://127.0.0.1:8789",
         changeOrigin: true,
       },
@@ -32,6 +38,10 @@ export default defineConfig({
   preview: {
     proxy: {
       "/sfu": {
+        target: "http://127.0.0.1:8789",
+        changeOrigin: true,
+      },
+      "/ice": {
         target: "http://127.0.0.1:8789",
         changeOrigin: true,
       },

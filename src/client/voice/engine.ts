@@ -63,41 +63,23 @@ import { Timers } from "./timers";
 import { VoiceActivityDetector } from "./voice-activity";
 import type { AudioProcessing, VoiceSettings } from "./settings";
 import { bindSpeaker, openMic, resumeAudio } from "./devices";
+import { ensureIceServers, iceServers } from "./ice";
 
-/**
- * ICE 服务器：多个公共 STUN（含国内可达）+ 免费公共 TURN 中继兜底。
+/*
+ * ICE 配置已迁到 ./ice.ts（STUN 兜底 + 由服务端 /ice 签发 Cloudflare TURN 短期凭据）。
  *
- * 为什么这样配（对应"跨网无声、同设备有声"）：
- * - 同一台设备两端走 host candidate（本机 / 局域网地址），不需要 STUN，所以能听到；
- * - 跨网络必须靠 STUN 拿到公网映射地址（srflx）才能打洞。Google STUN 在
- *   大陆基本不可用，因此补充国内可达的 STUN；
- * - 对称 NAT / 公司网 / 校园网靠 STUN 打不通，必须有 TURN 中继兜底。
+ * 为什么必须搬走：这里原先写死的是 OpenRelay 的公开静态凭据，而该服务已关停
+ * （openrelay.metered.ca 现解析到 192.0.2.1，RFC 5737 的不可路由黑洞地址）。
+ * 后果不是"限速"，而是**任何需要中继的组合都彻底建不起连接**——
+ * 表现为"同机能进、跨网怎么都进不去"。同时长密钥写死在前端本身也不该做。
  *
- * 注意：免费公共 TURN（Open Relay）可能限流、在大陆未必能连上。
- * 若要彻底保证任何网络都能打通，建议自建 coturn（一台最便宜的 VPS），
- * 把下面的 TURN 段换成自己的地址与凭据即可。
+ * 仍然成立的三条前提（对应"同设备有声、跨网无声"）：
+ * - 同一台设备两端走 host candidate（本机 / 局域网地址），不碰 STUN/TURN，必通；
+ * - 跨网要先靠 STUN 拿到公网映射地址（srflx）才有打洞的资格。Google STUN 在大陆
+ *   基本不可用，所以兜底表里补了 miwifi / bilibili 两个国内可达的；
+ * - 对称 NAT / 公司网 / 校园网 / 运营商 CGNAT 靠 STUN 打不通，**必须**有 TURN。
+ *   这正是这次要修的那一环。
  */
-function iceServers(): RTCIceServer[] {
-  return [
-    {
-      urls: [
-        "stun:stun.cloudflare.com:3478",
-        "stun:stun.l.google.com:19302",
-        "stun:stun.miwifi.com:3478",
-        "stun:stun.chat.bilibili.com:3478",
-      ],
-    },
-    {
-      urls: [
-        "turn:openrelay.metered.ca:80",
-        "turn:openrelay.metered.ca:443",
-        "turn:openrelay.metered.ca:443?transport=tcp",
-      ],
-      username: "openrelayproject",
-      credential: "openrelayproject",
-    },
-  ];
-}
 
 /**
  * 访客首次加入时的"整体重拨"次数。
@@ -408,6 +390,9 @@ export class VoiceMesh {
     await this.acquireMic(settings, muted);
     await this.buildOutgoing(settings);
     this.loadPeerAudioSettings(settings);
+    // PeerJS 只在构造 Peer 那一刻读 config，所以 TURN 凭据必须在这之前就绪。
+    // 超时上限 2.5s，拿不到就先用纯 STUN 开始打洞——不为了中继把建房卡住。
+    await ensureIceServers();
 
     let attempt = 0;
     while (!this.destroyed && attempt < 3) {
@@ -481,6 +466,12 @@ export class VoiceMesh {
     await this.acquireMic(settings, muted);
     await this.buildOutgoing(settings);
     this.loadPeerAudioSettings(settings);
+    /*
+     * 进房握手本身也是一条 RTCPeerConnection（PeerJS 数据通道），同样要过 ICE。
+     * 跨网打洞失败时如果没有可用 TURN，这里就会一直建不起连接、超时 ×3 —— 
+     * 这正是"跨网进不去"的现场。故与建房一样，先把凭据备好。
+     */
+    await ensureIceServers();
 
     const outcome = await this.openPeer(guestPeerId(randomToken(12)));
     if (this.destroyed) return;
@@ -704,8 +695,17 @@ export class VoiceMesh {
         finish("open");
       });
 
-      peer.on("error", (error: { type?: string }) => {
+      peer.on("error", (error: { type?: string; message?: string }) => {
         const type = error?.type ?? "unknown";
+        /*
+         * peer 已经 open 之后才到的错误：上面那个 `finish` 有 settled 守卫，
+         * 全都会被丢掉（`peer-unavailable` 就是这么消失的）。交给专门的分支处理，
+         * 否则访客只能干等 12 秒超时 ×3 才知道"房主不在线"。
+         */
+        if (settled) {
+          this.onLatePeerError(type, String(error?.message ?? ""));
+          return;
+        }
         if (type === "unavailable-id") {
           finish("retry");
           return;
@@ -730,6 +730,36 @@ export class VoiceMesh {
         }
         finish(`连接异常：${type}`);
       });
+    });
+  }
+
+  /**
+   * peer 已经 open（信令连上了）之后才到达的错误。
+   *
+   * 唯一要立刻处理的是 `peer-unavailable`：它由 PeerJS 信令服务器在
+   * "目标 ID 不在注册表里"时下发（协议里的 Expire），消息形如
+   * `Could not connect to peer <id>`。以前这个分支被 `openPeer` 的 settled
+   * 守卫吞掉，访客只能等满 12 秒超时再自动重拨（最多 3 次 ≈ 36 秒）才看到一句
+   * "房主没有响应"——这就是实测里"点了没反应、也没有任何提示"的现场。
+   *
+   * 现在：还有重拨机会就**立刻**换新 ID 重拨（省掉 12 秒空等），
+   * 机会用完就直接把原因说清楚。只认"打不通房主"这一条——
+   * 访客之间的媒体呼叫失败不该把整个进房判死，所以必须核对错误里的目标 ID。
+   */
+  private onLatePeerError(type: string, message: string): void {
+    if (type !== "peer-unavailable") return;
+    if (this.destroyed || this.joined || !this.hostId) return;
+    // 消息里没带 ID（个别版本不填）时不敢下判断：宁可按老路走超时，也不误杀。
+    if (!message.includes(this.hostId)) return;
+    if (this.dialAttempts >= MAX_DIAL_ATTEMPTS - 1) {
+      this.clearWelcomeDeadline();
+      this.events.status("error", "房主不在线，邀请可能已失效");
+      return;
+    }
+    // 在 peer 自己的事件回调里销毁 peer 不安全，挪到下一个 tick。
+    this.timers.after(0, () => {
+      if (this.destroyed || this.joined) return;
+      void this.redialWithFreshPeer();
     });
   }
 

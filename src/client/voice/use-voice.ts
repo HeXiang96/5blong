@@ -47,6 +47,7 @@ import {
   type Invite,
   type JoinTarget,
 } from "./protocol";
+import { refreshIceServers } from "./ice";
 import { loadSettings, saveSettings, type VoiceSettings } from "./settings";
 import { readJson, writeJson } from "./storage";
 
@@ -747,6 +748,17 @@ export function useVoice() {
       );
     }
   }, [joined, ended]);
+
+  /**
+   * 启动即预热 ICE 配置（TURN 凭据）。
+   *
+   * 放到首页而不是进房时才拉，是因为进房路径上只给它 2.5 秒——在用户点"加入"
+   * 到真正拨号之间把这次网络往返藏掉，跨网用户第一次点就能用上中继。
+   * 失败无所谓：进房路径自己会再试，且拿不到就退回纯 STUN。
+   */
+  useEffect(() => {
+    void refreshIceServers();
+  }, []);
 
   /** 邀请链接直达：先落到确认页（一次点击同时解决隐私与浏览器自动播放策略）。 */
   const autoJoinRef = useRef(false);
