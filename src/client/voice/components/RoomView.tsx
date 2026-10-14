@@ -238,8 +238,18 @@ export function RoomView({
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") setShareMenuOpen(false);
     };
+    // 点菜单和共享按钮以外的地方也关（按钮自身的 onClick 负责开/关切换）
+    const onDown = (event: PointerEvent) => {
+      const t = event.target as HTMLElement | null;
+      if (t?.closest(".vx-share-menu") || t?.closest(".vx-ctl")) return;
+      setShareMenuOpen(false);
+    };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("pointerdown", onDown);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("pointerdown", onDown);
+    };
   }, [shareMenuOpen]);
 
   /*

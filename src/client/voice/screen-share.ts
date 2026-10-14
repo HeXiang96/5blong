@@ -59,13 +59,23 @@ export const SHARE_QUALITY_PRESETS: Record<ShareQuality, ShareQualityPreset> = {
   fhd1080: { label: "超清 1080p", width: 1920, height: 1080, fps: 60, maxBitrate: 10_000_000 },
 };
 
-/** getDisplayMedia 的视频约束（按档位生成）。 */
+/** getDisplayMedia 选择器提示项（Chromium 支持；TS 类型未收录，运行时透传）。 */
+export function pickerHints(): Record<string, unknown> {
+  return {
+    preferCurrentTab: true,
+    selfBrowserSurface: "exclude",
+    surfaceSwitching: "exclude",
+    monitorTypeSurfaces: "include",
+  };
+}
+
+/** getDisplayMedia 的视频约束（按档位生成；ideal+max 双限，4K 显示器不会被原样采集）。 */
 export function shareVideoConstraints(quality: ShareQuality): MediaTrackConstraints {
   const preset = SHARE_QUALITY_PRESETS[quality];
   return {
-    width: { ideal: preset.width },
-    height: { ideal: preset.height },
-    frameRate: { ideal: preset.fps },
+    width: { ideal: preset.width, max: preset.width },
+    height: { ideal: preset.height, max: preset.height },
+    frameRate: { ideal: preset.fps, max: preset.fps },
   };
 }
 
@@ -76,12 +86,16 @@ function applySenderQuality(pc: RTCPeerConnection, quality: ShareQuality): void 
     if (sender.track?.kind !== "video") continue;
     const params = sender.getParameters();
     if (!params.encodings || params.encodings.length === 0) params.encodings = [{}];
+    // degradationPreference 是较新的规范属性，TS 的 DOM 类型还没收录（Chrome 已实现）
+    type Encoding = RTCRtpEncodingParameters & { degradationPreference?: string };
     params.encodings[0] = {
       ...params.encodings[0],
+      // 屏幕内容要"宁掉帧不降清"：分辨率维持原样，带宽/CPU 吃紧时浏览器降帧率
+      degradationPreference: "maintain-resolution",
       maxBitrate: preset.maxBitrate,
       maxFramerate: preset.fps,
       scaleResolutionDownBy: 1,
-    };
+    } as Encoding;
     // setParameters 可能被浏览器拒绝（协商时序），失败不致命：采集约束已限了分辨率
     sender.setParameters(params).catch(() => {});
   }
@@ -182,7 +196,9 @@ export async function publishScreen(
 ): Promise<ScreenPublication> {
   const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
   // 屏幕共享偏好平滑动态画面（60fps），明确告诉浏览器编码倾向
-  for (const track of stream.getVideoTracks()) track.contentHint = "motion";
+  // 屏幕内容（文字/UI/网页）用 "detail"：编码器保清晰度而不是帧率，
+  // 用 "motion" 会让编码器降分辨率换取帧率——画面发糊的元凶就是它。
+  for (const track of stream.getVideoTracks()) track.contentHint = "detail";
 
   const videoTrack = stream.getVideoTracks()[0];
   const audioTrack = stream.getAudioTracks()[0];

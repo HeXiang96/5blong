@@ -590,3 +590,9 @@ html[data-daypart="night"] .vx-proj-beam {
 
 /* 控制栏是 relative 锚点（共享菜单从按钮上弹） */
 .vx-controls-tray { position: relative; }
+
+/* 放大灯箱打开时：冻结场景全部装饰动画，把渲染资源让给视频（防抖动） */
+html.vx-lightbox-open .vx-stage,
+html.vx-lightbox-open .vx-stage * {
+  animation-play-state: paused !important;
+}
