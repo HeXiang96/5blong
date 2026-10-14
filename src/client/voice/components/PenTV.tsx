@@ -274,7 +274,13 @@ export function PenTvLightbox({ state, stream, sharerName, onClose }: PenTvLight
       if (event.key === "Escape") onClose();
     };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    // 放大时暂停场景里的全部无限动画（火苗/雪花/光束…）：
+    // 它们在灯箱背后持续抢合成器时间，会让视频解码渲染发抖
+    document.documentElement.classList.add("vx-lightbox-open");
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.documentElement.classList.remove("vx-lightbox-open");
+    };
   }, [onClose]);
 
   return createPortal(

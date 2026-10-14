@@ -17,6 +17,7 @@ import {
   createDemoStream,
   debugTvDemoFrom,
   debugTvFrom,
+  pickerHints,
   publishScreen,
   shareVideoConstraints,
   subscribeScreen,
@@ -418,7 +419,14 @@ export function useVoice() {
         stream = await navigator.mediaDevices.getDisplayMedia({
           video: shareVideoConstraints(quality),
           audio: false,
-        });
+          // 选择器体验（Chromium 系；TS 类型未收录的用 as 兜底）：
+          // - preferCurrentTab：默认就选中当前标签页，不用翻找
+          // - selfBrowserSurface exclude：把 5blong 自己的页面从列表里剔除，
+          //   防止把房间网页共享进房间（自己拍自己）
+          // - surfaceSwitching exclude：去掉"切换到此标签页"按钮，
+          //   共享别的标签页时浏览器就不会自动跳过去
+          ...(pickerHints() as Record<string, never>),
+        } as DisplayMediaStreamOptions);
         const videoTrack = stream.getVideoTracks()[0];
         if (!videoTrack) {
           for (const track of stream.getTracks()) track.stop();
