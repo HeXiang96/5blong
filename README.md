@@ -367,14 +367,13 @@ TURN key 与 SFU 的 appId/secret **是两套**，分别创建：
 <!-- AUTO-LOG:START -->
 ### 近期提交（自动生成）
 
+- `47eaaad` release: v1.4.1（10-14 20:19）
 - `4fc4160` release: v1.4.0（10-14 19:35）
 - `cc80a56` release: v1.3.0（10-14 18:15）
 - `ebea490` docs: 清理 piik 残留——文档去掉「对标 Piik」表述、脚本与方案里的旧路径 E:/twest/... 统一为 E:/tv12/5blong/5blong（10-14 18:13）
 - `127cc49` docs: README 补「共享屏幕优化」专题（根因/改动清单/验收/红线）供后续维护者与 AI 阅读（10-14 18:06）
 - `d455f0b` perf(screen-share): 共享屏幕全面优化——P2P 下发码率/抖动分级/硬编择优/传输自动/simulcast/断线自愈（10-14 18:04）
 - `9d6bbab` release: v1.2.1（10-14 13:56）
-- `2708fc2` docs: SCREENSHARE-PLAN 更新为 P2P 优先 + SFU 兜底双模式架构（10-14 13:56）
-- `8a9d123` feat: 屏幕共享传输架构升级——P2P 直连为默认（复用语音 PeerJS 通道），SFU 转发保留为可选项；共享菜单加方式选择与 ? 悬停优缺点说明（10-14 13:53）
 <!-- AUTO-LOG:END -->
 
 ## 怎么用
