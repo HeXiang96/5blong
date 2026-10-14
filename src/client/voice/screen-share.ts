@@ -59,10 +59,12 @@ export const SHARE_QUALITY_PRESETS: Record<ShareQuality, ShareQualityPreset> = {
   fhd1080: { label: "超清 1080p", width: 1920, height: 1080, fps: 60, maxBitrate: 10_000_000 },
 };
 
-/** getDisplayMedia 选择器提示项（Chromium 支持；TS 类型未收录，运行时透传）。 */
+/** getDisplayMedia 选择器提示项（Chromium 支持；TS 类型未收录，运行时透传）。
+ *  注意：preferCurrentTab 与 selfBrowserSurface:"exclude" 互斥
+ *  （Chromium 抛 TypeError: Self-contradictory configuration），
+ *  不能同时开——这里保留"剔除自己页面"（防把房间网页共享进房间）。 */
 export function pickerHints(): Record<string, unknown> {
   return {
-    preferCurrentTab: true,
     selfBrowserSurface: "exclude",
     surfaceSwitching: "exclude",
     monitorTypeSurfaces: "include",
