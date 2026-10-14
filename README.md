@@ -5,8 +5,9 @@
 * 公网地址（任何网络可开）：[https://5blong.pages.dev](https://5blong.pages.dev)
 * 源码仓库：[https://github.com/HeXiang96/5blong](https://github.com/HeXiang96/5blong)
 * 单房建议 2–6 人，最多 8 人；音频在参与者之间点对点（P2P）直连。
-* **屏幕共享（围炉看投影）**：走 Cloudflare Realtime SFU（免费额度），全房同看一块大幕布，
-  与语音链路物理隔离；详见 [SCREENSHARE-PLAN.md](./SCREENSHARE-PLAN.md)。
+* **屏幕共享（围炉看投影）**：传输方式默认**自动**（1~2 位观众 P2P 直连、3 人及以上自动切
+  Cloudflare Realtime SFU 转发，免费额度），全房同看一块大幕布，与语音链路物理隔离；
+  详见 [SCREENSHARE-PLAN.md](./SCREENSHARE-PLAN.md) 与 [SCREENSHARE-OPT-PLAN.md](./SCREENSHARE-OPT-PLAN.md)。
 * 全程 0 成本：信令用免费公共 PeerJS 云，NAT 穿透用免费公共 STUN，不需要任何付费服务。
 
 > **✅ 前述缺陷已修复（2026-10-12）**：此前"访客用邀请链接能进房并看到房主，
@@ -22,6 +23,106 @@
 
 ***
 
+## 共享屏幕优化（2026-10-14 晚）：从根上解决"观众看着卡/糊"
+
+> **本节专为后续维护者（含 AI）而写**：交代"共享屏幕为什么卡、改了什么、怎么验证、别踩哪些坑"。
+> 这一轮**只动共享链路，语音一行未碰**（语音零影响是硬约束）；四批次全部落地，
+> `npm run check` 全绿（typecheck + 155 单测 + 构建）。
+> 完整方案与逐条推理见 [SCREENSHARE-OPT-PLAN.md](./SCREENSHARE-OPT-PLAN.md)；
+> 早期 v1~v3 草稿 [SCREENSHARE-PERF-PLAN.md](./SCREENSHARE-PERF-PLAN.md) 已被其取代（仅存档）。
+
+### 一句话根因
+
+"卡/糊"**不是码率不够**，而是四件事叠加：
+
+1. **码率给错了**——P2P 画面呼叫（`peer.call()` 之后）**从不下发任何发送参数**，菜单里选的档位形同虚设；
+2. **协商到软编**——PeerJS 默认把 VP8 排第一，而 **VP8 没有硬件编码器**，只能 libvpx 软编，1080p60 必糊；
+3. **缓冲给多了**——P2P 同城直连也被强加 4000ms 抖动缓冲，glass-to-glass 白等 4 秒；
+4. **上行被榨干**——共享者对**每个观众各推一份**，人多时家用上行直接打爆。
+
+### 三条反直觉结论（后来者别走弯路）
+
+1. **流畅不靠堆码率**：B 站 1080p60 实测只用 **2.64 Mbps** 就丝滑；码率上限设 20 Mbps 反而会让
+   P2P 按上限同时对多条上行推流，把家用上行打爆。
+2. **把上限从 20M 降到 8M 并不会让马赛克变清晰**——瓶颈是**链路可达带宽**，不是上限。
+   真正决定观感的是"带宽不足时**降分辨率**还是**压质量**"；现在的配置选了前者（干净的小画面）。
+3. **不能换 H.265**：Chrome 仅硬编、无软编回退，Edge 未启用，Firefox 不支持；一旦协商上而对端
+   解不了，结果是**黑屏**而非降质。**AV1** 只在探到硬件编码（Ada/RTX 40 及以后）时才提前，
+   且 Safari 在 WebRTC 里不协商 AV1，所以 **P2P 一律 H.264**。
+
+### 关键事实：想吃 NVENC，编解码器必须是 H.264
+
+NVENC/NVDEC 是 **NVIDIA 驱动内建的硬件编解码单元**，任何程序都能调用
+（OBS／Chrome／WebView2／Oopz 一视同仁）——**不存在"某个软件独占的 NVENC"**。
+
+**NVENC 只能编 H.264 / HEVC / AV1；VP8 / VP9 没有硬件编码器**
+（只有 NVDEC 支持它们的**解码**）。PeerJS 默认协商 VP8，所以"用上 NVENC"在 5blong 里
+等同于"**把协商改成 H.264**"（→ `preferH264Sdp`）。Windows 上的路径：
+
+```
+Chrome / WebView2 WebRTC → Media Foundation 的 H.264 MFT → GPU 驱动 → 硬件编码单元
+优先级：AsyncMFT（硬件） > LegacyMFT > OpenH264（软件兜底）
+```
+
+（顺带：Oopz 媒体栈实为腾讯云 TRTC，差距来自其**国内就近中继**，不是"自研编码器"。）
+
+### 改了什么（文件 × 关键点 × 批次）
+
+| 文件 | 关键点 | 批次 |
+|---|---|---|
+| `App.tsx` | `<RoomView>` 补 `sharePc={voice.sharePc}`——灯箱数据条此前对**所有人**恒为空白的直接原因（该 prop 声明为**可选**，漏传时 TS 不报错） | 0 |
+| `components/PenTV.tsx` | 灯箱读数**双向化**：共享者看发送端、观众看接收端 | 0 |
+| `pen-tv.css` | 补上只被引用、**从未定义**过的 `.vx-tv-stats` 样式 | 0 |
+| `screen-share.ts` | `SHARE_QUALITY_PRESETS` 码率 **720p 5M / 1080p 8M**；`RESOLUTION_LADDER` 1080p→720p→540p；`JITTER_BUFFER_MS` **P2P 600 / SFU 3000**；`preferH264Sdp()`；`createScreenSenderTuner()`；`healScreenConnection()`；`publishScreen` 的 ICE 收集与会话创建**并行**；simulcast 发布 | 0–3 |
+| `engine.ts` | P2P 画面连接挂**自适应调谐器**并真正下发档位（原 `peer.call()` 后无任何 `setParameters`）；`sdpTransform: preferH264Sdp`；抖动自愈 | 1–3 |
+| `protocol.ts` | `ScreenSharePublication` 增 `simulcast` 字段（向后兼容解析） | 2 |
+| `settings.ts` | 传输方式默认 `p2p` → **`auto`**；`settingsVersion = 2` 迁移旧配置 | 2 |
+| `use-voice.ts` | 传输决策（1~2 人 P2P / ≥3 人 SFU）、simulcast 开关、把发布对象存入 `sharePubRef`（原来**被丢弃**，停播时 SFU 连接不收口） | 2 |
+| `components/RoomView.tsx` | 传输选项加"自动"档 + 实时显示"本次将用 X：理由" | 2 |
+
+### 四个批次
+
+* **批次 0 观测**：先把"看不见"变成"看得见"——灯箱数据条 + WebCodecs 硬编预检
+  （`VideoEncoder.isConfigSupported({ codec: "avc1.640028", …, hardwareAcceleration: "require-hardware" })`）。
+  不看数据就优化等于闭眼调参，这是前几轮的教训。
+* **批次 1 治病**：码率匹配、P2P 下发档位（按观众数分摊，下限 1.2 Mbps）、
+  降级方向改 `contentHint = "detail"`（原 `degradationPreference` 在 Chrome 已失效，是**空转**）、
+  抖动缓冲分级、`preferH264Sdp`。
+* **批次 2 结构性**：传输默认 auto、**simulcast 多档**（rid `f`/`h`/`q`，订阅端 `preferredRid` +
+  `asciibetical` 降级——Cloudflare 官方这两个默认是 `none`，不改会死推最高层）、开播并行提速、
+  AV1 仅硬编择优。
+* **批次 3 自愈**：抖动先 `restartIce()`（2.5s/6s 观察窗、最多 2 次），彻底断了才重拨；
+  按 `qualityLimitationReason` 带宽自适应降档，健康 18s 后回升。
+
+### 怎么验收（看数字判断，不是猜）
+
+开播后放大灯箱，底部数据条：
+
+* **共享者（发送端）**：`发出 W×H · fps · 实际码率 · 编码器(硬编/软编) · 限流原因`
+  * 显示 `硬编` = 吃到 NVENC 了；
+  * 限流原因 `bandwidth` = 链路不够（考虑降档）；`cpu` = 没吃到硬编（查 SDP 是否被排回 VP8/VP9）；
+    `none` 但码率很低 = 参数没生效。
+* **观众（接收端）**：`W×H · fps · 码率 · 解码器(硬解/软解) · 卡顿/丢包`
+  * `硬解` 却仍卡 → 问题在**链路/缓冲**，与解码无关。
+
+**已知坑（必须实测）**：AMD 全线 + 部分 Intel 的 Windows 上，Chrome 的 H.264 硬编存在
+"**发送码率上不去**"的已知问题（症状恰是画面糊、码率不足 100 kbps），根因在 GPU 驱动层；
+Chromium 用 `MediaFoundationUseSWBRCForH264Desktop` 让自带码率控制器接管。
+所以"设完就以为好了"是错的。
+**本地无法验证、必须现场测的还有三条**：① 真实 ≥3 人房间的 simulcast 挑层；
+② AMD/Intel 上 H.264 硬编的码率上限；③ NVENC 是否真被选中。
+
+### 红线（改这里时不要破坏）
+
+* **语音零影响是硬约束**：共享走独立 WebRTC 连接，与语音的 PeerJS 链路物理隔离；
+  共享失败只表现"幕布暗屏 + 轻提示"，**绝不断语音、不动成员列表**。
+* `preferH264Sdp` 依赖 PeerJS `peer.call(id, stream, { sdpTransform })` 的调用时机
+  （在 `createOffer` 之后、`setLocalDescription` 之前；peerjs 1.5.5 已核对）。
+  **升级 peerjs 后必须重新确认这个插入点还在**，否则它会静默失效。
+* README 里的 `AUTO-LOG` 区块由 CI 自动生成（提交信息带 `[skip ci]`），**不要手改**。
+
+***
+
 ## 最近更新（2026-10-14）
 
 **围炉看投影：房间共享屏幕（本地方案验证 + 双端 E2E 通过）**
@@ -34,11 +135,14 @@
   （体型缩小一圈，左翼面朝右、右翼面朝左），近的慢悠、远的快跑，到位时间自然错开；
   停播时全场愣神半拍，再欢快小跳散开。走位由房主权威驱动，访客端平滑跟随，全房一致
 * **昼夜三时段适配**：光束与幕布辉光在白天柔和、傍晚暖橙、夜晚最亮（月光下光锥超出片）
-* **走 Cloudflare Realtime SFU（无服务器）**：共享者只推 1 份上行，全员订阅，
-  不再受 P2P 多人上行放大限制；SFU 密钥只存在后端代理（本地 `scripts/dev-sfu-server.mjs`，
-  线上等价 Worker），**绝不进前端包**；已用回环夹具打通"发布 → 订阅 → 画面逐帧变化"全链路
+* **双链路自选（默认「自动」）**：P2P 直连（1~2 位观众，画质最好、延迟最低）或
+  Cloudflare Realtime SFU 转发（3 人及以上自动切，绕开 P2P 的多路上行放大）；也可手动锁定某一种。
+  SFU 密钥只存在后端代理（本地 `scripts/dev-sfu-server.mjs`，线上等价 Worker），**绝不进前端包**；
+  已用回环夹具打通"发布 → 订阅 → 画面逐帧变化"全链路
 * **画质两档自选**：共享前可选 **高清 HD 720p** / **超清 1080p**（均 60 帧），
-  直播推流级码率（1080p 20 Mbps）+ H264 硬件编码 + "宁掉帧不降清"，设置落盘记住偏好
+  码率 **720p 5 Mbps / 1080p 8 Mbps**（2026-10-14 晚优化后；此前为 8M/20M）、
+  **H264 硬件编码优先**（`preferH264Sdp` 把 P2P 协商从 VP8 软编拉回 H.264）、
+  **清晰优先**（`contentHint="detail"`）+ 1080p→720p→540p 分辨率降级阶梯，设置落盘记住偏好
 * **共享带上系统声音**：游戏声/网页声都能被听到；观众**点幕布**打开大画面即可
   开音量（小幕布静音防双声）；外放会有回声，建议戴耳机（开播时有提示）
 * **一台投影，同一时间一人共享**：按钮预检（被占置灰）+ 房主权威互斥 + 并发兜底，三层保障
@@ -367,7 +471,7 @@ npm install                 # 安装依赖
 npm run dev                 # 本地开发服务器（网页）
 npm run tauri dev           # 桌面端开发模式（自动起 dev 服务器 + Tauri 窗口）
 npm run typecheck           # 类型检查
-npm test                    # 单元测试（102 项）
+npm test                    # 单元测试（155 项）
 npm run build:web:pages     # 构建静态网页到 dist-web
 npm run tauri build         # 本地出桌面安装包（更新签名需要环境变量，一般直接用 CI）
 npm run deploy:pages        # 手动部署网页到 Cloudflare Pages（复用本机 wrangler 凭据）
@@ -423,8 +527,11 @@ npm run bump -- 1.0.2       # 发新版本：改版本号 → 提交 → 打 tag
   * `engine.ts`：mesh 引擎（准入握手、心跳、媒体连接、RNNoise 降噪链、说话检测、资源回收）
   * `devices.ts`：麦克风采集、扬声器绑定、设备枚举、麦克风测试
   * `identity.ts` / `settings.ts` / `storage.ts`：本机身份与设置持久化
+  * `screen-share.ts`：屏幕共享链路（采集约束、码率/降级/自适应调谐器、H264 协商重排
+    `preferH264Sdp`、抖动缓冲分级、simulcast 发布、ICE 自愈）
   * `use-voice.ts`：引擎与 React 之间的唯一桥接
   * `App.tsx` / `components/` / `styles.css`：界面
+  * `components/PenTV.tsx` / `pen-tv.css`：投影幕布与小猪围观的呈现 + 灯箱（含双向链路读数）
 * `src/shared/blake3.ts`：BLAKE3（部署资源指纹用），由官方向量测试
 * `src-tauri/`：桌面端 Tauri 壳（Rust）
   * `src/lib.rs`：托盘常驻、单实例、点 × 隐藏驻留、WebView2 麦克风权限自动放行、
@@ -432,8 +539,8 @@ npm run bump -- 1.0.2       # 发新版本：改版本号 → 提交 → 打 tag
   * `tauri.conf.json`：窗口 / NSIS 打包 / 自动更新源（Pages 主源 + GitHub 备源）与公钥
 * `.github/workflows/release.yml`：云出包工作流（`app-v*` 标签触发，出安装包 + 签名更新包 + latest.json）
 * `tests/`：协议 / 握手 / 准入（`voice-protocol.test.ts`、`engine-join-handshake.test.ts`）、
-  猪圈与小猪动画（`pen`）、说话检测（`voice-activity`）、定时器（`timers`）、
-  `blake3.test.ts`（BLAKE3 5 项），当前合计 102 项
+  屏幕共享（`screen-share.test.ts`、`screen-share-tuning.test.ts`）、猪圈与小猪动画（`pen`）、
+  说话检测（`voice-activity`）、定时器（`timers`）、`blake3.test.ts`（BLAKE3 5 项），当前合计 155 项
 * `scripts/`：`deploy-pages.mjs`（部署）、`publish-desktop.mjs`（桌面端更新源发布）、
   `pages-status.mjs`、`bump-version.mjs`（发版一键化）、`lib/blake3.mjs`
 * `public/`：图标与第三方许可（`index.html` 引用的 `/favicon.png`、`/icon-256.png` 来自这里）
