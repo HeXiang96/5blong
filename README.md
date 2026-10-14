@@ -369,13 +369,13 @@ TURN key 与 SFU 的 appId/secret **是两套**，分别创建：
 <!-- AUTO-LOG:START -->
 ### 近期提交（自动生成）
 
+- `1085e0b` Merge remote-tracking branch 'origin/main'（10-14 22:49）
+- `bdd83b4` release: v1.4.5（10-14 22:48）
 - `2e1115a` release: v1.4.4（10-14 22:24）
 - `b0250f5` release: v1.4.3（10-14 21:20）
 - `ba89e2b` Merge remote-tracking branch 'origin/main'（10-14 20:53）
 - `70d2cc1` release: v1.4.2（10-14 20:53）
 - `47eaaad` release: v1.4.1（10-14 20:19）
-- `4fc4160` release: v1.4.0（10-14 19:35）
-- `cc80a56` release: v1.3.0（10-14 18:15）
 <!-- AUTO-LOG:END -->
 
 ## 怎么用
