@@ -188,6 +188,35 @@ export interface ScreenPublication {
 }
 
 /**
+ * 编解码器偏好：H264 优先（显卡/芯片硬件编码，CPU 几乎零开销——
+ * 直播软件 OBS 等同款选择）；VP8 软编 1080p60 是 CPU 杀手（糊+卡的元凶），垫底。
+ * setCodecPreferences 只是调整协商顺序，个别实现不支持时回落浏览器默认。
+ */
+function setPreferredVideoCodecs(transceiver: RTCRtpTransceiver): void {
+  const caps = RTCRtpSender.getCapabilities("video");
+  if (!caps || caps.codecs.length === 0) return;
+  const score = (mimeType: string): number => {
+    switch (mimeType.toLowerCase()) {
+      case "video/h264":
+        return 0;
+      case "video/av1":
+        return 1;
+      case "video/vp9":
+        return 2;
+      case "video/vp8":
+        return 3;
+      default:
+        return 9; // rtx/red/flexfec 等辅助载荷保持原序靠后
+    }
+  };
+  try {
+    transceiver.setCodecPreferences([...caps.codecs].sort((a, b) => score(a.mimeType) - score(b.mimeType)));
+  } catch {
+    /* 忽略：回落浏览器默认编解码器 */
+  }
+}
+
+/**
  * 把采集好的屏幕流发布到 SFU。
  *
  * `stream` 来自 getDisplayMedia（或调试用的 canvas.captureStream）。
@@ -207,7 +236,10 @@ export async function publishScreen(
   const videoTrack = stream.getVideoTracks()[0];
   const audioTrack = stream.getAudioTracks()[0];
   if (!videoTrack && !audioTrack) throw new Error("没有可发布的媒体轨");
-  if (videoTrack) pc.addTransceiver(videoTrack, { direction: "sendonly" });
+  if (videoTrack) {
+    const transceiver = pc.addTransceiver(videoTrack, { direction: "sendonly" });
+    setPreferredVideoCodecs(transceiver);
+  }
   if (audioTrack) pc.addTransceiver(audioTrack, { direction: "sendonly" });
 
   const offer = await pc.createOffer();

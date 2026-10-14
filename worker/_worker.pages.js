@@ -84,6 +84,20 @@ export default {
       return json({ error: "pages env vars not configured" }, 500);
     }
 
+    // CORS 预检：桌面端（tauri.localhost）跨域调用带 Authorization/Content-Type，
+    // 浏览器必发 OPTIONS 探测——不答它，桌面端发布永远静默失败（网页端同源无此问题）。
+    if (request.method === "OPTIONS") {
+      return new Response(null, {
+        status: 204,
+        headers: {
+          "Access-Control-Allow-Origin": "*",
+          "Access-Control-Allow-Methods": "GET, POST, PUT, OPTIONS",
+          "Access-Control-Allow-Headers": "Authorization, Content-Type",
+          "Access-Control-Max-Age": "86400",
+        },
+      });
+    }
+
     // /sfu/sessions/...（或旧的单数写法）→ SFU 的 /apps/{appId}/sessions/...
     const sub = url.pathname.replace(/^\/sfu\/sessions?\//, "/sessions/");
     const route = ROUTES.find((r) => r.method === request.method && r.pattern.test(sub));
