@@ -4,6 +4,7 @@ import { Volume2, VolumeX, X } from "lucide-react";
 
 import { FIRE_POS, PROJ_POS, SCREEN_POS, feetViewportPx } from "../pen";
 import type { ScreenShareState } from "../protocol";
+import { summarizeScreenReport, type RateSample } from "../screen-share";
 
 /**
  * 围炉看投影：坡上内嵌幕布（常驻）+ 投影仪（共享时从天而降）+ 光束 + 放大灯箱。
@@ -246,7 +247,11 @@ interface PenTvLightboxProps {
   state: ScreenShareState;
   stream: MediaStream | null;
   sharerName: string;
-  /** 订阅端连接（观众用它拉 getStats 看链路数据；共享者本机为 null）。 */
+  /**
+   * 画面连接：共享者拿到的是**发送端**连接（看编码分辨率/实际码率/限流原因/
+   * 编码器），观众拿到的是**订阅端**连接（看解码器/丢包/卡顿）。
+   * 两端共用同一条数据条，方向由报告里实际存在的流自动判定。
+   */
   pc?: RTCPeerConnection | null;
   onClose: () => void;
 }
@@ -257,45 +262,32 @@ export function PenTvLightbox({ state, stream, sharerName, pc, onClose }: PenTvL
   // 打开灯箱是用户点击手势，可以直接出声（默认开音量；场景里的小幕布保持静音防双声）
   const [muted, setMuted] = useState(false);
   const [volume, setVolume] = useState(1);
-  /** 观众端实时链路数据（每 2s 刷新）：一眼看清卡在编码、传输还是解码。 */
+  /**
+   * 实时链路数据（每 2s 刷新）：一眼看清卡在编码、传输还是解码。
+   *
+   * 这份读数就是"档位到底生效没有"的答案：
+   * - `发出 1920×1080` —— 编码器实际输出（被降分辨率时会变）；
+   * - `h264 MediaFoundation 硬编` —— 有没有吃到 NVENC；
+   * - `带宽受限` / `CPU 受限` —— 链路不够，还是编码器没吃到硬件；
+   * - 观众端则看 `解码器 / 卡顿 / 丢包`（软解会显示"软解"）。
+   */
   const [stats, setStats] = useState("");
+  const [statsRole, setStatsRole] = useState<"send" | "recv" | null>(null);
 
   useEffect(() => {
-    if (!pc) return;
-    let prevBytes = 0;
-    let prevTs = 0;
+    if (!pc) {
+      setStats("");
+      setStatsRole(null);
+      return;
+    }
+    let prev: RateSample | null = null;
     const timer = window.setInterval(async () => {
       try {
-        const report = await pc.getStats();
-        let codec = "";
-        let res = "";
-        let fps = 0;
-        let kbps = 0;
-        report.forEach((entry) => {
-          if (entry.type === "inbound-rtp" && entry.kind === "video") {
-            const w = entry.frameWidth ?? 0;
-            const h = entry.frameHeight ?? 0;
-            if (w) res = `${w}×${h}`;
-            fps = Math.round(entry.framesPerSecond ?? 0);
-            const bytes = entry.bytesReceived ?? 0;
-            const ts = entry.timestamp ?? Date.now();
-            if (prevTs) kbps = Math.round(((bytes - prevBytes) * 8) / (ts - prevTs));
-            prevBytes = bytes;
-            prevTs = ts;
-          }
-          if (entry.type === "codec" && entry.payloadType && entry.mimeType) {
-            if (!codec || entry.codecId) {
-              if (String(entry.mimeType).toLowerCase().startsWith("video/")) {
-                codec = String(entry.mimeType).replace("video/", "") + (entry.sdpFmtpLine ? "" : "");
-              }
-            }
-          }
-        });
-        setStats(
-          [res || "?", `${fps || "?"} fps`, `${kbps || "?"} kbps`, codec || "编码器?"]
-            .filter(Boolean)
-            .join(" · "),
-        );
+        const summary = summarizeScreenReport(await pc.getStats(), prev);
+        prev = summary.sample;
+        if (!summary.text) return;
+        setStats(summary.text);
+        setStatsRole(summary.role);
       } catch {
         /* 连接关闭后的取数失败，忽略 */
       }
@@ -357,7 +349,12 @@ export function PenTvLightbox({ state, stream, sharerName, pc, onClose }: PenTvL
           )}
         </div>
         <footer className="vx-tv-bigfoot">
-          {stats ? <span className="vx-tv-stats">{stats}</span> : null}
+          {stats ? (
+            <span className="vx-tv-stats" title="实时链路数据（每 2 秒刷新）">
+              {statsRole === "send" ? "[发送端] " : statsRole === "recv" ? "[接收端] " : ""}
+              {stats}
+            </span>
+          ) : null}
           {stream ? (
             <>
               <button

@@ -408,6 +408,11 @@ export interface ScreenShareState {
   startedAt: number;
   /** 画面传输方式（旧版本广播缺省 = sfu）。 */
   transport: ScreenShareTransport;
+  /**
+   * SFU 发布是否用了 simulcast 多档（P1-12）。
+   * 订阅端据此在拉流时声明优先层与降级策略——缺省 = 单档发布。
+   */
+  simulcast?: boolean;
 }
 
 /** 校验从线上收到的屏幕共享状态；形状不对就丢弃。 */
@@ -430,6 +435,8 @@ export function parseScreenShareState(input: unknown): ScreenShareState | null {
     startedAt: typeof raw["startedAt"] === "number" && Number.isFinite(raw["startedAt"]) ? raw["startedAt"] : 0,
     // 旧版本广播没有 transport 字段——那时只有 SFU 一条路
     transport: raw["transport"] === "p2p" ? "p2p" : "sfu",
+    // 缺省不带这个键（旧房主不广播它，订阅端按单档拉流）
+    ...(raw["simulcast"] === true ? { simulcast: true } : {}),
   };
 }
 
@@ -441,6 +448,8 @@ export interface ScreenSharePublication {
   label: string;
   hasAudio: boolean;
   transport: ScreenShareTransport;
+  /** SFU 发布是否用了 simulcast 多档（缺省 = 单档）。 */
+  simulcast?: boolean;
 }
 
 export function parseScreenSharePublication(input: unknown): ScreenSharePublication | null {
@@ -457,6 +466,7 @@ export function parseScreenSharePublication(input: unknown): ScreenSharePublicat
     label: typeof raw["label"] === "string" ? raw["label"].slice(0, 120) : "",
     hasAudio: raw["hasAudio"] === true,
     transport: raw["transport"] === "sfu" ? "sfu" : "p2p",
+    ...(raw["simulcast"] === true ? { simulcast: true } : {}),
   };
 }
 

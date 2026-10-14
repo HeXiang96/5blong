@@ -26,8 +26,9 @@ async function run(): Promise<string> {
   const stream = createDemoStream();
   if (!stream) return "fail: no demo stream";
 
-  const pub = await publishScreen(stream, "fhd1080");
-  const sub = await subscribeScreen(pub.sessionId, ["screen"]);
+  // 走与正式开播同一条路：simulcast 多档发布 + 按层订阅（失败会自动回落单档）
+  const pub = await publishScreen(stream, { quality: "fhd1080", simulcast: true });
+  const sub = await subscribeScreen(pub.sessionId, ["screen"], { simulcast: true });
 
   const video = document.createElement("video");
   video.muted = true;

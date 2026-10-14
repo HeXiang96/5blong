@@ -47,7 +47,7 @@ import type { Notice } from "../use-voice";
 import type { InteractEvent, InteractKind, Invite } from "../protocol";
 import type { LucideIcon } from "lucide-react";
 import { MonitorUp } from "lucide-react";
-import { SHARE_QUALITY_PRESETS } from "../screen-share";
+import { SHARE_QUALITY_PRESETS, autoTransportFor } from "../screen-share";
 
 /** 可对其他成员做的小猪互动，按顺序展示成一排按钮。 */
 const INTERACT_ACTIONS: ReadonlyArray<{ kind: InteractKind; label: string; Icon: LucideIcon }> = [
@@ -220,9 +220,9 @@ export function RoomView({
   shareQuality: ShareQuality;
   /** 改画质档位（落盘，下次开播生效）。 */
   onSetShareQuality: (quality: ShareQuality) => void;
-  /** 屏幕共享传输方式（p2p 直连 / sfu 转发）与切换。 */
-  shareTransport: "p2p" | "sfu";
-  onSetShareTransport: (transport: "p2p" | "sfu") => void;
+  /** 屏幕共享传输方式（auto 自动 / p2p 直连 / sfu 转发）与切换。 */
+  shareTransport: "p2p" | "sfu" | "auto";
+  onSetShareTransport: (transport: "p2p" | "sfu" | "auto") => void;
 }) {
   const self = members.find((member) => member.local) ?? null;
   const muted = self?.muted ?? true;
@@ -1068,7 +1068,10 @@ export function RoomView({
               <span className="vx-share-help" tabIndex={0} aria-label="两种共享方式的优缺点说明">
                 ?
                 <span className="vx-share-tip" role="tooltip">
-                  <b>P2P 直连（推荐）</b>：画面在成员间直接传输，不绕服务器，
+                  <b>自动（推荐）</b>：1~2 位观众走直连（画质最好），3 人及以上自动切
+                  SFU 转发——直连的上行是"码率 × 观众数"，人多会把自家宽带上行打爆。
+                  <br />
+                  <b>P2P 直连</b>：画面在成员间直接传输，不绕服务器，
                   同网/国内延迟低、画质最好；双方网络都打不通直连时可能连不上。
                   <br />
                   <b>SFU 转发</b>：画面经服务器中转，连接成功率高、更稳定，
@@ -1079,6 +1082,7 @@ export function RoomView({
             <div className="vx-share-transport">
               {(
                 [
+                  { key: "auto", name: "自动", desc: "按人数选直连/转发" },
                   { key: "p2p", name: "P2P 直连", desc: "画质最好 · 延迟最低" },
                   { key: "sfu", name: "SFU 转发", desc: "连接成功率兜底" },
                 ] as const
@@ -1094,6 +1098,10 @@ export function RoomView({
                 </button>
               ))}
             </div>
+            <p className="vx-share-menu-hint">
+              本次将用{autoTransportFor(shareTransport, members.length).transport === "sfu" ? "SFU 转发" : "P2P 直连"}
+              ：{autoTransportFor(shareTransport, members.length).reason}
+            </p>
             <button
               type="button"
               className="vx-btn vx-btn-small vx-btn-primary vx-share-start"

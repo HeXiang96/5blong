@@ -633,6 +633,20 @@ html[data-daypart="night"] .vx-proj-beam {
   padding: 10px 14px;
 }
 .vx-tv-bigfoot .vx-range { flex: 0 1 220px; }
+/* 实时链路数据条（发送端/接收端共用）：等宽数字，读数不跳行 */
+.vx-tv-stats {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(12, 10, 5, 0.72);
+  color: #e8ddc8;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
 .vx-tv-bighint {
   margin-left: auto;
   font-size: 12px;

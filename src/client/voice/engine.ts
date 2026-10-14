@@ -41,6 +41,16 @@ import {
   type WireMember,
 } from "./protocol";
 import { sessionScopedId, type Identity } from "./identity";
+import {
+  JITTER_BUFFER_MS,
+  RESOLUTION_LADDER_LABEL,
+  createScreenSenderTuner,
+  healScreenConnection,
+  perViewerBitrate,
+  preferH264Sdp,
+  type ScreenSenderTuner,
+  type ShareQuality,
+} from "./screen-share";
 import { NPC_NAME, PenDirector, VEGETABLE_KINDS, type PenEvent } from "./pen";
 import { readPenSnapshots } from "./pen-registry";
 import {
@@ -850,6 +860,7 @@ export class VoiceMesh {
             label: pub.label,
             startedAt: Date.now(),
             transport: pub.transport,
+            ...(pub.simulcast ? { simulcast: true } : {}),
           },
           true,
         );
@@ -1083,10 +1094,19 @@ export class VoiceMesh {
    * 房主侧还有一道权威互斥：并发竞态时只保留先到者，后到者会从广播里
    * 看到 sharer 不是自己，自行停止发布并退订。
    */
-  requestScreenShare(pub: ScreenSharePublication, stream?: MediaStream): boolean {
+  requestScreenShare(
+    pub: ScreenSharePublication,
+    stream?: MediaStream,
+    quality: ShareQuality = "fhd1080",
+  ): boolean {
     if (this.destroyed || !this.joined || !this.me) return false;
     if (this.screenShareState) return false;
+    this.screenQuality = quality;
     this.screenStream = pub.transport === "p2p" ? (stream ?? null) : null;
+    // P2P 链路没有 publishScreen 那道工序，contentHint 得在这里补上：
+    // 不设它时浏览器按默认策略走，带宽一紧就先压质量（画面变糊）。
+    // 与 SFU 路径口径一致：保清晰，宁可掉帧。
+    for (const track of this.screenStream?.getVideoTracks() ?? []) track.contentHint = "detail";
     if (this.hosting) {
       this.applyScreenShare(
         {
@@ -1098,6 +1118,7 @@ export class VoiceMesh {
           label: pub.label,
           startedAt: Date.now(),
           transport: pub.transport,
+          ...(pub.simulcast ? { simulcast: true } : {}),
         },
         true,
       );
@@ -1918,10 +1939,23 @@ export class VoiceMesh {
 
   // ---------------------------------------------------------------- P2P 屏幕直连
 
+  /** 取 PeerJS MediaConnection 底层的 RTCPeerConnection（还没建好时为 undefined）。 */
+  private screenPeerConnection(call: MediaConnection): RTCPeerConnection | undefined {
+    return (call as unknown as { peerConnection?: RTCPeerConnection }).peerConnection;
+  }
+
   /** 共享者的画面流（P2P 模式下发给各成员；SFU 模式为 null）。 */
   private screenStream: MediaStream | null = null;
+  /** P2P 画面链路当前用的画质档位（由 requestScreenShare 带入）。 */
+  private screenQuality: ShareQuality = "fhd1080";
   /** P2P 屏幕呼叫（共享者 → 各成员，一人一条）。 */
   private screenCalls = new Map<string, MediaConnection>();
+  /** 每条 P2P 画面链路的自适应调谐器（按 peerId）——负责码率与降级阶梯。 */
+  private screenTuners = new Map<string, ScreenSenderTuner>();
+  /** 每条 P2P 画面链路的自愈解绑函数（按 peerId，close 时调用）。 */
+  private screenHealers = new Map<string, () => void>();
+  /** 观众端：收到的画面呼叫 → 自愈解绑函数（呼叫对象作键，关闭时清理）。 */
+  private viewerHeals = new WeakMap<MediaConnection, () => void>();
 
   /** 开播确认后（自己就是共享者）：向所有成员发起画面直连（幂等）。 */
   private startScreenCalls(): void {
@@ -1930,22 +1964,113 @@ export class VoiceMesh {
       if (member.local) continue;
       this.callScreenPeer(member.id);
     }
+    // 名单变化（有人进/出）：已建立的连接也要按新的观众数重新分摊码率
+    this.retuneScreenSenders();
   }
 
   private callScreenPeer(peerId: string): void {
     if (!this.peer || !this.screenStream || this.screenCalls.has(peerId)) return;
     // 与语音同一套 PeerJS 传输；metadata 标记让对端知道这是画面呼叫（不给流、只收）。
+    // sdpTransform：把 offer 里的 H264 提到 m=video 首位——PeerJS 自己出 offer，
+    // 我们没机会调 setCodecPreferences，不重排就会协商到 VP8 软编（1080p60 下必糊）。
     const call = this.peer.call(peerId, this.screenStream, {
       metadata: { kind: "screen-share", sessionId: this.screenShareState?.sessionId ?? "" },
+      sdpTransform: preferH264Sdp,
     });
     if (!call) return;
     this.screenCalls.set(peerId, call);
+    const pc = this.screenPeerConnection(call);
+    if (!pc) {
+      call.on("close", () => {
+        if (this.screenCalls.get(peerId) === call) this.screenCalls.delete(peerId);
+      });
+      return;
+    }
+    // PeerJS 不会替我们设任何发送参数——只有 SFU 那条路会调用
+    // applyScreenSenderParams，所以 P2P 链路必须自己下发码率/帧率/降级阶梯，
+    // 否则菜单里选的档位对这条链路完全无效（"P2P 看着糊"的直接原因之一）。
+    //
+    // 下发交给调谐器（它自己会按协商时机重试、并在链路吃紧时降分辨率）；
+    // 这里只补两个"更早一次"的触发点：① 同步（PeerJS 构造时已 addTrack）；
+    // ② 协商进入 stable（此时 setParameters 才一定被接受）。
+    const viewers = Math.max(1, this.members.size - 1);
+    const tuner = createScreenSenderTuner(pc, this.screenQuality, {
+      maxBitrate: perViewerBitrate(this.screenQuality, viewers),
+      onStep: (step, reason) => {
+        // 观众端的画面分辨率会随之变化，共享者这边给一条可读提示（不弹窗）
+        if (reason === "recover") return;
+        console.info(
+          `[screen-share] 链路受限（${reason}），已自动降到 ${RESOLUTION_LADDER_LABEL[step] ?? "更低分辨率"}`,
+        );
+      },
+    });
+    this.screenTuners.set(peerId, tuner);
+
+    const onSignal = () => {
+      if (pc.signalingState === "stable") tuner.retune();
+    };
+    const onState = () => {
+      if (pc.connectionState === "connected") tuner.retune();
+    };
+    pc.addEventListener("signalingstatechange", onSignal);
+    pc.addEventListener("connectionstatechange", onState);
+    // 2s 后如果一次都没下发成功，说明被浏览器拒了（参数没生效是"糊"的常见原因）
+    this.timers.after(2500, () => {
+      if (!this.destroyed && tuner.applied() === 0) {
+        console.warn("[screen-share] P2P 发送端参数下发失败，浏览器将沿用默认编码参数（画面可能偏糊）");
+      }
+    });
+
+    // 抖动自愈（P2-13）：短暂掉线先 restartIce；彻底断了才重拨一条新呼叫
+    const stopHeal = healScreenConnection(pc, {
+      retries: 2,
+      onRetry: () => {
+        if (this.destroyed || this.screenCalls.get(peerId) !== call) return;
+        try {
+          call.close();
+        } catch {
+          /* noop */
+        }
+        this.screenCalls.delete(peerId);
+        tuner.stop();
+        this.screenTuners.delete(peerId);
+        this.timers.after(1200, () => this.callScreenPeer(peerId));
+      },
+    });
+    this.screenHealers.set(peerId, stopHeal);
+
     call.on("close", () => {
+      pc.removeEventListener("signalingstatechange", onSignal);
+      pc.removeEventListener("connectionstatechange", onState);
+      tuner.stop();
+      this.screenTuners.delete(peerId);
+      this.screenHealers.get(peerId)?.();
+      this.screenHealers.delete(peerId);
       if (this.screenCalls.get(peerId) === call) this.screenCalls.delete(peerId);
     });
   }
 
+  /** 共享者本机的画面发送端连接（P2P 直连；灯箱的"发送端自检"用它取 getStats）。 */
+  screenSenderPeerConnection(): RTCPeerConnection | null {
+    for (const call of this.screenCalls.values()) {
+      const pc = this.screenPeerConnection(call);
+      if (pc) return pc;
+    }
+    return null;
+  }
+
+  /** 观众数变化：对已建立的画面连接重新分摊码率（各自的降级档位保持不变）。 */
+  private retuneScreenSenders(): void {
+    const viewers = Math.max(1, this.members.size - 1);
+    const maxBitrate = perViewerBitrate(this.screenQuality, viewers);
+    for (const tuner of this.screenTuners.values()) tuner.retune(maxBitrate);
+  }
+
   private closeScreenCalls(): void {
+    for (const tuner of this.screenTuners.values()) tuner.stop();
+    this.screenTuners.clear();
+    for (const stop of this.screenHealers.values()) stop();
+    this.screenHealers.clear();
     for (const call of this.screenCalls.values()) {
       try {
         call.close();
@@ -1957,14 +2082,15 @@ export class VoiceMesh {
     this.screenStream = null;
   }
 
-  /** 把一条 P2P 画面连接的所有接收轨抖动缓冲拉到 4000ms（与 SFU 订阅端一致）。 */
+  /** P2P 画面连接是**直连**（同网/近距，RTT 通常 <50ms）：抖动缓冲取小值，
+   *  让"围炉看屏"对得上嘴；原先与 SFU 一样拉满 4000ms，白白多等 3 秒多。 */
   private smoothScreenReceivers(call: MediaConnection): void {
-    const pc = (call as unknown as { peerConnection?: RTCPeerConnection }).peerConnection;
+    const pc = this.screenPeerConnection(call);
     if (!pc) return;
     const apply = () => {
       for (const receiver of pc.getReceivers()) {
         try {
-          receiver.jitterBufferTarget = 4000;
+          receiver.jitterBufferTarget = JITTER_BUFFER_MS.p2p;
         } catch {
           /* 个别实现不支持时忽略 */
         }
@@ -1995,9 +2121,18 @@ export class VoiceMesh {
         }
         return;
       }
-      // 观众端抖动缓冲拉满（与 SFU 订阅端同款 4000ms）：跨境抖动在缓冲里排队
+      // 观众端抖动缓冲取直连档（P0-5），并在短暂抖动时自愈（P2-13）：
+      // 先 restartIce，而不是让画面就此冻住。
       this.smoothScreenReceivers(call);
+      const pc = this.screenPeerConnection(call);
+      if (pc && !this.viewerHeals.has(call)) {
+        this.viewerHeals.set(call, healScreenConnection(pc, { retries: 2 }));
+      }
       this.events.screenStream?.(stream, call);
+    });
+    call.on("close", () => {
+      this.viewerHeals.get(call)?.();
+      this.viewerHeals.delete(call);
     });
   }
 

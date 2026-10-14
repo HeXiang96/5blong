@@ -154,6 +154,7 @@ export function App() {
         onInteract={voice.interact}
         screenShare={voice.screenShare}
         shareStream={voice.shareStream}
+        sharePc={voice.sharePc}
         onStartShare={(quality) => void voice.startScreenShare(quality)}
         onStopShare={voice.stopScreenShare}
         shareQuality={voice.shareQuality}

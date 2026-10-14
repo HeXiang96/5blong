@@ -12,8 +12,10 @@ import { loadIdentity, resolveDisplayNames, saveIdentity, type Identity } from "
 import { debugPoseFrom, eventTtl, pruneEvents, type PenEvent } from "./pen";
 import { clearPenPoses, setLatestPenPoses } from "./pen-follow";
 import {
+  RESOLUTION_LADDER_LABEL,
   TRACK_AUDIO,
   TRACK_VIDEO,
+  autoTransportFor,
   createDemoStream,
   debugTvDemoFrom,
   debugTvFrom,
@@ -127,6 +129,11 @@ export function useVoice() {
   const shareSubRef = useRef<ScreenSubscription | null>(null);
   /** 共享者本机采集的流（自己电视的播放源；订阅流供其他端用）。 */
   const shareLocalStreamRef = useRef<MediaStream | null>(null);
+  /** 最新成员数：开播时据此决定 P2P 还是 SFU（避免闭包里的陈旧值）。 */
+  const memberCountRef = useRef(0);
+  memberCountRef.current = members.length;
+  /** 自适应降档提示只弹一次（同一次共享里不刷屏）。 */
+  const stepNoticeShown = useRef(false);
   /** 共享会话的清理（离房/重置时无条件执行）。 */
   const teardownShare = useCallback(() => {
     sharePubRef.current?.stop();
@@ -385,7 +392,9 @@ export function useVoice() {
     const attempt = () => {
       const trackNames = [TRACK_VIDEO];
       if (screenShare.trackNameAudio) trackNames.push(TRACK_AUDIO);
-      void subscribeScreen(screenShare.sessionId, trackNames)
+      // 共享者用了 simulcast 就按层订阅（默认最高层、带宽不足自动退层）；
+      // 没标 simulcast 的老房主按单档订阅，行为与以前一致。
+      void subscribeScreen(screenShare.sessionId, trackNames, { simulcast: screenShare.simulcast === true })
         .then((sub) => {
           if (cancelled) {
             sub.stop();
@@ -425,6 +434,26 @@ export function useVoice() {
     }
   }, [screenShare, members.length]);
 
+  /**
+   * 共享者本机的"发送端连接"是**异步**才有的（P2P 时访客共享者要等房主广播
+   * 回来才向各成员发起画面呼叫），开播那一刻拿不到。这里短轮询补上，
+   * 让灯箱数据条从第一秒就有读数——没有读数等于闭眼调参。
+   */
+  useEffect(() => {
+    if (!screenShare || sharePc) return;
+    if (screenShare.transport === "sfu") return; // SFU 发布连接开播时已就位
+    const selfId = members.find((member) => member.local)?.id;
+    if (!selfId || screenShare.sharerId !== selfId) return;
+    let tries = 0;
+    const timer = window.setInterval(() => {
+      tries += 1;
+      const pc = engineRef.current?.screenSenderPeerConnection() ?? null;
+      if (pc) setSharePc(pc);
+      if (pc || tries >= 24) window.clearInterval(timer);
+    }, 500);
+    return () => window.clearInterval(timer);
+  }, [screenShare, sharePc, members.length]);
+
   /** 开播：采集 → SFU 发布 → 向房主申报（申报失败自动回滚）。 */
   const startScreenShare = useCallback(
     async (quality: ShareQuality): Promise<boolean> => {
@@ -455,11 +484,46 @@ export function useVoice() {
           return false;
         }
         const hasAudio = stream.getAudioTracks().length > 0;
-        const transport = settings.shareTransport;
+        // 传输方式：显式选择优先，"自动"按观众数决定（1~2 人直连、3 人以上 SFU）——
+        // P2P 的上行是"码率 × 观众数"，3 人以上会把家用上行打爆（P1-11）。
+        const decision = autoTransportFor(settings.shareTransport, memberCountRef.current);
+        let transport = decision.transport;
+        stepNoticeShown.current = false;
         // SFU 模式：先向 SFU 发布并拿会话 id；P2P 模式：直接用随机会话 id（画面走直连）
         let sessionId: string;
+        let simulcast = false;
+        let transportNote = "";
         if (transport === "sfu") {
-          sessionId = (await publishScreen(stream, quality)).sessionId;
+          try {
+            const pub = await publishScreen(stream, {
+              quality,
+              // simulcast：一条轨编 3 档，SFU 按每个观众的网络挑层（P1-12）。
+              // 发布失败会自动回落单档；整条 SFU 发布再失败则退回 P2P（见下）。
+              simulcast: true,
+              onStep: (step) => {
+                if (stepNoticeShown.current) return;
+                stepNoticeShown.current = true;
+                setNotice({
+                  kind: "info",
+                  text: `网络吃紧，画质已自动降到 ${RESOLUTION_LADDER_LABEL[step] ?? "更低档"} 继续直播`,
+                });
+              },
+            });
+            sharePubRef.current = pub;
+            sessionId = pub.sessionId;
+            simulcast = true;
+          } catch (error) {
+            // SFU 这条路走不通（跨境/被限流）时，别让用户"共享失败"——
+            // 退回 P2P 直连，能出画面最重要。
+            console.warn("[screen-share] SFU 发布失败，回落 P2P 直连", error);
+            transport = "p2p";
+            sessionId = randomSessionId();
+            // 自动模式下本该走 SFU 却回落了：明确告知，避免"人多还直连"悄悄打爆上行
+            transportNote =
+              decision.transport === "sfu"
+                ? "SFU 不可用，人数较多时已改用直连（可能偏卡）"
+                : "SFU 转发没连上，已改用直连（画质优先）";
+          }
         } else {
           sessionId = randomSessionId();
         }
@@ -471,38 +535,58 @@ export function useVoice() {
             label: videoTrack.label || "屏幕共享",
             hasAudio,
             transport,
+            ...(simulcast ? { simulcast: true } : {}),
           },
           transport === "p2p" ? stream : undefined,
+          quality,
         );
         if (!ok) {
-          // 电视被占用（本地预检或房主拒绝）：回滚一切，不留半开连接
+          // 电视被占用（本地预检或房主拒绝）：连 SFU 发布一起回滚，不留半开连接
+          sharePubRef.current?.stop();
+          sharePubRef.current = null;
           for (const track of stream.getTracks()) track.stop();
           setNotice({ kind: "error", text: "电视被别人占着，晚点再来" });
           return false;
         }
         shareLocalStreamRef.current = stream;
         setShareStream(stream);
+        // 灯箱要显示"发送端"数据（编码分辨率/实际码率/限流原因/编码器）：
+        // SFU 用自己的发布连接，P2P 用引擎里那条直连——共享者自己也得看得见，
+        // 否则调档位就是闭眼掷骰子。
+        setSharePc(
+          transport === "sfu" ? (sharePubRef.current?.pc ?? null) : engine.screenSenderPeerConnection(),
+        );
         // 用户在系统选择器里点了"停止共享"（或任一轨被掐断）：走正常停播流程
         for (const track of stream.getTracks()) {
           track.addEventListener("ended", () => stopScreenShareRef.current());
         }
         setNotice({
           kind: "info",
-          text: hasAudio
-            ? "共享已带上系统声音；观众点幕布可开音量。戴耳机可避免回声"
-            : "共享已开始（此来源没有可共享的声音）",
+          text: [
+            hasAudio
+              ? "共享已带上系统声音；观众点幕布可开音量。戴耳机可避免回声"
+              : "共享已开始（此来源没有可共享的声音）",
+            transportNote,
+          ]
+            .filter(Boolean)
+            .join("；"),
         });
         return true;
       } catch (error) {
         // 采集成功但发布/申报失败的：必须停掉采集，否则系统的"正在共享"指示灯常亮
         for (const track of stream?.getTracks() ?? []) track.stop();
+        // SFU 会话可能已经建起来了（发布成功但后续步骤抛错）：一并收掉，别留半开连接
+        sharePubRef.current?.stop();
+        sharePubRef.current = null;
+        setSharePc(null);
         // 用户取消选择器（NotAllowedError）不算错误，静默返回
         if ((error as DOMException)?.name === "NotAllowedError") return false;
         setNotice({ kind: "error", text: "共享没开起来，语音不受影响，稍后再试" });
         return false;
       }
     },
-    [screenShare],
+    // settings 必须在依赖里：菜单里刚改完"共享方式"就点开始，闭包得拿到新值
+    [screenShare, settings],
   );
 
   /** 停播：通知房主 + 停 SFU 发布 + 停采集。订阅侧由副作用自动清理。 */
@@ -534,10 +618,20 @@ export function useVoice() {
     demoAutoStarted.current = true;
     void (async () => {
       try {
-        const transport = settings.shareTransport;
+        const decision = autoTransportFor(settings.shareTransport, memberCountRef.current);
+        let transport = decision.transport;
         let sessionId: string;
+        let simulcast = false;
         if (transport === "sfu") {
-          sessionId = (await publishScreen(demo, "fhd1080")).sessionId;
+          try {
+            const pub = await publishScreen(demo, { quality: "fhd1080", simulcast: true });
+            sharePubRef.current = pub;
+            sessionId = pub.sessionId;
+            simulcast = true;
+          } catch {
+            transport = "p2p";
+            sessionId = randomSessionId();
+          }
         } else {
           sessionId = randomSessionId();
         }
@@ -549,12 +643,17 @@ export function useVoice() {
             label: "演示画面",
             hasAudio: false,
             transport,
+            ...(simulcast ? { simulcast: true } : {}),
           },
           transport === "p2p" ? demo : undefined,
+          "fhd1080",
         );
         if (!ok) return;
         shareLocalStreamRef.current = demo;
         setShareStream(demo);
+        setSharePc(
+          transport === "sfu" ? (sharePubRef.current?.pc ?? null) : engine.screenSenderPeerConnection(),
+        );
       } catch {
         /* 演示模式失败就当没这回事 */
       }
@@ -742,7 +841,7 @@ export function useVoice() {
   );
 
   const setShareTransport = useCallback(
-    (transport: "p2p" | "sfu") => {
+    (transport: "p2p" | "sfu" | "auto") => {
       persistSettings({ ...settings, shareTransport: transport });
     },
     [persistSettings, settings],

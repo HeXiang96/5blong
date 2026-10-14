@@ -47,7 +47,7 @@ export function randomSessionId(): string {
 }
 
 // ---------------------------------------------------------------------------
-// 画质档位（业主指定：高清 HD 720p60 / 超清 1080p60，均 10000 kbps）
+// 画质档位（业主指定：高清 HD 720p60 = 5000 kbps / 超清 1080p60 = 8000 kbps）
 // ---------------------------------------------------------------------------
 
 export type ShareQuality = "hd720" | "fhd1080";
@@ -63,12 +63,78 @@ export interface ShareQualityPreset {
   maxBitrate: number;
 }
 
+/**
+ * 档位码率：**匹配链路**而不是"堆高"（SCREENSHARE-PERF-PLAN §P0-1）。
+ *
+ * 依据：B站 1080p60 实测只用 2.64 Mbps 就流畅——流畅靠的是编码效率与链路质量，
+ * 不是把上限堆到 20 Mbps。上限远超链路可达带宽时，浏览器的拥塞控制反正会把
+ * 实际码率压回去，但"上限"仍会干扰编码器前期的码率分配；P2P 模式下更糟：
+ * 它会按上限同时对多条上行推流，把家用上行打爆。
+ *
+ * 取值（业主口径：在"匹配链路"的基线上**统一上浮 2 Mbps**，给运动画面留余量）：
+ * 720p60 = 5 Mbps（基线 3M + 2M）、1080p60 = 8 Mbps（基线 6M + 2M）。
+ * 仍远低于原先的 8M / 20M，不会把上行打爆。
+ */
 export const SHARE_QUALITY_PRESETS: Record<ShareQuality, ShareQualityPreset> = {
-  // 业主定位：共享 = 直播流，画质拉满。1080p60 给 20 Mbps（直播推流级），
-  // 720p60 给 8 Mbps；高码率兜住分辨率，网络挤爆前不会降清。
-  hd720: { label: "高清 HD 720p", width: 1280, height: 720, fps: 60, maxBitrate: 8_000_000 },
-  fhd1080: { label: "超清 1080p", width: 1920, height: 1080, fps: 60, maxBitrate: 20_000_000 },
+  hd720: { label: "高清 HD 720p", width: 1280, height: 720, fps: 60, maxBitrate: 5_000_000 },
+  fhd1080: { label: "超清 1080p", width: 1920, height: 1080, fps: 60, maxBitrate: 8_000_000 },
 };
+
+/**
+ * 抖动缓冲目标（ms），按链路分级（SCREENSHARE-PERF-PLAN §P0-5）。
+ *
+ * 原先 P2P 与 SFU 一律 4000ms（规范上限），等于给"同城直连"也强加 4 秒排队，
+ * 围炉看屏会对不上嘴。直连 RTT 通常 <50ms，600ms 足够吸收抖动；SFU 多为跨境
+ * 转发，保留大缓冲换平滑（这类场景延迟不敏感）。
+ */
+export const JITTER_BUFFER_MS = {
+  p2p: 600,
+  sfu: 3000,
+} as const;
+
+/**
+ * P2P 模式下"每路画面"的码率上限。
+ *
+ * 共享者要同时向 N 个观众各推一份（上行 ×N），不做分摊就是把家用上行打爆。
+ * 下限 1.2 Mbps 兜住可看性——观众再多应该切 SFU，而不是继续摊薄。
+ * （下限不随档位同步上浮：它是"分摊后别低于可看线"的保底，抬高了反而会让
+ *  多人场景每路都超过档位本身，等于绕过分摊、把上行重新打爆。）
+ */
+export function perViewerBitrate(quality: ShareQuality, viewers: number): number {
+  const cap = SHARE_QUALITY_PRESETS[quality].maxBitrate;
+  const n = Math.max(1, Math.floor(viewers));
+  return Math.max(1_200_000, Math.round(cap / n));
+}
+
+/**
+ * 分辨率降级阶梯（`scaleResolutionDownBy` 取值）。
+ *
+ * 带宽不足时**降分辨率**、而不是让编码器一味压质量——"画面小一点但干净"
+ * 远比"1080p 满屏马赛克"耐看（这也是 B站 ABR 的选择）。
+ * 1080p 起点换算：1 → 1080p、1.5 → 720p、2 → 540p、2.85 → 380p。
+ */
+export const RESOLUTION_LADDER = [1, 1.5, 2, 2.85] as const;
+
+/** 阶梯档位的可读标签（界面提示用）。 */
+export const RESOLUTION_LADDER_LABEL = ["原始", "720p", "540p", "380p"] as const;
+
+/**
+ * P2P / SFU 传输方式的自动选择（SCREENSHARE-PERF-PLAN §P1-11）。
+ *
+ * P2P 的上行是"档位码率 × 观众数"：1~2 位观众时直连最省事、画质最好；
+ * 3 人及以上时家用上行会被打爆（1080p@8M × 3 ≈ 24 Mbps），必须切 SFU 转发。
+ * 用户的显式选择永远优先，"auto" 才按人数决定。
+ */
+export function autoTransportFor(
+  preference: "p2p" | "sfu" | "auto",
+  memberCount: number,
+): { transport: "p2p" | "sfu"; reason: string } {
+  if (preference === "p2p") return { transport: "p2p", reason: "你选了直连" };
+  if (preference === "sfu") return { transport: "sfu", reason: "你选了 SFU 转发" };
+  const viewers = Math.max(0, memberCount - 1);
+  if (viewers <= 2) return { transport: "p2p", reason: `观众 ${viewers} 人，直连画质最好` };
+  return { transport: "sfu", reason: `观众 ${viewers} 人，直连上行会打爆，自动走 SFU` };
+}
 
 /** getDisplayMedia 选择器提示项（Chromium 支持；TS 类型未收录，运行时透传）。
  *  注意：preferCurrentTab 与 selfBrowserSurface:"exclude" 互斥
@@ -94,25 +160,68 @@ export function shareVideoConstraints(quality: ShareQuality): MediaTrackConstrai
   };
 }
 
-/** 把档位应用到发送端（码率 + 帧率上限；分辨率由采集约束决定）。 */
-function applySenderQuality(pc: RTCPeerConnection, quality: ShareQuality): void {
+export interface ScreenSenderOptions {
+  /** 码率上限覆盖（P2P 按观众数分摊时用；缺省取档位值）。 */
+  maxBitrate?: number;
+  /** 分辨率缩放（降级阶梯；1 = 原分辨率）。 */
+  scaleResolutionDownBy?: number;
+  /** 帧率上限覆盖（CPU 受限时降到 30 帧）。 */
+  maxFramerate?: number;
+}
+
+/**
+ * 把档位下发到发送端（码率 / 帧率上限 / 分辨率缩放）。返回是否全部落盘。
+ *
+ * 两个已核实的事实（SCREENSHARE-PERF-PLAN §P0-3）：
+ * - `degradationPreference` 已废弃、Chrome 不支持，写在 `encodings[0]` 里是**空转**
+ *   （原代码就是这么写的，等于什么都没设）；
+ * - 真正决定"带宽不足时降什么"的是轨道上的 `contentHint`（见 `publishScreen`），
+ *   这里只负责上限与缩放。
+ *
+ * 返回 `Promise<boolean>`：协商时序不当时 `setParameters` 会被浏览器拒绝。
+ * 原实现用 `.catch(() => {})` 静默吞掉，参数可能压根没生效而界面上完全看不出来
+ * （这就是"选了超清却没有任何变化"的观测盲区）。调用方应在连接建立后重试一次。
+ */
+export async function applyScreenSenderParams(
+  pc: RTCPeerConnection,
+  quality: ShareQuality,
+  options: ScreenSenderOptions = {},
+): Promise<boolean> {
   const preset = SHARE_QUALITY_PRESETS[quality];
-  for (const sender of pc.getSenders()) {
-    if (sender.track?.kind !== "video") continue;
-    const params = sender.getParameters();
-    if (!params.encodings || params.encodings.length === 0) params.encodings = [{}];
-    // degradationPreference 是较新的规范属性，TS 的 DOM 类型还没收录（Chrome 已实现）
-    type Encoding = RTCRtpEncodingParameters & { degradationPreference?: string };
-    params.encodings[0] = {
-      ...params.encodings[0],
-      // 直播流定位：优先保帧率（流畅），高码率上限兜住清晰度
-      degradationPreference: "maintain-framerate",
-      maxBitrate: preset.maxBitrate,
-      maxFramerate: preset.fps,
-      scaleResolutionDownBy: 1,
-    } as Encoding;
-    // setParameters 可能被浏览器拒绝（协商时序），失败不致命：采集约束已限了分辨率
-    sender.setParameters(params).catch(() => {});
+  const baseBitrate = options.maxBitrate ?? preset.maxBitrate;
+  const framerate = options.maxFramerate ?? preset.fps;
+  const scale = options.scaleResolutionDownBy ?? 1;
+  const senders = pc.getSenders().filter((sender) => sender.track?.kind === "video");
+  if (senders.length === 0) return false;
+  try {
+    await Promise.all(
+      senders.map((sender) => {
+        const params = sender.getParameters();
+        if (!params.encodings || params.encodings.length === 0) params.encodings = [{}];
+        if (params.encodings.length > 1) {
+          // simulcast 发布：逐层分配码率（层按 rid 顺序 f > h > q，逐层减半）；
+          // 保留各层原有的 scaleResolutionDownBy / rid——那是发布时按 rid 定好的
+          // 层结构，在这里改掉会把"多档"变成"三档一样大"。
+          params.encodings = params.encodings.map((encoding, index) => ({
+            ...encoding,
+            maxBitrate: Math.round(baseBitrate / 2 ** index),
+            maxFramerate: framerate,
+          }));
+        } else {
+          params.encodings[0] = {
+            ...params.encodings[0],
+            maxBitrate: baseBitrate,
+            maxFramerate: framerate,
+            scaleResolutionDownBy: scale,
+          };
+        }
+        return sender.setParameters(params);
+      }),
+    );
+    return true;
+  } catch {
+    /* 失败由调用方在连接建立后重试；这里不吞掉"是否成功"这个信息 */
+    return false;
   }
 }
 
@@ -121,8 +230,8 @@ const ICE_SERVERS: RTCIceServer[] = [
   { urls: "stun:stun.cloudflare.com:3478" },
 ];
 
-/** 等待 ICE 候选收集完成（带超时：SFU 不需要完整候选表，1.2s 内有多少用多少）。 */
-async function gatherIce(pc: RTCPeerConnection, timeoutMs = 1200): Promise<void> {
+/** 等待 ICE 候选收集完成（带超时：SFU 不需要完整候选表，0.8s 内有多少用多少）。 */
+async function gatherIce(pc: RTCPeerConnection, timeoutMs = 800): Promise<void> {
   if (pc.iceGatheringState === "complete") return;
   await new Promise<void>((resolve) => {
     const done = () => {
@@ -183,6 +292,373 @@ function str(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
+function num(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+// ---------------------------------------------------------------------------
+// 链路读数（灯箱底部的数据条）
+// ---------------------------------------------------------------------------
+
+/** getStats 条目的宽松形状（规范字段很多，这里只取用得到的几个）。 */
+export interface StatsEntry {
+  type?: string;
+  id?: string;
+  kind?: string;
+  codecId?: string;
+  mimeType?: string;
+  payloadType?: number;
+  [key: string]: unknown;
+}
+
+/** 上一次采样的码率基线（跨两次采样算差值）。 */
+export interface RateSample {
+  bytes: number;
+  ts: number;
+}
+
+export interface ScreenStatsSummary {
+  /** 这份报告里是"发送端"还是"接收端"（都没有则为 null）。 */
+  role: "send" | "recv" | null;
+  width: number;
+  height: number;
+  fps: number;
+  /** 实际码率（kbps，两次采样的差值；首帧为 0）。 */
+  kbps: number;
+  /** 协商到的编码（如 h264 / vp8）。 */
+  codec: string;
+  /** 编码器/解码器实现名——判断有没有吃到 NVENC / NVDEC 靠它。 */
+  implementation: string;
+  powerEfficient: boolean;
+  /** 发送端：受限原因（none / bandwidth / cpu / other）。 */
+  limitation: string;
+  /** 发送端：链路可用带宽估计（kbps）。 */
+  availableKbps: number;
+  /** 发送端：单帧编码耗时（ms）——持续走高＝没吃到硬编。 */
+  encodeMs: number;
+  /** 接收端：卡顿/冻结计数。 */
+  frozen: number;
+  /** 接收端：累计丢包率（%）。 */
+  lossPct: number;
+  /** 已经拼好的可显示文本。 */
+  text: string;
+  sample: RateSample | null;
+}
+
+const EMPTY_SUMMARY: ScreenStatsSummary = {
+  role: null,
+  width: 0,
+  height: 0,
+  fps: 0,
+  kbps: 0,
+  codec: "",
+  implementation: "",
+  powerEfficient: false,
+  limitation: "none",
+  availableKbps: 0,
+  encodeMs: 0,
+  frozen: 0,
+  lossPct: 0,
+  text: "",
+  sample: null,
+};
+
+const LIMITATION_TEXT: Record<string, string> = {
+  none: "不受限",
+  bandwidth: "带宽受限",
+  cpu: "CPU 受限",
+  other: "受限",
+};
+
+/**
+ * 把一份 getStats 快照压成"一眼能看懂"的一段话（灯箱数据条）。
+ *
+ * 这是整套优化的**观测前提**：分辨率看编码器实际输出、码率看参数有没有生效、
+ * `limitation` 分辨"链路不够"还是"没吃到硬编"、`implementation` 分辨硬编还是软编。
+ * 观看者与共享者共用这一条（谁是发送、谁是接收由报告里实际存在的流决定）。
+ *
+ * 纯函数：只吃 stats 条目数组 + 上一次采样，方便单测（不依赖真实 RTCPeerConnection）。
+ */
+export function summarizeScreenStats(entries: StatsEntry[], prev: RateSample | null): ScreenStatsSummary {
+  const byId = new Map<string, StatsEntry>();
+  let fallbackCodec = "";
+  for (const entry of entries) {
+    if (entry.id) byId.set(entry.id, entry);
+    if (entry.type === "codec" && typeof entry.mimeType === "string") {
+      const mime = entry.mimeType.toLowerCase();
+      if (mime.startsWith("video/") && !/rtx|red|ulpfec|flexfec/.test(mime)) {
+        fallbackCodec = mime.slice("video/".length);
+      }
+    }
+  }
+
+  let outbound: StatsEntry | null = null;
+  let inbound: StatsEntry | null = null;
+  for (const entry of entries) {
+    if (entry.kind !== "video") continue;
+    if (!outbound && entry.type === "outbound-rtp") outbound = entry;
+    else if (!inbound && entry.type === "inbound-rtp") inbound = entry;
+  }
+  const target = outbound ?? inbound;
+  if (!target) return EMPTY_SUMMARY;
+
+  const send = target === outbound;
+  const codecEntry = target.codecId ? byId.get(String(target.codecId)) : undefined;
+  const codec = (codecEntry?.mimeType ? String(codecEntry.mimeType) : "").replace(/^video\//i, "") || fallbackCodec;
+
+  const bytes = send ? num(target["bytesSent"]) : num(target["bytesReceived"]);
+  const ts = num(target["timestamp"]) || Date.now();
+  const kbps = prev && ts > prev.ts ? Math.round(((bytes - prev.bytes) * 8) / (ts - prev.ts)) : 0;
+  const sample: RateSample = { bytes, ts };
+
+  const width = num(target["frameWidth"]);
+  const height = num(target["frameHeight"]);
+  const fps = Math.round(num(target["framesPerSecond"]));
+  const implementation = str(target[send ? "encoderImplementation" : "decoderImplementation"]);
+  const powerEfficient = target[send ? "powerEfficientEncoder" : "powerEfficientDecoder"] === true;
+  const limitation = send ? str(target["qualityLimitationReason"]) || "none" : "none";
+  const availableKbps = Math.round(num(target["availableOutgoingBitrate"]) / 1000);
+  const frames = num(target["framesEncoded"]);
+  const encodeMs = send && frames > 0 ? Number((num(target["totalEncodeTime"]) / frames * 1000).toFixed(1)) : 0;
+  const frozen = num(target["freezeCount"]);
+  const packets = num(target["packetsReceived"]);
+  const lost = num(target["packetsLost"]);
+  const lossPct = !send && packets + lost > 0 ? Number(((lost / (packets + lost)) * 100).toFixed(1)) : 0;
+
+  const parts: string[] = [];
+  parts.push(`${send ? "发出" : "收到"} ${width && height ? `${width}×${height}` : "?"}`);
+  parts.push(`${fps || "?"} fps`);
+  parts.push(`${kbps || "?"} kbps`);
+  const accel = powerEfficient ? (send ? "硬编" : "硬解") : send ? "软编" : "软解";
+  parts.push([codec, implementation, accel].filter(Boolean).join(" ") || "编码器?");
+  if (send) {
+    if (limitation !== "none") parts.push(LIMITATION_TEXT[limitation] ?? limitation);
+    if (encodeMs) parts.push(`编码 ${encodeMs}ms/帧`);
+    if (availableKbps) parts.push(`可用 ${availableKbps} kbps`);
+  } else {
+    if (frozen) parts.push(`卡顿 ${frozen} 次`);
+    if (lossPct >= 0.1) parts.push(`丢包 ${lossPct}%`);
+  }
+
+  return {
+    role: send ? "send" : "recv",
+    width,
+    height,
+    fps,
+    kbps,
+    codec,
+    implementation,
+    powerEfficient,
+    limitation,
+    availableKbps,
+    encodeMs,
+    frozen,
+    lossPct,
+    text: parts.join(" · "),
+    sample,
+  };
+}
+
+/** 直接吃 RTCStatsReport 的便捷包装（组件里用）。 */
+export function summarizeScreenReport(report: RTCStatsReport, prev: RateSample | null): ScreenStatsSummary {
+  const entries: StatsEntry[] = [];
+  report.forEach((entry) => entries.push(entry as unknown as StatsEntry));
+  return summarizeScreenStats(entries, prev);
+}
+
+// ---------------------------------------------------------------------------
+// 发送端自适应：带宽不足时降分辨率，而不是把画质压成马赛克
+// ---------------------------------------------------------------------------
+
+/** 自适应采样间隔。 */
+const TUNE_INTERVAL_MS = 3000;
+/** 连续几次"受限"才降一档（抗抖动，避免来回跳）。 */
+const LIMIT_STRIKES = 2;
+/** 连续几次"健康"才回升一档（迟滞，避免振荡）。 */
+const RECOVER_SAMPLES = 6;
+
+export interface ScreenSenderTunerOptions {
+  /** 码率上限（P2P 分摊后的值；缺省取档位值）。 */
+  maxBitrate?: number;
+  /** 起始阶梯档（0 = 原始分辨率）。 */
+  startStep?: number;
+  /** 是否 simulcast 发布（多档编码时不做"总码率偏低"的推断）。 */
+  simulcast?: boolean;
+  /** 档位变化回调（界面可提示"已自动降到 720p"）。 */
+  onStep?: (step: number, reason: string) => void;
+}
+
+export interface ScreenSenderTuner {
+  stop: () => void;
+  /** 码率上限变化（观众数增减）时重新下发，**保持当前阶梯档**。 */
+  retune: (maxBitrate?: number) => void;
+  step: () => number;
+  applied: () => number;
+}
+
+/**
+ * 给一条画面发送链路挂上"自适应降档"（SCREENSHARE-PERF-PLAN §P0-4 / §P2-14）。
+ *
+ * 依据 `outbound-rtp.qualityLimitationReason` 决策：
+ * - `bandwidth`：链路不够 —— 降分辨率（降多少像素就省多少码率，且比压质量耐看）；
+ * - `cpu`：编码器跟不上 —— 同样降分辨率，并把帧率压到 30（多半是没吃到硬编）；
+ * - 持续健康：缓慢回升一档（迟滞 6 次采样 ≈ 18s，避免来回跳）。
+ *
+ * 只在"确实受限"时动，且一次只动一档；`stop()` 后不再改参数。
+ */
+export function createScreenSenderTuner(
+  pc: RTCPeerConnection,
+  quality: ShareQuality,
+  options: ScreenSenderTunerOptions = {},
+): ScreenSenderTuner {
+  const preset = SHARE_QUALITY_PRESETS[quality];
+  let step = Math.min(Math.max(0, options.startStep ?? 0), RESOLUTION_LADDER.length - 1);
+  let baseBitrate = options.maxBitrate;
+  let strikes = 0;
+  let healthy = 0;
+  let stopped = false;
+  let applications = 0;
+  let prev: RateSample | null = null;
+
+  const apply = () => {
+    if (stopped || pc.connectionState === "closed") return;
+    const scale = RESOLUTION_LADDER[step]!;
+    void applyScreenSenderParams(pc, quality, {
+      maxBitrate: baseBitrate,
+      scaleResolutionDownBy: scale,
+      // 降到 540p 及以下还带不动 60 帧，多半是 CPU/带宽双重吃紧：帧率也让一步
+      maxFramerate: step >= 2 ? Math.min(30, preset.fps) : preset.fps,
+    }).then((ok) => {
+      if (ok) applications += 1;
+    });
+  };
+
+  const tick = async () => {
+    if (stopped || pc.connectionState === "closed") return;
+    const senders = pc.getSenders().filter((sender) => sender.track?.kind === "video");
+    if (senders.length === 0) return;
+    let summary: ScreenStatsSummary;
+    try {
+      summary = summarizeScreenReport(await pc.getStats(), prev);
+    } catch {
+      return; // 连接关闭后的取数失败：忽略
+    }
+    if (summary.role !== "send") return;
+    prev = summary.sample;
+
+    const limited = summary.limitation === "bandwidth" || summary.limitation === "cpu";
+    // 兜底：个别浏览器不报 limitation，但实际码率远低于上限，同样按受限处理
+    const starved = !options.simulcast && !!baseBitrate && summary.kbps > 0 && summary.kbps < baseBitrate * 0.3;
+    if (limited || starved) {
+      healthy = 0;
+      strikes += 1;
+      if (strikes >= LIMIT_STRIKES && step < RESOLUTION_LADDER.length - 1) {
+        step += 1;
+        strikes = 0;
+        apply();
+        options.onStep?.(step, summary.limitation === "cpu" ? "cpu" : "bandwidth");
+      }
+      return;
+    }
+    strikes = 0;
+    healthy += 1;
+    if (healthy >= RECOVER_SAMPLES && step > 0) {
+      step -= 1;
+      healthy = 0;
+      apply();
+      options.onStep?.(step, "recover");
+    }
+  };
+
+  apply();
+  const timer = window.setInterval(() => void tick(), TUNE_INTERVAL_MS);
+  return {
+    stop: () => {
+      stopped = true;
+      window.clearInterval(timer);
+    },
+    retune: (maxBitrate?: number) => {
+      if (typeof maxBitrate === "number") baseBitrate = maxBitrate;
+      apply();
+    },
+    step: () => step,
+    applied: () => applications,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// 断线自愈：先试 ICE restart，而不是立刻雪花
+// ---------------------------------------------------------------------------
+
+export interface ScreenHealOptions {
+  /** 连续重启仍失败（彻底断）时回调——界面据此降级为雪花。 */
+  onFailed?: () => void;
+  /** 需要重拨时回调（共享者侧可重新发起画面呼叫）。 */
+  onRetry?: () => void;
+  /** 最多重启几次（默认 2 次）。 */
+  retries?: number;
+}
+
+/**
+ * 给画面连接挂"抖动自愈"（SCREENSHARE-PERF-PLAN §P2-13）。
+ *
+ * 原实现把 `disconnected` 直接当断线（雪花/永久冻结），可短暂抖一下 ICE
+ * 就能自己恢复。这里：`disconnected` 等 2.5s 仍不通 → `restartIce()`；
+ * `failed` 立刻重启；重启后给 6s 观察窗，仍不通则再试；超过次数上限才判定
+ * 真断（回调 onFailed）。恢复即清零计数。
+ */
+export function healScreenConnection(pc: RTCPeerConnection, options: ScreenHealOptions = {}): () => void {
+  const maxRestarts = options.retries ?? 2;
+  let stopped = false;
+  let restarts = 0;
+  let pending = 0;
+
+  const clearPending = () => {
+    if (pending) {
+      window.clearTimeout(pending);
+      pending = 0;
+    }
+  };
+
+  const scheduleRestart = (delay: number) => {
+    clearPending();
+    pending = window.setTimeout(() => {
+      pending = 0;
+      if (stopped || pc.connectionState === "closed" || pc.connectionState === "connected") return;
+      restarts += 1;
+      try {
+        pc.restartIce();
+      } catch {
+        /* 个别实现不支持时忽略，靠下一次观察窗继续判 */
+      }
+      if (restarts > maxRestarts) {
+        options.onFailed?.();
+        options.onRetry?.();
+        return;
+      }
+      scheduleRestart(6000);
+    }, delay);
+  };
+
+  const onState = () => {
+    if (stopped) return;
+    if (pc.connectionState === "connected") {
+      clearPending();
+      restarts = 0;
+      return;
+    }
+    if (pc.connectionState === "disconnected") scheduleRestart(2500);
+    else if (pc.connectionState === "failed") scheduleRestart(0);
+  };
+
+  pc.addEventListener("connectionstatechange", onState);
+  return () => {
+    stopped = true;
+    clearPending();
+    pc.removeEventListener("connectionstatechange", onState);
+  };
+}
+
 // ---------------------------------------------------------------------------
 // 发布
 // ---------------------------------------------------------------------------
@@ -196,22 +672,96 @@ export interface ScreenPublication {
   stop: () => void;
   /** 连接中断回调（watchdog 用，界面上表现为雪花）。 */
   onLost?: () => void;
+  /** 发送端连接：灯箱据此显示"发送端自检"（编码分辨率/码率/限流原因/编码器）。 */
+  pc: RTCPeerConnection;
+}
+
+// ---------------------------------------------------------------------------
+// 硬件编解码预检（WebCodecs）
+// ---------------------------------------------------------------------------
+
+export interface HardwareCodecProbe {
+  /** 有 H.264 硬件编码单元（NVENC / QSV / VCE / Apple 芯片）。 */
+  h264: boolean;
+  /** 有 AV1 硬件编码单元（RTX 40+ / Intel Arc / M3+ / RDNA3）——只有它才能把 AV1 提前。 */
+  av1: boolean;
+  /** 预检是否真的跑过（浏览器没有 WebCodecs 时为 false，一律按"未探到"处理）。 */
+  checked: boolean;
+}
+
+const NO_PROBE: HardwareCodecProbe = { h264: false, av1: false, checked: false };
+
+/** 预检结果按会话缓存（同一台机器同一个浏览器，结果不会变）。 */
+let probeCache: Promise<HardwareCodecProbe> | null = null;
+
+interface VideoEncoderSupportResult {
+  supported?: boolean;
+  config?: { hardwareAcceleration?: string };
+}
+
+/**
+ * 用 WebCodecs 问系统"有没有硬件编码单元"（SCREENSHARE-PERF-PLAN §O-3）。
+ *
+ * 比"建一条假连接跑 getStats"干净得多：不建连接、不造假流，一次调用出结果。
+ * `hardwareAcceleration: "require-hardware"` 是关键——它要求系统必须用硬件编码，
+ * 没有硬件单元时返回 supported:false（而不是悄悄给你一个软编）。
+ *
+ * 注意：这只是一道**预检**。Chromium 在真实协商里仍可能因配置不支持而静默回落
+ * 软编，所以发布后必须以 `getStats` 的 `encoderImplementation` /
+ * `powerEfficientEncoder` 复核（灯箱数据条就是干这个的）。
+ */
+export function probeHardwareEncoders(quality: ShareQuality): Promise<HardwareCodecProbe> {
+  if (probeCache) return probeCache;
+  const preset = SHARE_QUALITY_PRESETS[quality];
+  probeCache = (async (): Promise<HardwareCodecProbe> => {
+    const Encoder = (globalThis as { VideoEncoder?: { isConfigSupported?: unknown } }).VideoEncoder;
+    const isConfigSupported = (Encoder as { isConfigSupported?: (config: unknown) => Promise<VideoEncoderSupportResult> })
+      ?.isConfigSupported;
+    if (typeof isConfigSupported !== "function") return NO_PROBE;
+    const ask = async (codec: string): Promise<boolean> => {
+      try {
+        const result = await isConfigSupported.call(Encoder, {
+          codec,
+          width: preset.width,
+          height: preset.height,
+          bitrate: preset.maxBitrate,
+          framerate: preset.fps,
+          hardwareAcceleration: "require-hardware",
+        });
+        return result?.supported === true;
+      } catch {
+        return false;
+      }
+    };
+    const [h264, av1] = await Promise.all([ask("avc1.640028"), ask("av01.0.08M.08")]);
+    return { h264, av1, checked: true };
+  })();
+  return probeCache;
+}
+
+/** 仅测试用：清掉预检缓存。 */
+export function resetHardwareProbeCache(): void {
+  probeCache = null;
 }
 
 /**
  * 编解码器偏好：H264 优先（显卡/芯片硬件编码，CPU 几乎零开销——
  * 直播软件 OBS 等同款选择）；VP8 软编 1080p60 是 CPU 杀手（糊+卡的元凶），垫底。
  * setCodecPreferences 只是调整协商顺序，个别实现不支持时回落浏览器默认。
+ *
+ * `preferAv1` 只在**预检到本机有 AV1 硬件编码**时才置真（P1-10）。AV1 同码率
+ * 画质比 H.264 高一档，但没有硬编时软编 1080p60 跑不动（马赛克从 bandwidth 型
+ * 变 cpu 型），所以拿不准一律回落 H.264 基线。
  */
-function setPreferredVideoCodecs(transceiver: RTCRtpTransceiver): void {
+function setPreferredVideoCodecs(transceiver: RTCRtpTransceiver, preferAv1 = false): void {
   const caps = RTCRtpSender.getCapabilities("video");
   if (!caps || caps.codecs.length === 0) return;
   const score = (mimeType: string): number => {
     switch (mimeType.toLowerCase()) {
       case "video/h264":
-        return 0;
+        return preferAv1 ? 1 : 0;
       case "video/av1":
-        return 1;
+        return preferAv1 ? 0 : 1;
       case "video/vp9":
         return 2;
       case "video/vp8":
@@ -228,36 +778,131 @@ function setPreferredVideoCodecs(transceiver: RTCRtpTransceiver): void {
 }
 
 /**
+ * P2P 画面链路的 SDP 改写：把 `m=video` 里的 **H.264 载荷类型提到最前**。
+ *
+ * 为什么必须这么做（这是"P2P 也糊"的直接原因之一）：
+ * PeerJS 自己创建 RTCPeerConnection、自己出 offer，我们**没有机会**在协商前调用
+ * `setCodecPreferences`（那条路只有 SFU 的 `publishScreen` 走得到）。而浏览器默认的
+ * `m=video` 顺序是 **VP8 在前** → P2P 画面协商到 VP8，**软件编码**；
+ * 1080p60 下 VP8 软编 CPU 吃紧，编码器只能疯狂降质量 → 观众看到的就是"糊"。
+ * 把 H264 提到首位后，对端（Chrome / Edge / Safari 都支持 H264）会协商到
+ * **硬件编码**，同样的码率下画面干净得多。
+ *
+ * PeerJS 恰好留了一个口子：`peer.call(id, stream, { sdpTransform })` 会被
+ * `Negotiator._makeOffer` 在 `createOffer` 之后、`setLocalDescription` 之前调用
+ * （已读 peerjs 1.5.5 的 bundler.mjs:837 核对）。这里只重排顺序，不改任何语义。
+ */
+export function preferH264Sdp(sdp: string): string {
+  if (!sdp) return sdp;
+  const eol = sdp.includes("\r\n") ? "\r\n" : "\n";
+  const lines = sdp.split(eol);
+  const codecOf = new Map<string, string>(); // 载荷类型 → 编码名（小写）
+  for (const line of lines) {
+    const match = /^a=rtpmap:(\d+)\s+([^/\s]+)/.exec(line);
+    if (match) codecOf.set(match[1]!, match[2]!.toLowerCase());
+  }
+  const isH264 = (pt: string): boolean => codecOf.get(pt) === "h264";
+  let changed = false;
+  const out = lines.map((line) => {
+    if (!line.startsWith("m=video")) return line;
+    const fields = line.split(" ");
+    if (fields.length <= 3) return line;
+    const payloads = fields.slice(3);
+    // Array.prototype.sort 是稳定排序：H264 整体前移，其余保持浏览器给的原序
+    const ordered = [...payloads].sort((a, b) => Number(isH264(b)) - Number(isH264(a)));
+    if (ordered.join(" ") === payloads.join(" ")) return line;
+    changed = true;
+    return [...fields.slice(0, 3), ...ordered].join(" ");
+  });
+  return changed ? out.join(eol) : sdp;
+}
+
+/** 画质档位与发送参数（P2P / SFU 两条链路共用同一套档位定义）。 */
+export interface PublishScreenOptions {
+  /** 画质档位（默认超清 1080p）。 */
+  quality?: ShareQuality;
+  /**
+   * 带宽不足时的降级方向（SCREENSHARE-PERF-PLAN §P0-3）：
+   * - `"detail"`（默认）：保清晰，宁可掉帧也不糊——屏幕共享多为 UI/文字/视频，
+   *   糊了就没法看，"卡一点"还能忍；
+   * - `"motion"`：保帧率，宁可降清晰（看高速游戏时更顺）。
+   * 这是 Chrome 里唯一真正生效的降级开关（靠 `contentHint`）。
+   */
+  hint?: "motion" | "detail";
+  /** 连接中断回调（ICE restart 也救不回来时才算断，界面上表现为雪花）。 */
+  onLost?: () => void;
+  /**
+   * simulcast 发布（P1-12）：一条轨编 3 档（f/h/q），SFU 按每个观众的网络自动挑层。
+   * 只在 SFU 转发模式下有意义（P2P 是点对点，没有"挑层"这一层）。
+   * 发布失败会自动回落单档重试（老 SFU / 意外情况都能出画面）。
+   */
+  simulcast?: boolean;
+  /** 档位变化提示（自适应降分辨率时回调，界面可显示"已自动降到 720p"）。 */
+  onStep?: (step: number, reason: string) => void;
+}
+
+/**
  * 把采集好的屏幕流发布到 SFU。
  *
  * `stream` 来自 getDisplayMedia（或调试用的 canvas.captureStream）。
  * 返回的 stop() 只管 SFU 侧的清理；停止采集（track.stop()）由调用方负责。
+ *
+ * simulcast 是"锦上添花"：失败就退回单档发布，绝不让开播因它失败。
  */
 export async function publishScreen(
   stream: MediaStream,
-  quality: ShareQuality = "fhd1080",
-  onLost?: () => void,
+  options: PublishScreenOptions = {},
 ): Promise<ScreenPublication> {
+  if (!options.simulcast) return publishScreenOnce(stream, options);
+  try {
+    return await publishScreenOnce(stream, { ...options, simulcast: true });
+  } catch (error) {
+    console.warn("[screen-share] simulcast 发布失败，回落单档发布", error);
+    return publishScreenOnce(stream, { ...options, simulcast: false });
+  }
+}
+
+async function publishScreenOnce(
+  stream: MediaStream,
+  options: PublishScreenOptions = {},
+): Promise<ScreenPublication> {
+  const quality = options.quality ?? "fhd1080";
+  const hint = options.hint ?? "detail";
   const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
-  // 业主定位：共享 = 直播流。"motion" = 编码器优先保帧率（画面流畅）；
-  // 高码率（20 Mbps）由发送端参数兜住，网络不挤爆就不会降分辨率——
-  // 流畅与清晰两者都要，不做"保一头"的取舍。
-  for (const track of stream.getVideoTracks()) track.contentHint = "motion";
+  // contentHint 决定"带宽不足时降什么"：motion 保帧率（画面变糊）、
+  // detail 保清晰（画面掉帧）。原先写死 "motion" 又配一个空转的
+  // degradationPreference，结果带宽一紧就往"糊"的方向走——这正是
+  // "1080p 糊成马赛克"的直接诱因。
+  for (const track of stream.getVideoTracks()) track.contentHint = hint;
 
   const videoTrack = stream.getVideoTracks()[0];
   const audioTrack = stream.getAudioTracks()[0];
   if (!videoTrack && !audioTrack) throw new Error("没有可发布的媒体轨");
+  const useSimulcast = options.simulcast === true;
   if (videoTrack) {
-    const transceiver = pc.addTransceiver(videoTrack, { direction: "sendonly" });
-    setPreferredVideoCodecs(transceiver);
+    // 有硬件编码才允许把 AV1 提到 H.264 之前（P1-10）；预检结果进程内缓存
+    const probe = await probeHardwareEncoders(quality);
+    const transceiver = pc.addTransceiver(videoTrack, {
+      direction: "sendonly",
+      ...(useSimulcast
+        ? {
+            sendEncodings: [
+              { rid: "f", scaleResolutionDownBy: 1, active: true },
+              { rid: "h", scaleResolutionDownBy: 2 },
+              { rid: "q", scaleResolutionDownBy: 4 },
+            ] as RTCRtpEncodingParameters[],
+          }
+        : {}),
+    });
+    setPreferredVideoCodecs(transceiver, probe.av1);
   }
   if (audioTrack) pc.addTransceiver(audioTrack, { direction: "sendonly" });
 
   const offer = await pc.createOffer();
   await pc.setLocalDescription(offer);
-  await gatherIce(pc);
 
-  const session = await postJson("/sessions/new", null);
+  // ICE 候选收集与 SFU 会话创建互不依赖：并行发起，省掉一次串行往返（~1s）。
+  const [, session] = await Promise.all([gatherIce(pc), postJson("/sessions/new", null)]);
   const sessionId = str(session["sessionId"]);
   if (!sessionId) throw new Error("SFU 未返回 sessionId");
 
@@ -284,8 +929,8 @@ export async function publishScreen(
   const answer = result["sessionDescription"] as { type?: string; sdp?: string } | undefined;
   if (!answer?.sdp) throw new Error("SFU 未返回 answer");
   await pc.setRemoteDescription({ type: "answer", sdp: answer.sdp });
-  // 协商完成后应用画质档位（码率/帧率上限）
-  applySenderQuality(pc, quality);
+  // 协商后先试下发一次；被拒（协商时序未就绪）不致命，等 connected 再补
+  const appliedEarly = await applyScreenSenderParams(pc, quality);
 
   /*
    * 官方要求：**连接真正建立后**才让 publication 可被订阅
@@ -295,16 +940,27 @@ export async function publishScreen(
    */
   await waitConnected(pc);
 
-  if (onLost) {
-    pc.addEventListener("connectionstatechange", () => {
-      if (pc.connectionState === "failed" || pc.connectionState === "disconnected") onLost();
-    });
+  // 连接真正建立后再补一次：这是 setParameters 唯一有保证能生效的时刻。
+  // （原实现只在协商后调一次、且失败被 `.catch(() => {})` 静默吞掉 → 用户
+  //   选了超清却完全没生效，界面上还看不出来。）
+  if (!appliedEarly && !(await applyScreenSenderParams(pc, quality))) {
+    console.warn("[screen-share] 画质档位下发失败，浏览器将沿用默认编码参数");
   }
+
+  // 自适应降档（P0-4 / P2-14）：链路一紧先降分辨率，而不是把 1080p 压成马赛克
+  const tuner = createScreenSenderTuner(pc, quality, {
+    simulcast: useSimulcast,
+    onStep: options.onStep,
+  });
+  // 抖动自愈（P2-13）：短暂抖一下先走 ICE restart，不立刻判死
+  const stopHeal = healScreenConnection(pc, { onFailed: options.onLost });
 
   const closed = { value: false };
   const teardown = async () => {
     if (closed.value) return;
     closed.value = true;
+    tuner.stop();
+    stopHeal();
     try {
       // 尽力而为地关轨；会话没有删除端点，SFU 侧有闲置超时兜底。
       const entries = [...mids.entries()].map(([mid, trackName]) => ({
@@ -328,7 +984,7 @@ export async function publishScreen(
     }
   };
 
-  return { sessionId, hasAudio: Boolean(audioTrack), stop: () => void teardown() };
+  return { sessionId, hasAudio: Boolean(audioTrack), stop: () => void teardown(), pc };
 }
 
 // ---------------------------------------------------------------------------
@@ -344,6 +1000,19 @@ export interface ScreenSubscription {
   pc: RTCPeerConnection;
 }
 
+export interface SubscribeScreenOptions {
+  /**
+   * 订阅 simulcast 发布（P1-12）：默认取最高层 `f`，并允许 SFU 在带宽不足时
+   * 按字母序自动退到 `h`/`q`。
+   *
+   * 两个字段的官方默认都是 `none`（"带宽不够也死推我指定的那层"），
+   * **不显式声明反而更卡**——这是这条链路上最容易踩的坑。
+   */
+  simulcast?: boolean;
+  /** 优先层（默认 `f`，即满档）。 */
+  preferredRid?: string;
+}
+
 /**
  * 订阅某个发布者的屏幕轨。
  * 流程是"SFU 出 offer、浏览器回 answer"，与发布方向相反。
@@ -351,11 +1020,12 @@ export interface ScreenSubscription {
 export async function subscribeScreen(
   publisherSessionId: string,
   trackNames: string[],
+  options: SubscribeScreenOptions = {},
 ): Promise<ScreenSubscription> {
   const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
   // 任一步失败都要关掉半开的 PC，别让连接和 ICE 状态泄漏
   try {
-    return await subscribeScreenInner(pc, publisherSessionId, trackNames);
+    return await subscribeScreenInner(pc, publisherSessionId, trackNames, options);
   } catch (error) {
     try {
       pc.close();
@@ -370,18 +1040,19 @@ async function subscribeScreenInner(
   pc: RTCPeerConnection,
   publisherSessionId: string,
   trackNames: string[],
+  options: SubscribeScreenOptions = {},
 ): Promise<ScreenSubscription> {
   // 所有收到的轨并进同一个 MediaStream：<video> 一个 srcObject 全搞定
   // （视频轨渲染画面、音频轨经元素出声——用户在放大层里控制音量）。
   const stream = new MediaStream();
-  // 抖动缓冲拉满（规范上限 4000ms）：跨境链路的晚包/突发抖动在缓冲里排队
-  // 再解码，牺牲 4 秒延迟换画面平滑——"围炉看屏"场景延迟不敏感。
-  // （注意：这只治"抖"，持续带宽不足仍需降清晰度/帧率来匹配网络。）
+  // 抖动缓冲按链路分级：走到这里的只可能是 SFU 转发（P2P 的画面由引擎
+  // 直连，不经过这个函数）。跨境链路留 3000ms 排队空间换平滑，比原先
+  // 一刀切 4000ms 少一秒延迟。（这只治"抖"，持续带宽不足仍要靠发送端降档。）
   pc.ontrack = (event) => {
     stream.addTrack(event.track);
     if (event.receiver) {
       try {
-        event.receiver.jitterBufferTarget = 4000;
+        event.receiver.jitterBufferTarget = JITTER_BUFFER_MS.sfu;
       } catch {
         /* 个别实现不支持时忽略 */
       }
@@ -392,11 +1063,17 @@ async function subscribeScreenInner(
   const sessionId = str(session["sessionId"]);
   if (!sessionId) throw new Error("SFU 未返回 sessionId");
 
+  // simulcast 发布：声明优先层并开启字母序降级（不声明 = 官方默认 none，
+  // 带宽不足时 SFU 仍死推最高层，观众端只会更卡）。
+  const simulcast = options.simulcast
+    ? { preferredRid: options.preferredRid ?? "f", priorityOrdering: "asciibetical", ridNotAvailable: "asciibetical" }
+    : undefined;
   const result = await postJson(`/sessions/${sessionId}/tracks/new`, {
     tracks: trackNames.map((trackName) => ({
       location: "remote",
       sessionId: publisherSessionId,
       trackName,
+      ...(simulcast && trackName === TRACK_VIDEO ? { simulcast } : {}),
     })),
   });
 

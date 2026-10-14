@@ -28,8 +28,19 @@ export interface VoiceSettings {
   peerMuted: Record<string, boolean>;
   /** 屏幕共享画质档位（720p60 / 1080p60）。 */
   shareQuality: ShareQuality;
-  /** 屏幕共享传输方式：p2p 直连（默认，画质最好）| sfu 转发（兜底）。 */
-  shareTransport: "p2p" | "sfu";
+  /**
+   * 屏幕共享传输方式：
+   * - `"auto"`（默认）：1~2 位观众走 P2P 直连（画质最好），3 人及以上自动切
+   *   SFU 转发——P2P 的上行是"码率 × 观众数"，人多必炸家宽上行；
+   * - `"p2p"` / `"sfu"`：显式指定，永远优先于自动判断。
+   */
+  shareTransport: "p2p" | "sfu" | "auto";
+  /**
+   * 设置结构版本（用于迁移）。
+   * v2 起把"传输方式"的缺省从 p2p 改成 auto——旧配置里的 p2p 是当年的**默认值**
+   * 而不是用户主动选择，所以无版本号时按 auto 迁移；用户之后手动选过就保留。
+   */
+  settingsVersion?: number;
 }
 
 /** 屏幕共享画质档位（定义在 screen-share.ts，这里只引用字面量类型）。 */
@@ -76,7 +87,8 @@ export function defaultSettings(): VoiceSettings {
     peerVolumes: {},
     peerMuted: {},
     shareQuality: "fhd1080",
-    shareTransport: "p2p",
+    shareTransport: "auto",
+    settingsVersion: 2,
   };
 }
 
@@ -103,8 +115,17 @@ export function loadSettings(): VoiceSettings {
     peerMuted: stored.peerMuted && typeof stored.peerMuted === "object" ? stored.peerMuted : {},
     // 屏幕共享画质：默认超清 1080p；存量配置里没有该字段时也走默认
     shareQuality: stored.shareQuality === "hd720" ? "hd720" : "fhd1080",
-    // 屏幕共享传输：默认 P2P 直连；存量配置里没有该字段时也走默认
-    shareTransport: stored.shareTransport === "sfu" ? "sfu" : "p2p",
+    // 屏幕共享传输：v2 起默认"自动"。无版本号的旧配置一律迁移到 auto
+    // （那时的 p2p 是默认值而非用户选择）；显式选过 p2p/sfu 的照旧保留。
+    shareTransport:
+      stored.settingsVersion === 2
+        ? stored.shareTransport === "p2p" || stored.shareTransport === "sfu"
+          ? stored.shareTransport
+          : "auto"
+        : stored.shareTransport === "sfu"
+          ? "sfu"
+          : "auto",
+    settingsVersion: 2,
     processing: {
       echoCancellation: processing.echoCancellation !== false,
       noiseSuppression: processing.noiseSuppression !== false,
