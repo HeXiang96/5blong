@@ -1957,9 +1957,26 @@ export class VoiceMesh {
     this.screenStream = null;
   }
 
+  /** 把一条 P2P 画面连接的所有接收轨抖动缓冲拉到 4000ms（与 SFU 订阅端一致）。 */
+  private smoothScreenReceivers(call: MediaConnection): void {
+    const pc = (call as unknown as { peerConnection?: RTCPeerConnection }).peerConnection;
+    if (!pc) return;
+    const apply = () => {
+      for (const receiver of pc.getReceivers()) {
+        try {
+          receiver.jitterBufferTarget = 4000;
+        } catch {
+          /* 个别实现不支持时忽略 */
+        }
+      }
+    };
+    apply();
+    // 轨可能分批到达：延迟再补一轮
+    this.timers.after(1200, apply);
+  }
+
   /** 观众端：应答共享者的画面呼叫（只收不发），流经事件交给界面。 */
-  private onIncomingScreenCall(call: MediaConnection, sessionId: string): void {
-    // 过期的会话（共享者已停又快速重开的旧呼叫）直接关掉
+  private onIncomingScreenCall(call: MediaConnection, sessionId: string): void {    // 过期的会话（共享者已停又快速重开的旧呼叫）直接关掉
     if (this.screenShareState && this.screenShareState.sessionId !== sessionId) {
       try {
         call.close();
@@ -1978,6 +1995,8 @@ export class VoiceMesh {
         }
         return;
       }
+      // 观众端抖动缓冲拉满（与 SFU 订阅端同款 4000ms）：跨境抖动在缓冲里排队
+      this.smoothScreenReceivers(call);
       this.events.screenStream?.(stream, call);
     });
   }
