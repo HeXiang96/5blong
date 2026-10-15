@@ -1,0 +1,17 @@
+# 5blong 自建信令服务（PeerJS 协议兼容）。
+#
+# 部署：node <wrangler> deploy --config worker/signal/wrangler.toml
+# 客户端不直接连它：Pages Worker 的 /peerjs 通过 service binding（SIGNAL）转到它，
+# 这样客户端始终只连 5blong.pages.dev（已验证可达），不受第三方域名拦截影响。
+name = "5blong-signal"
+main = "index.js"
+compatibility_date = "2026-10-01"
+
+# 信令总机：全局单例 Durable Object（SQLite 后端 → 免费计划可用）
+[[durable_objects.bindings]]
+name = "SIGNAL_HUB"
+class_name = "SignalHub"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["SignalHub"]

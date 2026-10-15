@@ -1,6 +1,6 @@
 {
   "name": "5blong",
-  "version": "1.4.8",
+  "version": "1.5.0",
   "private": true,
   "type": "module",
   "license": "MIT",
@@ -23,7 +23,10 @@
     "publish:desktop": "node scripts/publish-desktop.mjs",
     "status:pages": "node scripts/pages-status.mjs",
     "bump": "node scripts/bump-version.mjs",
-    "feedback:setup": "node scripts/feedback-setup.mjs"
+    "feedback:setup": "node scripts/feedback-setup.mjs",
+    "feedback:admin": "node scripts/feedback-admin.mjs",
+    "signal:setup": "node scripts/signal-setup.mjs",
+    "signal:deploy": "wrangler deploy --config worker/signal/wrangler.toml"
   },
   "dependencies": {
     "@sapphi-red/web-noise-suppressor": "^0.4.1",

@@ -17,3 +17,20 @@ CREATE TABLE IF NOT EXISTS feedback (
 
 CREATE INDEX IF NOT EXISTS idx_feedback_created ON feedback (created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_feedback_rate ON feedback (ip_hash, created_at DESC);
+
+-- 在线房间心跳（"有多少房间开着"）：房主每 60 秒报一次，超时视为离线。
+-- 隐私：id 是房主随机生成的标识，与房间码/邀请链接无关；只记人数与是否在共享，
+-- 不记任何标题/内容。
+CREATE TABLE IF NOT EXISTS rooms (
+  id         TEXT PRIMARY KEY,          -- 房主随机 id（32 位 hex）
+  created_at TEXT NOT NULL,
+  last_seen  TEXT NOT NULL,
+  members    INTEGER NOT NULL DEFAULT 1,
+  sharing    INTEGER NOT NULL DEFAULT 0,
+  version    TEXT,
+  runtime    TEXT,                      -- client | web
+  ip_hash    TEXT                        -- 限速用（不可逆）
+);
+
+CREATE INDEX IF NOT EXISTS idx_rooms_seen ON rooms (last_seen DESC);
+CREATE INDEX IF NOT EXISTS idx_rooms_ip ON rooms (ip_hash, last_seen DESC);

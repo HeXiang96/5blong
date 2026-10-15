@@ -57,6 +57,7 @@ export function LandingView({
   onCancelJoin?: () => void;
   onDismissError?: () => void;
 }) {
+
   /**
    * 首页公告栏：可左右翻阅的过往更新（数据源见 ../changelog.ts，
    * 发版时只改那个文件）。默认显示最新一条。
@@ -251,6 +252,20 @@ export function LandingView({
               <b>没能进入房间</b>
               <small>{error}</small>
             </span>
+            {/* 手输房间码失败时给一个「再试一次」：网络抖动重试一次往往就通
+                （引擎侧信令瞬时失败还会自动换连接重试 3 次） */}
+            {joinText.trim() ? (
+              <button
+                type="button"
+                className="vx-link-btn vx-link-btn-strong"
+                onClick={() => {
+                  onDismissError?.();
+                  void onJoin(joinText);
+                }}
+              >
+                再试一次
+              </button>
+            ) : null}
             {onDismissError ? (
               <button type="button" className="vx-link-btn" onClick={onDismissError}>
                 知道了

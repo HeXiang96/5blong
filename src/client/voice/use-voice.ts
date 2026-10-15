@@ -50,7 +50,9 @@ import {
   type JoinTarget,
   type ScreenShareState,
 } from "./protocol";
+import { latestChangelog } from "./changelog";
 import { refreshIceServers } from "./ice";
+import { createRoomBeacon, newRoomId, postPresence, type RoomBeacon } from "./presence";
 import { isTauriRuntime, startLoopbackAudio } from "./loopback";
 import { loadSettings, saveSettings, type VoiceSettings } from "./settings";
 import { readJson, writeJson } from "./storage";
@@ -777,6 +779,50 @@ export function useVoice() {
   /** track ended 回调要拿到最新闭包，经 ref 转发。 */
   const stopScreenShareRef = useRef<(opts?: { viaTrackEnded?: boolean }) => void>(() => {});
   stopScreenShareRef.current = stopScreenShare;
+  /*
+   * 在线房间心跳（房主侧，给运营后台统计"现在有几个房间开着"）：
+   * - 只在**自己是房主**时上报（invite 非空 = 本机建了房）；
+   * - 房间 id 每次建房随机生成，与房间码/邀请链接无关（隐私红线）；
+   * - 人数/共享状态变化防抖补报；切回前台补一次；
+   * - **失败静默**：统计绝不能影响语音。
+   */
+  const beaconRef = useRef<RoomBeacon | null>(null);
+  const sharingLiveRef = useRef(false);
+  useEffect(() => {
+    if (!invite) {
+      beaconRef.current?.stop();
+      beaconRef.current = null;
+      return;
+    }
+    if (beaconRef.current) return;
+    const beacon = createRoomBeacon({
+      roomId: newRoomId(),
+      version: latestChangelog()?.version ?? "",
+      getState: () => ({
+        members: memberCountRef.current,
+        sharing: sharingLiveRef.current,
+      }),
+      send: (path, body) => void postPresence(path, body),
+    });
+    beaconRef.current = beacon;
+    beacon.start();
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") beacon.notifyChange();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      beacon.stop();
+      beaconRef.current = null;
+    };
+  }, [invite]);
+
+  /** 人数或共享状态变化 → 防抖补报（后台数字贴近实时）。 */
+  useEffect(() => {
+    sharingLiveRef.current = shareStream !== null;
+    beaconRef.current?.notifyChange();
+  }, [members.length, shareStream]);
+
   /** 客户端内置系统声音采集的清理（停播/画面被掐断时一并停）。 */
   const nativeLoopbackStopRef = useRef<(() => void) | null>(null);
   /** 本次会话里"浏览器系统声音采集被拒"的记录：下次共享直接跳过浏览器音频。 */

@@ -327,6 +327,13 @@ select {
   cursor: pointer;
 }
 
+/* 强调版链接按钮（错误提示里的「再试一次」）：用主题强调色，深浅色都清晰 */
+.vx-link-btn-strong {
+  color: var(--vx-accent-strong);
+  font-weight: 600;
+}
+.vx-link-btn-strong:hover { color: var(--vx-accent); }
+
 .vx-link-btn:hover {
   color: var(--vx-accent);
 }
@@ -699,7 +706,8 @@ html[data-theme="dark"] /* 公告栏标题旁的小版本号：标明"最新更�
   padding: 24px 0;
 }
 
-/* 首页吉祥物：用户提供的透明小猪 GIF，保持原比例与原始动画。 */
+/* 首页吉祥物：用户提供的透明小猪 GIF，保持原比例与原始动画。
+ * 尺寸 124px（窄屏 96px）—— 2026-10-15 试过收到 96px，业主看过对比后决定维持原样。 */
 .vx-landing-mascot {
   width: 124px;
   height: 124px;
@@ -2840,10 +2848,15 @@ html[data-theme="light"][data-daypart="dusk"] .vx-settings {
  * - 窄屏（≤560px）铺满宽度、底部按钮换行、字号略降 → 手机网页版可用；
  * - dvh 而非 vh：移动端浏览器地址栏收缩时不跳动。
  */
+/*
+ * z-index 90：必须高于「房间内打开的设置覆盖层」(.vx-overlay-layer, z-80)——
+ * 否则从房间里的设置页点「意见反馈/功能导览」，弹窗会被全屏覆盖层压在底下，
+ * 表现就是"点了没反应"（2026-10-15 业主实测踩坑）。低于更新进度层（120）。
+ */
 .vx-feedback-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 60;
+  z-index: 90;
   display: flex;
   align-items: center;
   justify-content: center;
