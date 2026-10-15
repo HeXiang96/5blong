@@ -20,6 +20,16 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.5.0",
+    date: "2026-10-15",
+    lines: [
+      "进房更稳：信令借自家域名",
+      "小猪会说话了：翻滚冒泡",
+      "设置页新增「帮助」页签",
+      "后台可看在线房间数",
+    ],
+  },
+  {
     version: "1.4.8",
     date: "2026-10-15",
     lines: [

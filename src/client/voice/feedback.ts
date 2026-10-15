@@ -48,14 +48,16 @@ export interface FeedbackPayload {
  * 相对路径打到的是 WebView 自己而不是我们的 Worker**，必须打公网地址。
  * 跨域由 Worker 的 feedbackCors() 放行（含 OPTIONS 预检）。
  */
-const FEEDBACK_ENDPOINT = (() => {
-  if (import.meta.env.DEV) return "/feedback";
+export function apiUrl(path: string): string {
+  if (import.meta.env.DEV) return path;
   const host = typeof location !== "undefined" ? location.hostname : "";
   if (host === "tauri.localhost" || host.endsWith(".tauri.localhost")) {
-    return "https://5blong.pages.dev/feedback";
+    return `https://5blong.pages.dev${path}`;
   }
-  return "/feedback";
-})();
+  return path;
+}
+
+const FEEDBACK_ENDPOINT = apiUrl("/feedback");
 
 export type FeedbackResult =
   | { ok: true }

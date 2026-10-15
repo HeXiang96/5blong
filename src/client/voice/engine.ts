@@ -89,6 +89,41 @@ import { ensureIceServers, iceServers } from "./ice";
  */
 
 /**
+ * 信令服务器线路（按顺序尝试）。
+ *
+ * 背景（2026-10-15 测试者实测）：PeerJS 客户端默认连 `wss://0.peerjs.com/peerjs`，
+ * 部分网络直达不了（校内网/公司网/代理规则/DNS 污染），报错就是"没能进入房间"。
+ * 而这些网络通常**能打开本站**，所以第一条线路借我们自己的域名（Worker 里
+ * `/peerjs*` 做了透明转发，协议不变）；**最后一条走直连**，万一我们的中转
+ * 出问题也不至于全断。本地开发没有 Worker，直接用直连。
+ */
+const SIGNAL_ROUTES: { host: string; port: number; secure: boolean; key: string; label: string }[] = import.meta.env.DEV
+  ? [{ host: "0.peerjs.com", port: 443, secure: true, key: "peerjs", label: "peerjs-cloud" }]
+  : [
+      { host: "5blong.pages.dev", port: 443, secure: true, key: "peerjs", label: "own-domain" },
+      { host: "0.peerjs.com", port: 443, secure: true, key: "peerjs", label: "peerjs-cloud" },
+    ];
+
+/** 信令瞬时失败的换连接重试：次数与退避（毫秒）。 */
+const SIGNAL_RETRY_ATTEMPTS = 3;
+const SIGNAL_RETRY_BACKOFF_MS = 700;
+/** openPeer 的返回值之一：换连接重试（不是给用户看的文案）。 */
+const SIGNAL_RETRY = "retry-signal";
+
+/**
+ * 信令连接的**瞬时**失败要不要重试。
+ *
+ * 公共 PeerJS 云（0.peerjs.com）偶发抖动很正常；这类错误发生时连接还没建立，
+ * 换一条连接往往立刻就好。**以前这里直接判死**（只给"网络不稳定"四个字、没有重试），
+ * 2026-10-15 有测试者卡在这一步 —— 现在交给调用方换连接重试。
+ *
+ * 注意 `peer-unavailable`（房主不在线）**不在**此列：那是确定性结论，重试只拖时间。
+ */
+export function isRetryableSignalingError(type: string): boolean {
+  return type === "network" || type === "socket-error" || type === "socket-closed";
+}
+
+/**
  * 访客首次加入时的"整体重拨"次数。
  * 公共 PeerJS 云免费、信令延迟波动大（实测 4~35 秒），一次 welcome 超时
  * 不代表房主不在线：销毁 Peer、换新访客 ID 重拨，常常一次就通。
@@ -448,7 +483,7 @@ export class VoiceMesh {
       // 不需要任何注册后端。ID 被占用（撞码/有人蹲守）时 openPeer 返回
       // "retry"，下面的循环换新码重来。
       const id = hostPeerIdForCode(code);
-      const outcome = await this.openPeer(id);
+      const outcome = await this.openPeerWithRetry(() => id);
 
       if (this.destroyed) return;
       if (outcome === "open") {
@@ -522,10 +557,15 @@ export class VoiceMesh {
     // 握手包里要报"本机能否 AV1 硬解"，共享者据此判断能不能上 AV1
     await this.startHardwareProbe();
 
-    const outcome = await this.openPeer(guestPeerId(randomToken(12)));
+    const outcome = await this.openPeerWithRetry(() => guestPeerId(randomToken(12)));
     if (this.destroyed) return;
     if (outcome !== "open") {
-      this.events.status("error", outcome);
+      this.events.status(
+        "error",
+        outcome === SIGNAL_RETRY
+          ? "连不上中转服务器（网络波动或网络受限）——换个网络（如手机热点）或稍后再试"
+          : outcome,
+      );
       return;
     }
 
@@ -715,18 +755,42 @@ export class VoiceMesh {
 
   // ------------------------------------------------------------ peer 生命周期
 
+  /**
+   * 建立 peer 并等 open：信令瞬时失败时**换一条连接重试**（退避 0.7s / 1.4s）。
+   * 三次都失败才把可读错误交给界面，并附"换个网络试试"的建议。
+   */
+  private async openPeerWithRetry(nextId: () => string): Promise<string> {
+    let last = SIGNAL_RETRY;
+    for (let attempt = 0; attempt < SIGNAL_RETRY_ATTEMPTS; attempt += 1) {
+      if (this.destroyed) return "已离开房间";
+      if (attempt > 0) {
+        this.dropPeer();
+        await new Promise<void>((resolve) =>
+          this.timers.after(SIGNAL_RETRY_BACKOFF_MS * attempt, resolve),
+        );
+        if (this.destroyed) return "已离开房间";
+      }
+      // 逐次换线路：前几次借我们的域名，最后一次直连公共云
+      const route = SIGNAL_ROUTES[Math.min(attempt, SIGNAL_ROUTES.length - 1)]!;
+      const outcome = await this.openPeer(nextId(), route);
+      if (outcome !== SIGNAL_RETRY) return outcome;
+      last = outcome;
+    }
+    return last;
+  }
+
   /** 建立 peer 并等 open。返回值是 "open"、可重试标记或给用户看的错误文案。 */
-  private openPeer(id: string): Promise<string> {
+  private openPeer(id: string, route = SIGNAL_ROUTES[0]!): Promise<string> {
     return new Promise<string>((resolve) => {
       if (this.destroyed) {
         resolve("已离开房间");
         return;
       }
       const peer = new Peer(id, {
-        host: "0.peerjs.com",
-        port: 443,
-        secure: true,
-        key: "peerjs",
+        host: route.host,
+        port: route.port,
+        secure: route.secure,
+        key: route.key,
         debug: 0,
         config: { iceServers: iceServers(), iceCandidatePoolSize: 0 },
       });
@@ -783,12 +847,26 @@ export class VoiceMesh {
           finish("房主不在线，邀请可能已失效");
           return;
         }
-        if (type === "network" || type === "socket-error" || type === "socket-closed") {
-          finish("网络不稳定，与信令服务器的连接中断");
+        if (isRetryableSignalingError(type)) {
+          // 交给调用方换连接重试（见 openPeerWithRetry）：瞬时抖动不该直接判死
+          finish(SIGNAL_RETRY);
           return;
         }
         if (type === "browser-incompatible") {
-          finish("当前浏览器不支持所需的 WebRTC 能力");
+          /*
+           * PeerJS 在**构造 Peer 时**就地做的能力检测（还没有任何网络请求）：
+           * `new RTCPeerConnection()` 或 `createDataChannel()` 失败就报这个错。
+           * 现实里三种成因：① 在 QQ/微信等 App 内置浏览器里打开（内核阉割）；
+           * ② 隐私插件 / VPN 把 WebRTC 屏蔽了（防 IP 泄漏类，很常见）；
+           * ③ 浏览器太老。所以提示要给出可操作的办法，而不是只说"不支持"。
+           */
+          const hasRtc =
+            typeof (globalThis as { RTCPeerConnection?: unknown }).RTCPeerConnection === "function";
+          finish(
+            hasRtc
+              ? "WebRTC 被浏览器扩展拦住了（防泄漏类插件最常见）——先用无痕窗口打开试试，能进就去扩展里关掉它的 WebRTC 拦截"
+              : "当前浏览器没有 WebRTC——请换用 Chrome / Edge 打开，或下载桌面客户端",
+          );
           return;
         }
         finish(`连接异常：${type}`);

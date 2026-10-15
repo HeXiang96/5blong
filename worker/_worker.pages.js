@@ -54,6 +54,29 @@ export default {
       return handleAdmin(request, env);
     }
 
+    // /peerjs* → 信令：转到我们**自建的信令服务**（service binding SIGNAL）。
+    // 背景：公共 PeerJS 云会对握手返回 Cloudflare 1020（按浏览器签名封禁），
+    // 部分用户完全进不去房间；借道转发也无效（它连我们 Worker 的请求一起拦）。
+    // 所以自建服务端：协议与 PeerJS 客户端完全兼容（见 worker/signal/index.js）。
+    if (url.pathname === "/peerjs" || url.pathname.startsWith("/peerjs/")) {
+      return proxyPeerJs(url, request, env);
+    }
+
+    // /rooms → 在线房间面板（令牌保护；与反馈页分开，避免一页太臃肿）
+    if (url.pathname === "/rooms") {
+      return handleRooms(request, env);
+    }
+    // /rooms/beat → 房主心跳；/rooms/bye → 关房上报；/rooms/summary → JSON（令牌保护）
+    if (url.pathname === "/rooms/beat") {
+      return handleRoomBeat(request, env);
+    }
+    if (url.pathname === "/rooms/bye") {
+      return handleRoomBye(request, env);
+    }
+    if (url.pathname === "/rooms/summary") {
+      return handleRoomsSummary(request, env);
+    }
+
     // 非 /sfu 请求 → 静态网页资源
     if (!/^\/sfu\/sessions?\//.test(url.pathname)) {
       return env.ASSETS.fetch(request);
@@ -98,6 +121,32 @@ export default {
     });
   },
 };
+
+/**
+ * 把信令请求透传给公共 PeerJS 云。
+ *
+ * 为什么要有这一步：PeerJS 客户端连的是 `wss://<host>/peerjs?key=…&id=…`，
+ * 默认 host 是 0.peerjs.com；部分网络（校内网、公司网、代理规则、DNS 污染）
+ * 直达不了它，表现就是"没能进入房间 / 与信令服务器的连接中断"。而这些网络
+ * 通常**能打开本站**（网站、/ice、/feedback 都在同一个域名上），所以借道我们
+ * 的域名做一层透明转发，协议零改动。
+ *
+ * 注意：Worker 的 fetch 支持 WebSocket 直通（把带 Upgrade 的请求原样转发，
+ * 返回的 101 响应直接还给客户端即完成双向管道）。
+ */
+function proxyPeerJs(url, request, env) {
+  // 首选：转到我们自己的信令 Worker（service binding，不走公网、不花流量费）。
+  // 客户端因此始终只连 5blong.pages.dev —— 已验证可达，且不受第三方域名拦截影响。
+  if (env?.SIGNAL) return env.SIGNAL.fetch(request);
+
+  // 兜底：还没绑定 SIGNAL 时，退回"借道转发公共 PeerJS 云"（实测对 1020 拦截无效，
+  // 仅作为未完成绑定时的临时通路，绑好后不会走到这里）。
+  const upstream = new URL(request.url);
+  upstream.protocol = "https:";
+  upstream.host = "0.peerjs.com";
+  upstream.port = "";
+  return fetch(upstream.toString(), request);
+}
 
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -432,6 +481,22 @@ function adminPage(title, contentHtml, status) {
   button:hover { background: #faf8f4; }
   .empty { color: #8a8175; }
   code { background: #efe7d8; border-radius: 4px; padding: 1px 6px; }
+  /* 在线房间面板：三个大数字 + 房间表 */
+  .stats { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 14px; }
+  .stat { flex: 1 1 140px; background: #fff; border: 1px solid #e3ded4; border-radius: 12px;
+          padding: 12px 16px; display: flex; flex-direction: column; gap: 2px; }
+  .stat .big { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .stat .label { font-size: 12.5px; color: #6b6257; }
+  table { width: 100%; border-collapse: collapse; background: #fff; border: 1px solid #e3ded4;
+          border-radius: 12px; overflow: hidden; }
+  th, td { padding: 9px 12px; text-align: left; font-size: 13.5px; border-bottom: 1px solid #efeae0; }
+  th { background: #f6f4ef; font-weight: 600; color: #6b6257; font-size: 12.5px; }
+  tr:last-child td { border-bottom: none; }
+  td.num { font-variant-numeric: tabular-nums; font-weight: 600; }
+  .tag-live { background: #d8ecdc; }
+  @media (max-width: 640px) {
+    table { display: block; overflow-x: auto; white-space: nowrap; }
+  }
   @media (max-width: 480px) {
     body { padding: 14px; }
     .meta { margin-left: 0; width: 100%; }
@@ -445,6 +510,226 @@ ${contentHtml}
 </html>`,
     { status, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } },
   );
+}
+
+// ---------------------------------------------------------------------------
+// /rooms —— 在线房间（房主心跳）
+// ---------------------------------------------------------------------------
+//
+// 背景：信令是公共 PeerJS 云，服务端看不到任何房间；SFU 只覆盖 4 人以上。
+// 所以"有多少房间开着"只能由**房主主动报到**（见 src/client/voice/presence.ts）。
+//
+// 契约：
+//   POST /rooms/beat  { id, members, sharing, version, runtime } → 200 { ok:true }
+//                     400 参数不合法 | 429 太频繁 | 503 未就绪
+//   POST /rooms/bye   { id } → 200（失败无所谓，靠过期兜底）
+//   GET  /rooms       → 面板页（令牌保护，与 /admin 分开）
+//   GET  /rooms/summary → JSON（令牌保护）
+//
+// 隐私红线：id 是房主随机生成的标识，**与房间码/邀请链接无关**；
+// 只记人数与是否在共享，不记任何标题、内容、成员身份。
+// 在线判定：last_seen 在 150 秒内（心跳 60 秒 × 2.5，容忍一次丢包/休眠）。
+
+/** 心跳间隔 60 秒；150 秒没心跳即视为离线。 */
+const ROOM_ONLINE_WINDOW_MS = 150_000;
+/** 每次访问面板顺手清掉 10 分钟前的死行。 */
+const ROOM_GC_MS = 600_000;
+/** 每个 IP 每小时最多 130 次心跳（60 秒一次 = 每小时 60 次，留足重试余量）。 */
+const ROOM_HOURLY_LIMIT = 130;
+/** 同一 IP 同时最多 4 个活跃房间（正常一个人不会开更多）。 */
+const ROOM_MAX_PER_IP = 4;
+
+function roomsCors() {
+  return {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Max-Age": "86400",
+  };
+}
+
+async function handleRoomBeat(request, env) {
+  if (request.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers: roomsCors() });
+  }
+  if (request.method !== "POST") return json({ error: "method not allowed" }, 405);
+  if (!env.DB) return json({ error: "rooms channel not configured" }, 503);
+
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: "bad json" }, 400);
+  }
+
+  const id = typeof body?.id === "string" ? body.id.trim().toLowerCase() : "";
+  // 只收 8~64 位十六进制：房主用 crypto.randomUUID()（含连字符，32 位 hex）生成
+  if (!/^[0-9a-f]{8,64}$/.test(id.replace(/-/g, ""))) {
+    return json({ error: "bad room id" }, 400);
+  }
+  const members = Math.max(1, Math.min(64, Math.round(Number(body?.members) || 1)));
+  const sharing = body?.sharing === true ? 1 : 0;
+  const version = clampText(body?.version, 40);
+  const runtime = clampText(body?.runtime, 20);
+  const ipHash = await sha256Hex(request.headers.get("CF-Connecting-IP") ?? "unknown");
+  const nowIso = new Date().toISOString();
+
+  try {
+    // 限速 1：这个 IP 最近一小时的心跳总量
+    const since = new Date(Date.now() - 3600_000).toISOString();
+    const counted = await env.DB.prepare(
+      "SELECT COUNT(*) AS n FROM rooms WHERE ip_hash = ? AND last_seen > ?",
+    )
+      .bind(ipHash, since)
+      .first();
+    // 注意：行是 UPSERT 的，同一房间一小时只算一行；这里用"活跃行数"防的是
+    // 恶意刷大量房间 id 的情况，配合下面的 ROOM_MAX_PER_IP 双保险。
+    if ((counted?.n ?? 0) > ROOM_HOURLY_LIMIT) {
+      return json({ error: "too many requests" }, 429);
+    }
+    // 限速 2：同一 IP 同时活跃的房间数
+    const active = await env.DB.prepare(
+      "SELECT COUNT(*) AS n FROM rooms WHERE ip_hash = ? AND last_seen > ?",
+    )
+      .bind(ipHash, new Date(Date.now() - ROOM_ONLINE_WINDOW_MS).toISOString())
+      .first();
+    if ((active?.n ?? 0) >= ROOM_MAX_PER_IP) {
+      return json({ error: "too many rooms" }, 429);
+    }
+
+    await env.DB.prepare(
+      "INSERT INTO rooms (id, created_at, last_seen, members, sharing, version, runtime, ip_hash) " +
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?) " +
+        "ON CONFLICT(id) DO UPDATE SET last_seen = excluded.last_seen, members = excluded.members, " +
+        "sharing = excluded.sharing, version = excluded.version, runtime = excluded.runtime",
+    )
+      .bind(id, nowIso, nowIso, members, sharing, version, runtime, ipHash)
+      .run();
+    return json({ ok: true }, 200);
+  } catch (error) {
+    console.error("[rooms] beat failed", error?.message ?? error);
+    return json({ error: "storage error" }, 500);
+  }
+}
+
+async function handleRoomBye(request, env) {
+  if (request.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers: roomsCors() });
+  }
+  if (request.method !== "POST") return json({ error: "method not allowed" }, 405);
+  if (!env.DB) return json({ error: "rooms channel not configured" }, 503);
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: "bad json" }, 400);
+  }
+  const id = typeof body?.id === "string" ? body.id.trim().toLowerCase() : "";
+  if (!/^[0-9a-f-]{8,64}$/.test(id)) return json({ error: "bad room id" }, 400);
+  try {
+    await env.DB.prepare("DELETE FROM rooms WHERE id = ?").bind(id).run();
+    return json({ ok: true }, 200);
+  } catch {
+    // 关房上报失败无所谓：150 秒后自动离线
+    return json({ ok: true }, 200);
+  }
+}
+
+/** 在线房间列表（面板与 JSON 共用）。 */
+async function loadOnlineRooms(env) {
+  const onlineSince = new Date(Date.now() - ROOM_ONLINE_WINDOW_MS).toISOString();
+  const staleBefore = new Date(Date.now() - ROOM_GC_MS).toISOString();
+  // 顺手清理死行（低频，免费额度内）
+  await env.DB.prepare("DELETE FROM rooms WHERE last_seen < ?").bind(staleBefore).run();
+  const result = await env.DB.prepare(
+    "SELECT id, created_at, last_seen, members, sharing, version, runtime FROM rooms " +
+      "WHERE last_seen > ? ORDER BY members DESC, last_seen DESC LIMIT 500",
+  )
+    .bind(onlineSince)
+    .all();
+  return result?.results ?? [];
+}
+
+async function requireAdminToken(request, env) {
+  const url = new URL(request.url);
+  const token = url.searchParams.get("token") ?? request.headers.get("x-admin-token") ?? "";
+  if (!env.FEEDBACK_TOKEN) return { error: adminPage("尚未启用", "<p>还没设置管理员令牌，先在本机执行 <code>npm run feedback:setup</code>。</p>", 501) };
+  if (!safeEqual(token, env.FEEDBACK_TOKEN)) {
+    return { error: new Response("未授权：令牌不正确", { status: 401, headers: { "Content-Type": "text/plain; charset=utf-8" } }) };
+  }
+  if (!env.DB) return { error: adminPage("数据库未绑定", "<p>Pages 项目还没有绑定 D1（变量名 <code>DB</code>）。</p>", 503) };
+  return {};
+}
+
+async function handleRooms(request, env) {
+  if (request.method !== "GET") return new Response("method not allowed", { status: 405 });
+  const guard = await requireAdminToken(request, env);
+  if (guard.error) return guard.error;
+  try {
+    const rooms = await loadOnlineRooms(env);
+    return adminPage("在线房间", roomsPanelHtml(rooms), 200);
+  } catch (error) {
+    return adminPage("读取失败", `<p>${escapeHtml(String(error?.message ?? error))}</p>`, 500);
+  }
+}
+
+async function handleRoomsSummary(request, env) {
+  const guard = await requireAdminToken(request, env);
+  if (guard.error) return guard.error;
+  const rooms = await loadOnlineRooms(env);
+  return json(
+    {
+      online: rooms.length,
+      members: rooms.reduce((sum, room) => sum + (room.members ?? 0), 0),
+      sharing: rooms.filter((room) => room.sharing === 1).length,
+      rooms,
+    },
+    200,
+  );
+}
+
+function relSeconds(iso) {
+  const then = Date.parse(iso);
+  if (!Number.isFinite(then)) return "-";
+  const seconds = Math.max(0, Math.round((Date.now() - then) / 1000));
+  if (seconds < 60) return `${seconds} 秒前`;
+  return `${Math.round(seconds / 60)} 分钟前`;
+}
+
+function onlineMinutes(iso) {
+  const then = Date.parse(iso);
+  if (!Number.isFinite(then)) return "-";
+  const minutes = Math.max(0, Math.round((Date.now() - then) / 60000));
+  return minutes < 60 ? `${minutes} 分钟` : `${Math.floor(minutes / 60)} 小时 ${minutes % 60} 分`;
+}
+
+function roomsPanelHtml(rooms) {
+  const members = rooms.reduce((sum, room) => sum + (room.members ?? 0), 0);
+  const sharing = rooms.filter((room) => room.sharing === 1).length;
+  const rows = rooms
+    .map((room) => {
+      const short = String(room.id).slice(0, 6);
+      return `<tr>
+  <td><code>${escapeHtml(short)}</code></td>
+  <td class="num">${room.members ?? 0}</td>
+  <td>${room.sharing === 1 ? '<span class="tag tag-live">共享中</span>' : "—"}</td>
+  <td>v${escapeHtml(room.version || "?")} · ${escapeHtml(room.runtime || "?")}</td>
+  <td>${escapeHtml(relSeconds(room.last_seen))}</td>
+  <td>${escapeHtml(onlineMinutes(room.created_at))}</td>
+</tr>`;
+    })
+    .join("\n");
+  return `<div class="stats">
+  <div class="stat"><span class="big">${rooms.length}</span><span class="label">在线房间</span></div>
+  <div class="stat"><span class="big">${members}</span><span class="label">在线人数</span></div>
+  <div class="stat"><span class="big">${sharing}</span><span class="label">正在共享屏幕</span></div>
+</div>
+<p class="summary">口径：房主每 60 秒报一次心跳，150 秒没动静即视为离线（关浏览器/断网也会自动消失）。只统计房间数、人数与是否共享，不收集任何聊天或个人内容。</p>
+${
+  rooms.length === 0
+    ? '<p class="empty">现在没有房间在线。</p>'
+    : `<table><thead><tr><th>房间</th><th>人数</th><th>状态</th><th>客户端</th><th>最后心跳</th><th>在线时长</th></tr></thead><tbody>${rows}</tbody></table>`
+}`;
 }
 
 function formatLocalTime(iso) {

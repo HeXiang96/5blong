@@ -20,7 +20,7 @@ import {
 import { toAvatarDataUrl } from "../storage";
 import { Avatar, Toggle } from "./ui";
 
-type Tab = "profile" | "audio" | "shortcuts";
+type Tab = "profile" | "audio" | "shortcuts" | "help";
 
 /** 滑条填充比例（Webkit 不支持原生 progress，用 CSS 变量画渐变）。 */
 const rangeStyle = (pct: number): CSSProperties =>
@@ -156,6 +156,13 @@ export function SettingsView({
             onClick={() => setTab("shortcuts")}
           >
             快捷方式
+          </button>
+          <button
+            type="button"
+            className={`vx-tab${tab === "help" ? " vx-tab-on" : ""}`}
+            onClick={() => setTab("help")}
+          >
+            帮助
           </button>
         </div>
         <button type="button" className="vx-icon-btn vx-icon-btn-primary" onClick={save} aria-label="保存">
@@ -496,23 +503,65 @@ export function SettingsView({
               )}
             </section>
 
-            <section className="vx-card">
-              <h3 className="vx-card-title">帮助与反馈</h3>
-              <small>
-                第一次用？点「功能介绍」看四个要点就上手了。遇到问题点「写一条反馈」——
-                会自动附上版本号、系统和网络类型，你不用自己找。
-              </small>
-              <div className="vx-card-actions">
-                <button type="button" className="vx-btn vx-btn-ghost" onClick={() => onOpenOnboarding()}>
-                  功能介绍
-                </button>
-                <button type="button" className="vx-btn" onClick={() => onOpenFeedback()}>
-                  写一条反馈
-                </button>
-              </div>
-            </section>
           </>
         )}
+
+        {tab === "help" ? (
+          <>
+            <section className="vx-card">
+              <h3 className="vx-card-title">功能介绍</h3>
+              <small>
+                第一次用？看一眼四个要点就上手了：开房邀请、开麦说话、一起看屏幕、客户端的好处。
+              </small>
+              <button type="button" className="vx-btn vx-btn-small" onClick={() => onOpenOnboarding()}>
+                看功能介绍
+              </button>
+            </section>
+
+            <section className="vx-card">
+              <h3 className="vx-card-title">意见反馈</h3>
+              <small>
+                遇到问题、或者想提个建议，直接说就行——会<b>自动附带版本号、系统与网络类型</b>，
+                你不用自己找。能复现的都会进修复清单。出错的提示条上也有「反馈此问题」可以一键带上现场。
+              </small>
+              <button type="button" className="vx-btn vx-btn-small" onClick={() => onOpenFeedback()}>
+                写一条反馈
+              </button>
+            </section>
+
+            <section className="vx-card">
+              <h3 className="vx-card-title">几个常见问题</h3>
+              <ul className="vx-shortcuts vx-shortcuts-plain">
+                <li>
+                  <b>听不到别人说话 / 别人听不到我</b>
+                  <span>先确认双方都是最新版本；进房默认静音，点麦克风图标才是开麦。</span>
+                </li>
+                <li>
+                  <b>共享屏幕时没有声音</b>
+                  <span>需要 1.4.7 及以上的客户端；观众要点幕布打开音量。网页版在部分声卡上拿不到系统声音，建议用客户端。</span>
+                </li>
+                <li>
+                  <b>说话有回声</b>
+                  <span>共享声音时用外放，声音会被麦克风二次拾取——戴耳机即可。</span>
+                </li>
+                <li>
+                  <b>觉得对方声音小</b>
+                  <span>点对方的猪头 → 音量拉到 200%；自己麦克风小可以在音量菜单里增强到 300%。</span>
+                </li>
+                <li>
+                  <b>跨网络进不了房间</b>
+                  <span>双方更新到最新版再试；仍不行就在反馈里写明双方网络环境。</span>
+                </li>
+                <li>
+                  <b>提示「浏览器没有 WebRTC / 不支持」</b>
+                  <span>先在<b>无痕窗口</b>打开同一个链接：能进 → 是<b>扩展插件</b>在拦 WebRTC
+                  （防泄漏类最常见，去扩展里关掉它的 WebRTC 拦截即可）；还不行 → 多半是在
+                  QQ / 微信里直接点开的<b>内置浏览器</b>，请复制链接到 Chrome / Edge，或用桌面客户端。</span>
+                </li>
+              </ul>
+            </section>
+          </>
+        ) : null}
       </div>
     </div>
   );
