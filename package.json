@@ -1,6 +1,6 @@
 {
   "name": "5blong",
-  "version": "1.4.7",
+  "version": "1.4.8",
   "private": true,
   "type": "module",
   "license": "MIT",
@@ -22,7 +22,8 @@
     "pages:env": "node scripts/deploy-pages.mjs --env-only",
     "publish:desktop": "node scripts/publish-desktop.mjs",
     "status:pages": "node scripts/pages-status.mjs",
-    "bump": "node scripts/bump-version.mjs"
+    "bump": "node scripts/bump-version.mjs",
+    "feedback:setup": "node scripts/feedback-setup.mjs"
   },
   "dependencies": {
     "@sapphi-red/web-noise-suppressor": "^0.4.1",

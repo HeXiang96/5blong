@@ -81,7 +81,7 @@ function Fixture() {
     onCopyCode: () => record("copy-code"), onCopyInvite: async () => { record("copy-invite"); return true; },
     onToggleMute: () => record("mic-toggle"), onToggleChat: () => setChatOpen((value) => !value),
     onLeave: () => record("leave"), onSettings: () => record("settings"), onSend: (text) => record("send", text),
-    onDismissNotice: () => {}, micVolume: volume,
+    onDismissNotice: () => {}, onOpenFeedback: () => {}, micVolume: volume,
     onSetMicVolume: (value) => { record("mic-volume", value); setVolume(value); },
     onSetPeerVolume: (...args) => record("peer-volume", ...args),
     onTogglePeerMuted: (peer) => { record("peer-mute", peer); setMuted(!muted); return !muted; },

@@ -26,7 +26,17 @@ vi.hoisted(() => {
         return passiveNode();
       }
       createGain() {
-        return { ...passiveNode(), gain: { value: 1 } };
+        return { ...passiveNode(), gain: { value: 1, setTargetAtTime() {} } };
+      }
+      createDynamicsCompressor() {
+        return {
+          ...passiveNode(),
+          threshold: { value: 0 },
+          knee: { value: 0 },
+          ratio: { value: 1 },
+          attack: { value: 0 },
+          release: { value: 0 },
+        };
       }
       createMediaStreamDestination() {
         return { stream: { getTracks: () => [], getAudioTracks: () => [] } };

@@ -284,9 +284,10 @@ pub fn run() {
 
             // ---- 托盘 ----
             let show_item = MenuItem::with_id(app, "show", "显示 5blong", true, None::<&str>)?;
+            let feedback_item = MenuItem::with_id(app, "feedback", "意见反馈", true, None::<&str>)?;
             let update_item = MenuItem::with_id(app, "check_update", "检查更新", true, None::<&str>)?;
             let quit_item = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show_item, &update_item, &quit_item])?;
+            let menu = Menu::with_items(app, &[&show_item, &feedback_item, &update_item, &quit_item])?;
 
             let mut tray_builder = TrayIconBuilder::with_id("main-tray")
                 .tooltip(format!("5blong v{}", app.package_info().version))
@@ -294,6 +295,11 @@ pub fn run() {
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "show" => show_main(app),
+                    "feedback" => {
+                        // 先把窗口带到前台（用户可能从托盘直接发起），再让前端开弹窗
+                        show_main(app);
+                        let _ = app.emit("feedback:open", ());
+                    }
                     "check_update" => {
                         let update_app = app.clone();
                         tauri::async_runtime::spawn(async move {

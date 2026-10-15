@@ -69,6 +69,8 @@ import { Campfire, PenTV, PenTvLightbox } from "./PenTV";
 import { NPC_NAME, feetViewportPx, phaseForActor, tvSlotFor } from "../pen";
 import type { ScreenShareState, ScreenViewPreference } from "../protocol";
 import type { ShareQuality } from "../settings";
+// 音量滑块上限（值导入）：自己 300% / 别人 200%
+import { MIC_VOLUME_MAX, PEER_VOLUME_MAX } from "../settings";
 import pigJoinUrl from "../assets/pig-join.webp?url";
 import pigHoistUrl from "../assets/pig-hoist.webp?url";
 import pigDanceUrl from "../assets/pig-dance.webp?url";
@@ -101,6 +103,7 @@ export function RoomView({
   messages,
   invite,
   notice,
+  onOpenFeedback,
   chatOpen,
   unread,
   displayNames,
@@ -156,6 +159,8 @@ export function RoomView({
   messages: ChatMessage[];
   invite: Invite | null;
   notice: Notice | null;
+  /** 打开意见反馈弹窗（错误提示条上的「反馈此问题」入口） */
+  onOpenFeedback: (errorText?: string) => void;
   chatOpen: boolean;
   unread: number;
   displayNames: Map<string, string>;
@@ -583,20 +588,18 @@ export function RoomView({
               <input
                 type="range"
                 className="vx-range"
-                style={rangeStyle((audioMenu.volume / (audioMenu.self ? 2 : 1)) * 100)}
+                style={rangeStyle((audioMenu.volume / (audioMenu.self ? MIC_VOLUME_MAX : PEER_VOLUME_MAX)) * 100)}
                 min={0}
-                max={audioMenu.self ? 2 : 1}
+                max={audioMenu.self ? MIC_VOLUME_MAX : PEER_VOLUME_MAX}
                 step={0.01}
                 value={audioMenu.volume}
                 onChange={(event) => changeMenuVolume(Number(event.target.value))}
               />
               <span className="vx-member-menu-value">
-                {audioMenu.self
-                  ? audioMenu.volume > 1
+                {audioMenu.muted && !audioMenu.self
+                  ? "已静音"
+                  : audioMenu.volume > 1
                     ? `增强 ${Math.round(audioMenu.volume * 100)}%`
-                    : `${Math.round(audioMenu.volume * 100)}%`
-                  : audioMenu.muted
-                    ? "已静音"
                     : `${Math.round(audioMenu.volume * 100)}%`}
               </span>
             </div>
@@ -764,6 +767,15 @@ export function RoomView({
       {notice ? (
         <Banner kind={notice.kind} onClose={onDismissNotice}>
           {notice.text}
+          {notice.kind === "error" ? (
+            <button
+              type="button"
+              className="vx-banner-feedback"
+              onClick={() => onOpenFeedback(notice.text)}
+            >
+              反馈此问题
+            </button>
+          ) : null}
         </Banner>
       ) : null}
 

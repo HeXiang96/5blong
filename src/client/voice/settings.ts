@@ -12,6 +12,16 @@ export interface AudioProcessing {
   autoGainControl: boolean;
 }
 
+/**
+ * 音量上限（UI 滑块 / 持久化 / 引擎共用一份，避免三处各写一个数字）：
+ * - MIC_VOLUME_MAX：自己麦克风的增强上限（3 = 300%）。有些设备采集电平天生低
+ *   （USB 麦、Windows 麦克风级别被调小），200% 不够用；发送链尾部有软限幅兜底。
+ * - PEER_VOLUME_MAX：别人声音的收听上限（2 = 200%）。>100% 不能再走
+ *   `HTMLMediaElement.volume`（浏览器上限就是 1），由引擎的 Web Audio 增益链承担。
+ */
+export const MIC_VOLUME_MAX = 3;
+export const PEER_VOLUME_MAX = 2;
+
 export interface VoiceSettings {
   micDeviceId: string;
   speakerDeviceId: string;
@@ -111,7 +121,7 @@ export function loadSettings(): VoiceSettings {
     typeof stored.micVolume === "number" &&
     Number.isFinite(stored.micVolume) &&
     stored.micVolume >= 0 &&
-    stored.micVolume <= 2
+    stored.micVolume <= MIC_VOLUME_MAX
       ? stored.micVolume
       : fallback.micVolume;
   return {

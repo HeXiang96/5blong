@@ -32,12 +32,18 @@ export function SettingsView({
   onSave,
   onClose,
   onNotice,
+  onOpenFeedback,
+  onOpenOnboarding,
 }: {
   identity: Identity;
   settings: VoiceSettings;
   onSave: (identity: Identity, settings: VoiceSettings) => void;
   onClose: () => void;
   onNotice: (kind: "info" | "error", text: string) => void;
+  /** 打开意见反馈弹窗（App 层的 FeedbackDialog） */
+  onOpenFeedback: (errorText?: string) => void;
+  /** 回看首次打开的功能导览 */
+  onOpenOnboarding: () => void;
 }) {
   const [tab, setTab] = useState<Tab>("profile");
   const [draft, setDraft] = useState<Identity>(identity);
@@ -488,6 +494,22 @@ export function SettingsView({
                   自动更新、麦克风免授权，长时间挂机也更省资源更流畅。
                 </small>
               )}
+            </section>
+
+            <section className="vx-card">
+              <h3 className="vx-card-title">帮助与反馈</h3>
+              <small>
+                第一次用？点「功能介绍」看四个要点就上手了。遇到问题点「写一条反馈」——
+                会自动附上版本号、系统和网络类型，你不用自己找。
+              </small>
+              <div className="vx-card-actions">
+                <button type="button" className="vx-btn vx-btn-ghost" onClick={() => onOpenOnboarding()}>
+                  功能介绍
+                </button>
+                <button type="button" className="vx-btn" onClick={() => onOpenFeedback()}>
+                  写一条反馈
+                </button>
+              </div>
             </section>
           </>
         )}

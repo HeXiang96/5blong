@@ -260,6 +260,10 @@ async function syncProjectEnv(token, account, project, required = false) {
       wanted.TURN_KEY_ID = secrets.turnKeyId;
       wanted.TURN_KEY_API_TOKEN = secrets.turnKeyApiToken;
     }
+    // 意见反馈管理页令牌（由 npm run feedback:setup 生成）；不配也不影响反馈提交
+    if (secrets.feedbackToken) {
+      wanted.FEEDBACK_TOKEN = secrets.feedbackToken;
+    }
     if (Object.keys(wanted).length === 0) {
       log("env", "本机密钥文件里没有可用的凭证，跳过");
       return;

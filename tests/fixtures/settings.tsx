@@ -37,6 +37,8 @@ createRoot(document.getElementById("root")!).render(
       settings={settings}
       onSave={() => {}}
       onClose={() => {}}
+      onOpenFeedback={() => {}}
+      onOpenOnboarding={() => {}}
       onNotice={() => {}}
     />
   </StrictMode>,

@@ -67,6 +67,8 @@ import {
 import { Timers } from "./timers";
 import { VoiceActivityDetector } from "./voice-activity";
 import type { AudioProcessing, VoiceSettings } from "./settings";
+// 音量上限（值导入）：UI、持久化、引擎共用一份，见 settings.ts 的说明
+import { MIC_VOLUME_MAX, PEER_VOLUME_MAX } from "./settings";
 import { bindSpeaker, openMic, resumeAudio } from "./devices";
 import { ensureIceServers, iceServers } from "./ice";
 
@@ -362,6 +364,21 @@ export class VoiceMesh {
   private micSourceNode: MediaStreamAudioSourceNode | null = null;
   private nsNode: AudioWorkletNode | null = null;
   private micGainNode: GainNode | null = null;
+  /** 发送链尾部的软限幅（见 buildOutgoing 注释）。 */
+  private micLimiterNode: DynamicsCompressorNode | null = null;
+  /**
+   * 每个成员的本地收听增益链：source → gain → limiter → MediaStreamDestination
+   * → <audio>（element.volume 固定 1）。
+   *
+   * 为什么不用 element.volume：`HTMLMediaElement.volume` 合法区间只有 0~1，
+   * **超过 100% 会被浏览器拒绝**——于是"把对方音量拉到 200%"这个功能一直是假的
+   * （2026-10-15 业主实测：对方麦小、拉满也没用）。Web Audio 的 GainNode 没有
+   * 这个限制，后面串一个 DynamicsCompressor 当软限幅，>100% 时也不会硬削爆音。
+   */
+  private peerChains = new Map<
+    string,
+    { source: MediaStreamAudioSourceNode; gain: GainNode; limiter: DynamicsCompressorNode | null; dest: MediaStreamAudioDestinationNode }
+  >();
   private outDestNode: MediaStreamAudioDestinationNode | null = null;
   private nsEnabled = false;
 
@@ -2479,8 +2496,7 @@ export class VoiceMesh {
        */
       this.bindElementSpeaker(element);
     }
-    element.srcObject = stream;
-    this.applyPeerAudio(peerId);
+    this.routePeerAudio(peerId, stream, element);
     void resumeAudio(this.ctx);
     this.monitor(peerId, stream, false);
     /*
@@ -2515,6 +2531,7 @@ export class VoiceMesh {
       element.srcObject = null;
       element.remove();
       this.audio.delete(peerId);
+      this.teardownPeerAudio(peerId);
     }
     const monitor = this.monitors.get(peerId);
     if (monitor) {
@@ -2626,9 +2643,26 @@ export class VoiceMesh {
     const source = ctx.createMediaStreamSource(this.localStream);
     const gain = ctx.createGain();
     gain.gain.value = settings.micVolume;
+    /*
+     * 软限幅（DynamicsCompressor）：麦克风增强拉到 200~300% 时，人声峰值会超过
+     * 0dBFS 被硬削——听感就是"声音大了但发闷/破"。这里放一个高比率、快启动的
+     * 压限，把峰值兜在 0dB 以内：小音量段落整体抬高，峰值不炸。
+     */
+    // 个别实现/测试替身可能没有压限器：降级为直连，不让整个发送链建不起来
+    const limiter = typeof ctx.createDynamicsCompressor === "function"
+      ? ctx.createDynamicsCompressor()
+      : null;
+    if (limiter) {
+      limiter.threshold.value = -3;
+      limiter.knee.value = 6;
+      limiter.ratio.value = 12;
+      limiter.attack.value = 0.003;
+      limiter.release.value = 0.25;
+    }
     const dest = ctx.createMediaStreamDestination();
     this.micSourceNode = source;
     this.micGainNode = gain;
+    this.micLimiterNode = limiter;
     this.outDestNode = dest;
 
     if (settings.processing.noiseSuppression) {
@@ -2652,15 +2686,17 @@ export class VoiceMesh {
       this.nsEnabled = false;
       source.connect(gain);
     }
-    gain.connect(dest);
+    gain.connect(limiter ?? dest);
+    limiter?.connect(dest);
     this.outgoingStream = dest.stream;
   }
 
-  /** 麦克风音量/增强（0..2），通话中拖动立即生效。 */
+  /** 麦克风音量/增强（0..MIC_VOLUME_MAX），通话中拖动立即生效。 */
   setMicVolume(value: number): void {
     const gain = this.micGainNode;
     if (!gain || !this.ctx) return;
-    gain.gain.setTargetAtTime(value, this.ctx.currentTime, 0.01);
+    const clamped = Math.min(MIC_VOLUME_MAX, Math.max(0, value));
+    gain.gain.setTargetAtTime(clamped, this.ctx.currentTime, 0.01);
   }
 
   /**
@@ -2763,7 +2799,7 @@ export class VoiceMesh {
 
   /** 只拆处理链节点，保留原始麦克风流（供重建/销毁复用）。 */
   private teardownOutgoingGraph(): void {
-    for (const node of [this.nsNode, this.micSourceNode, this.micGainNode, this.outDestNode]) {
+    for (const node of [this.nsNode, this.micSourceNode, this.micGainNode, this.micLimiterNode, this.outDestNode]) {
       try {
         node?.disconnect();
       } catch {
@@ -2773,6 +2809,7 @@ export class VoiceMesh {
     this.nsNode = null;
     this.micSourceNode = null;
     this.micGainNode = null;
+    this.micLimiterNode = null;
     this.outDestNode = null;
     this.outgoingStream = null;
     this.nsEnabled = false;
@@ -2792,7 +2829,7 @@ export class VoiceMesh {
     this.peerVolumes.clear();
     this.peerMuted.clear();
     for (const [id, value] of Object.entries(settings.peerVolumes)) {
-      if (typeof value === "number" && value >= 0 && value <= 1) this.peerVolumes.set(id, value);
+      if (typeof value === "number" && value >= 0 && value <= PEER_VOLUME_MAX) this.peerVolumes.set(id, value);
     }
     for (const [id, value] of Object.entries(settings.peerMuted)) {
       if (value === true) this.peerMuted.add(id);
@@ -2802,10 +2839,69 @@ export class VoiceMesh {
   private applyPeerAudio(peerId: string): void {
     const element = this.audio.get(peerId);
     if (!element) return;
-    const volume = this.peerVolumes.get(peerId) ?? 1;
-    element.volume = this.peerMuted.has(peerId) ? 0 : volume;
+    const chain = this.peerChains.get(peerId);
+    const volume = this.peerMuted.has(peerId) ? 0 : this.peerVolumes.get(peerId) ?? 1;
+    if (chain && this.ctx) {
+      // 增益走 GainNode（可 >1），元素音量固定 1，避免两处相乘
+      chain.gain.gain.setTargetAtTime(volume, this.ctx.currentTime, 0.02);
+      element.volume = 1;
+    } else {
+      // 没有 AudioContext（极少数降级路径）：退回元素音量，但必须夹到 0~1，
+      // 否则赋 >1 会被浏览器拒绝、整个音量设置静默失效。
+      element.volume = Math.min(1, Math.max(0, volume));
+    }
     // 闭听优先级最高（独立于本地音量设置，恢复时不受影响）。
     element.muted = this.deafened;
+  }
+
+  /** 把某个成员的音频接进"增益 + 软限幅"链，元素播放链的输出。 */
+  private routePeerAudio(peerId: string, stream: MediaStream, element: HTMLAudioElement): void {
+    const ctx = this.audioContext();
+    if (!ctx) {
+      element.srcObject = stream;
+      this.applyPeerAudio(peerId);
+      return;
+    }
+    this.teardownPeerAudio(peerId);
+    try {
+      const source = ctx.createMediaStreamSource(stream);
+      const gain = ctx.createGain();
+      const limiter =
+        typeof ctx.createDynamicsCompressor === "function" ? ctx.createDynamicsCompressor() : null;
+      // 软限幅参数：只在高增益（>100%）时兜住峰值，正常音量几乎不介入
+      if (limiter) {
+        limiter.threshold.value = -3;
+        limiter.knee.value = 6;
+        limiter.ratio.value = 12;
+        limiter.attack.value = 0.003;
+        limiter.release.value = 0.25;
+      }
+      const dest = ctx.createMediaStreamDestination();
+      source.connect(gain);
+      gain.connect(limiter ?? dest);
+      limiter?.connect(dest);
+      this.peerChains.set(peerId, { source, gain, limiter, dest });
+      element.srcObject = dest.stream;
+    } catch {
+      // 建链失败（罕见）：退回元素音量直放
+      element.srcObject = stream;
+    }
+    this.applyPeerAudio(peerId);
+  }
+
+  /** 拆掉某个成员的增益链（成员离开 / 流重建时）。 */
+  private teardownPeerAudio(peerId: string): void {
+    const chain = this.peerChains.get(peerId);
+    if (!chain) return;
+    this.peerChains.delete(peerId);
+    try {
+      chain.source.disconnect();
+      chain.gain.disconnect();
+      chain.limiter?.disconnect();
+      chain.dest.disconnect();
+    } catch {
+      /* 已断开 */
+    }
   }
 
   /**
@@ -2834,9 +2930,9 @@ export class VoiceMesh {
     for (const id of this.audio.keys()) this.applyPeerAudio(id);
   }
 
-  /** 调某个成员的本地收听音量（0..1）。 */
+  /** 调某个成员的本地收听音量（0..2，>1 为增强）。 */
   setPeerVolume(peerId: string, volume: number): void {
-    this.peerVolumes.set(peerId, volume);
+    this.peerVolumes.set(peerId, Math.min(PEER_VOLUME_MAX, Math.max(0, volume)));
     if (volume > 0) this.peerMuted.delete(peerId);
     this.applyPeerAudio(peerId);
   }

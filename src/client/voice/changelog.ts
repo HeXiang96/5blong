@@ -20,6 +20,16 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.4.8",
+    date: "2026-10-15",
+    lines: [
+      "新增意见反馈入口",
+      "首次打开有功能导览",
+      "对方音量可调到 200%",
+      "麦克风增强最高 300%",
+    ],
+  },
+  {
     version: "1.4.7",
     date: "2026-10-14",
     lines: [

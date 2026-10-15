@@ -1,10 +1,13 @@
-import { useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { preloadRnnoise } from "./engine";
+import { shouldShowOnboarding } from "./onboarding";
 import { isJoinInFlight } from "./protocol";
 import { useVoice } from "./use-voice";
 import { ConfirmView, LandingView } from "./components/pages";
 import { RoomView } from "./components/RoomView";
+import { FeedbackDialog } from "./components/FeedbackDialog";
+import { OnboardingDialog } from "./components/OnboardingDialog";
 import { SettingsView } from "./components/SettingsView";
 import { Banner } from "./components/ui";
 
@@ -42,6 +45,48 @@ export function App() {
    * 现在设置页是覆盖层，猪圈在下面继续走、广播不断，回来无缝。
    */
   const settingsOverRoom = voice.view === "settings" && voice.settingsReturn === "room";
+
+  /*
+   * 意见反馈弹窗：三处入口共用一份 state——设置页、错误提示条（带错误原文）、
+   * 以及桌面端托盘菜单（Rust 侧发 feedback:open 事件，见下方 effect）。
+   */
+  const [feedback, setFeedback] = useState<{ open: boolean; errorText?: string }>({ open: false });
+  const openFeedback = useCallback((errorText?: string) => setFeedback({ open: true, errorText }), []);
+  const closeFeedback = useCallback(() => setFeedback({ open: false }), []);
+
+  /*
+   * 首次打开的功能导览：**只在首页**、首帧之后再弹（等场景画出来，不抢首帧）。
+   * 通过邀请链接直接进房的人不打扰——那时 view 不是 landing，等他回首页自然会看到。
+   * `?tv=demo`（调试/全链路验证）跳过，免得挡着自动开播。
+   */
+  const [onboardingOpen, setOnboardingOpen] = useState(false);
+  useEffect(() => {
+    if (voice.view !== "landing") return;
+    if (typeof location !== "undefined" && /[?&]tv=demo/.test(location.search)) return;
+    if (!shouldShowOnboarding()) return;
+    const timer = window.setTimeout(() => setOnboardingOpen(true), 500);
+    return () => window.clearTimeout(timer);
+  }, [voice.view]);
+  const closeOnboarding = useCallback(() => setOnboardingOpen(false), []);
+  useEffect(() => {
+    const isDesktop = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+    if (!isDesktop) return;
+    let unlisten: (() => void) | null = null;
+    let disposed = false;
+    void import("@tauri-apps/api/event")
+      .then(({ listen }) => listen("feedback:open", () => setFeedback({ open: true })))
+      .then((off) => {
+        if (disposed) off();
+        else unlisten = off;
+      })
+      .catch(() => {
+        /* 事件桥不可用不影响设置页里的入口 */
+      });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
 
   /*
    * "正在进房"的统一定义（preparing / connecting / reconnecting），
@@ -84,13 +129,19 @@ export function App() {
 
   if (voice.view === "settings" && !settingsOverRoom) {
     return (
-      <SettingsView
-        identity={voice.identity}
-        settings={voice.settings}
-        onSave={voice.saveAll}
-        onClose={voice.closeSettings}
-        onNotice={(kind, text) => voice.setNotice({ kind, text })}
-      />
+      <>
+        <SettingsView
+          identity={voice.identity}
+          settings={voice.settings}
+          onSave={voice.saveAll}
+          onClose={voice.closeSettings}
+          onNotice={(kind, text) => voice.setNotice({ kind, text })}
+          onOpenFeedback={openFeedback}
+          onOpenOnboarding={() => setOnboardingOpen(true)}
+        />
+        <FeedbackDialog open={feedback.open} errorText={feedback.errorText} onClose={closeFeedback} />
+        <OnboardingDialog open={onboardingOpen} onClose={closeOnboarding} />
+      </>
     );
   }
 
@@ -171,6 +222,7 @@ export function App() {
         onSetShareTransport={voice.setShareTransport}
         shareViewMode={voice.shareViewMode}
         onSetShareViewMode={voice.setShareViewMode}
+        onOpenFeedback={openFeedback}
       />
       {settingsOverRoom ? (
         <div className="vx-overlay-layer">
@@ -180,9 +232,13 @@ export function App() {
             onSave={voice.saveAll}
             onClose={voice.closeSettings}
             onNotice={(kind, text) => voice.setNotice({ kind, text })}
+            onOpenFeedback={openFeedback}
+            onOpenOnboarding={() => setOnboardingOpen(true)}
           />
         </div>
       ) : null}
+      <FeedbackDialog open={feedback.open} errorText={feedback.errorText} onClose={closeFeedback} />
+      <OnboardingDialog open={onboardingOpen} onClose={closeOnboarding} />
       </>
     );
   }
@@ -196,6 +252,8 @@ export function App() {
           </Banner>
         </div>
       ) : null}
+      <FeedbackDialog open={feedback.open} errorText={feedback.errorText} onClose={closeFeedback} />
+      <OnboardingDialog open={onboardingOpen} onClose={closeOnboarding} />
       <LandingView
         identity={voice.identity}
         onIdentityChange={voice.setIdentity}

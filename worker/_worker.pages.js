@@ -44,6 +44,16 @@ export default {
       return handleIce(request, env);
     }
 
+    // /feedback → 应用内意见反馈（写 D1）。同样在静态资源之前拦。
+    if (url.pathname === "/feedback") {
+      return handleFeedback(request, env);
+    }
+
+    // /admin → 反馈查看页（令牌保护）。不提供令牌时形同 401，不影响静态站。
+    if (url.pathname === "/admin") {
+      return handleAdmin(request, env);
+    }
+
     // 非 /sfu 请求 → 静态网页资源
     if (!/^\/sfu\/sessions?\//.test(url.pathname)) {
       return env.ASSETS.fetch(request);
@@ -188,4 +198,276 @@ function iceHeaders() {
     // 凭据有时效，且由服务端缓存控制，禁止中间层/CDN 再缓存一份。
     "Cache-Control": "no-store",
   };
+}
+
+// ---------------------------------------------------------------------------
+// /feedback —— 应用内意见反馈（D1）
+// ---------------------------------------------------------------------------
+//
+// 契约（客户端 src/client/voice/feedback.ts 与此对应，改一处要改两处）：
+//   POST /feedback  200 { ok:true, id } | 400 参数不合法 | 429 太频繁
+//                   503 通道未就绪（Pages 项目还没建 D1 / 没绑定）
+// 隐私：不接收房间链接与密码（客户端也不发送）；IP 只存不可逆哈希，用于限速。
+// 状态码语义是契约：503 时客户端提示"反馈通道尚未启用"，不要当成失败重试。
+
+/** 允许的分类（与前端下拉一致）。 */
+const FEEDBACK_CATEGORIES = new Set(["voice", "mic", "room", "screen", "lag", "other"]);
+/** 单条上限：描述 500 字、联系方式 120 字、环境信息 2KB。 */
+const FEEDBACK_MAX_MESSAGE = 500;
+const FEEDBACK_MAX_CONTACT = 120;
+const FEEDBACK_MAX_CONTEXT = 2048;
+/** 每个 IP 每小时最多提交条数。 */
+const FEEDBACK_HOURLY_LIMIT = 5;
+
+function feedbackCors() {
+  return {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Max-Age": "86400",
+  };
+}
+
+async function handleFeedback(request, env) {
+  // 桌面端（tauri.localhost）跨域提交必发 OPTIONS 预检；网页端同源无此问题。
+  if (request.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers: feedbackCors() });
+  }
+  if (request.method !== "POST") {
+    return json({ error: "method not allowed" }, 405);
+  }
+  // 通道未就绪（还没建库/没绑定）：明确 503，客户端据此提示而不是报网络错误。
+  if (!env.DB) {
+    return json({ error: "feedback channel not configured" }, 503);
+  }
+
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: "bad json" }, 400);
+  }
+
+  const message = clampText(body?.message, FEEDBACK_MAX_MESSAGE);
+  if (message.length < 2) {
+    return json({ error: "message too short" }, 400);
+  }
+  const category = FEEDBACK_CATEGORIES.has(body?.category) ? String(body.category) : "other";
+  const contact = clampText(body?.contact, FEEDBACK_MAX_CONTACT);
+  const version = clampText(body?.version, 40);
+  const platform = clampText(body?.platform, 40);
+  let contextJson = "";
+  try {
+    const raw = JSON.stringify(body?.context ?? {});
+    contextJson = raw.length > FEEDBACK_MAX_CONTEXT ? "" : raw;
+  } catch {
+    contextJson = "";
+  }
+
+  const ipHash = await sha256Hex(request.headers.get("CF-Connecting-IP") ?? "unknown");
+  const since = new Date(Date.now() - 3600_000).toISOString();
+  try {
+    const counted = await env.DB.prepare(
+      "SELECT COUNT(*) AS n FROM feedback WHERE ip_hash = ? AND created_at > ?",
+    )
+      .bind(ipHash, since)
+      .first();
+    if ((counted?.n ?? 0) >= FEEDBACK_HOURLY_LIMIT) {
+      return json({ error: "too many requests" }, 429);
+    }
+    const id = crypto.randomUUID();
+    await env.DB.prepare(
+      "INSERT INTO feedback (id, created_at, version, platform, category, message, contact, context_json, ip_hash, status) " +
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'new')",
+    )
+      .bind(id, new Date().toISOString(), version, platform, category, message, contact, contextJson, ipHash)
+      .run();
+    return json({ ok: true, id }, 200);
+  } catch (error) {
+    // 表还没建等情况：如实 500，但不把内部细节抛给客户端
+    console.error("[feedback] insert failed", error?.message ?? error);
+    return json({ error: "storage error" }, 500);
+  }
+}
+
+/** 裁剪 + 去控制字符（前端也有限制，这里是服务端的最后一道闸）。 */
+function clampText(value, max) {
+  if (typeof value !== "string") return "";
+  // eslint-disable-next-line no-control-regex
+  return value.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, "").trim().slice(0, max);
+}
+
+async function sha256Hex(text) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("").slice(0, 32);
+}
+
+// ---------------------------------------------------------------------------
+// /admin —— 反馈查看页（令牌保护，纯服务端渲染，手机也能看）
+// ---------------------------------------------------------------------------
+
+async function handleAdmin(request, env) {
+  const url = new URL(request.url);
+  const token = url.searchParams.get("token") ?? request.headers.get("x-admin-token") ?? "";
+
+  if (!env.FEEDBACK_TOKEN) {
+    return adminPage(
+      "尚未启用",
+      "<p>还没设置管理员令牌。在本机执行 <code>npm run feedback:setup</code>（会建库、绑定并写入令牌），然后再来。</p>",
+      501,
+    );
+  }
+  if (!safeEqual(token, env.FEEDBACK_TOKEN)) {
+    return new Response("未授权：令牌不正确", {
+      status: 401,
+      headers: { "Content-Type": "text/plain; charset=utf-8" },
+    });
+  }
+  if (!env.DB) {
+    return adminPage("数据库未绑定", "<p>Pages 项目还没有绑定 D1 数据库（变量名 <code>DB</code>）。</p>", 503);
+  }
+
+  // 标记状态（表单 POST，处理完跳回列表页）
+  if (request.method === "POST") {
+    const form = await request.formData();
+    const id = String(form.get("id") ?? "");
+    const status = String(form.get("status") ?? "") === "done" ? "done" : "new";
+    if (id) {
+      await env.DB.prepare("UPDATE feedback SET status = ? WHERE id = ?").bind(status, id).run();
+    }
+    return Response.redirect(url.toString(), 303);
+  }
+
+  let rows = [];
+  try {
+    const result = await env.DB.prepare(
+      "SELECT id, created_at, version, platform, category, message, contact, context_json, status " +
+        "FROM feedback ORDER BY created_at DESC LIMIT 200",
+    ).all();
+    rows = result?.results ?? [];
+  } catch (error) {
+    return adminPage("读取失败", `<p>${escapeHtml(String(error?.message ?? error))}</p>`, 500);
+  }
+  return adminPage("意见反馈", feedbackListHtml(url, rows), 200);
+}
+
+const CATEGORY_LABELS = {
+  voice: "语音",
+  mic: "麦克风",
+  room: "进出房间",
+  screen: "屏幕共享",
+  lag: "卡顿掉线",
+  other: "其它",
+};
+
+function feedbackListHtml(url, rows) {
+  const pending = rows.filter((r) => r.status !== "done").length;
+  const items = rows
+    .map((r) => {
+      const when = escapeHtml(formatLocalTime(r.created_at));
+      const category = CATEGORY_LABELS[r.category] ?? escapeHtml(r.category ?? "其它");
+      const done = r.status === "done";
+      let context = "";
+      if (r.context_json) {
+        try {
+          const parsed = JSON.parse(r.context_json);
+          context = Object.entries(parsed)
+            .map(([k, v]) => `<span class="kv">${escapeHtml(k)}: ${escapeHtml(String(v))}</span>`)
+            .join("");
+        } catch {
+          context = "";
+        }
+      }
+      return `<article class="card${done ? " done" : ""}">
+  <header>
+    <span class="when">${when}</span>
+    <span class="tag">${category}</span>
+    ${done ? '<span class="tag tag-done">已处理</span>' : ""}
+    <span class="meta">v${escapeHtml(r.version || "?")} · ${escapeHtml(r.platform || "?")}</span>
+  </header>
+  <p class="msg">${escapeHtml(r.message)}</p>
+  ${r.contact ? `<p class="contact">联系方式：${escapeHtml(r.contact)}</p>` : ""}
+  ${context ? `<div class="ctx">${context}</div>` : ""}
+  <form method="post" action="${escapeHtml(url.pathname + url.search)}">
+    <input type="hidden" name="id" value="${escapeHtml(r.id)}" />
+    <input type="hidden" name="status" value="${done ? "new" : "done"}" />
+    <button type="submit">${done ? "标记为未处理" : "标记为已处理"}</button>
+  </form>
+</article>`;
+    })
+    .join("\n");
+
+  return `<p class="summary">共 ${rows.length} 条，待处理 <strong>${pending}</strong> 条（最多显示最近 200 条）</p>
+${items || '<p class="empty">还没有收到反馈。</p>'}`;
+}
+
+function adminPage(title, contentHtml, status) {
+  return new Response(
+    `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>5blong · ${escapeHtml(title)}</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { margin: 0; padding: 20px; background: #f6f4ef; color: #2b2620;
+         font: 15px/1.6 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .summary { color: #6b6257; margin: 0 0 16px; }
+  .card { background: #fff; border: 1px solid #e3ded4; border-radius: 12px; padding: 14px 16px; margin-bottom: 12px; }
+  .card.done { opacity: .62; }
+  .card header { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 8px; }
+  .when { font-variant-numeric: tabular-nums; color: #6b6257; font-size: 13px; }
+  .tag { background: #efe7d8; border-radius: 999px; padding: 1px 10px; font-size: 12px; }
+  .tag-done { background: #d8ecdc; }
+  .meta { color: #8a8175; font-size: 12px; margin-left: auto; }
+  .msg { margin: 0 0 8px; white-space: pre-wrap; word-break: break-word; }
+  .contact { margin: 0 0 8px; color: #6b6257; font-size: 13px; }
+  .ctx { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+  .kv { background: #f6f4ef; border-radius: 6px; padding: 2px 8px; font-size: 12px; color: #6b6257; }
+  form { margin: 0; }
+  button { border: 1px solid #d6cfc2; background: #fff; border-radius: 8px; padding: 5px 12px;
+           font-size: 13px; cursor: pointer; }
+  button:hover { background: #faf8f4; }
+  .empty { color: #8a8175; }
+  code { background: #efe7d8; border-radius: 4px; padding: 1px 6px; }
+  @media (max-width: 480px) {
+    body { padding: 14px; }
+    .meta { margin-left: 0; width: 100%; }
+  }
+</style>
+</head>
+<body>
+<h1>5blong · ${escapeHtml(title)}</h1>
+${contentHtml}
+</body>
+</html>`,
+    { status, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } },
+  );
+}
+
+function formatLocalTime(iso) {
+  // D1 存 UTC ISO；服务器按东八区展示更符合使用习惯
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso ?? "";
+  return new Intl.DateTimeFormat("zh-CN", {
+    timeZone: "Asia/Shanghai",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
+function escapeHtml(text) {
+  return String(text).replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch]);
+}
+
+/** 长度恒定比较，避免计时侧信道（令牌不长，够用）。 */
+function safeEqual(a, b) {
+  if (typeof a !== "string" || typeof b !== "string" || a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i += 1) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
 }
