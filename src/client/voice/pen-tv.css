@@ -786,3 +786,59 @@ html.vx-lightbox-open .vx-stage,
 html.vx-lightbox-open .vx-stage * {
   animation-play-state: paused !important;
 }
+
+/* 底部拆两行：数据行（每 2 秒变长）独占一行、定高省略号；
+   控件行位置恒定——以前挤同一排，数据一变按钮就来回跳（业主实拍"UI 来回变"）。 */
+.vx-tv-bigfoot {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+.vx-tv-statsline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 22px;
+  overflow: hidden;
+}
+.vx-tv-statsline:empty {
+  min-height: 0;
+}
+.vx-tv-statsline .vx-tv-stats,
+.vx-tv-statsline .vx-tv-layers {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.vx-tv-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+}
+.vx-tv-bigfoot .vx-tv-bighint {
+  margin-left: auto;
+}
+
+/* 最大化：铺满整窗（按钮还会尝试申请系统全屏；偏好记住）。 */
+.vx-tv-lightbox.vx-tv-max {
+  align-items: stretch;
+  background: #0b0804;
+  backdrop-filter: none;
+}
+.vx-tv-max .vx-tv-stagebig {
+  width: 100vw;
+  height: 100vh;
+  max-width: none;
+  border-radius: 0;
+  box-shadow: none;
+  display: flex;
+  flex-direction: column;
+  animation: none;
+}
+.vx-tv-max .vx-tv-bigscreen {
+  flex: 1;
+  aspect-ratio: auto;
+  min-height: 0;
+}
