@@ -20,6 +20,15 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.5.2",
+    date: "2026-10-16",
+    lines: [
+      "修：语音聊天的声音回来了",
+      "紧急修复，建议立即更新",
+      "感谢反馈的用户",
+    ],
+  },
+  {
     version: "1.5.1",
     date: "2026-10-16",
     lines: [
