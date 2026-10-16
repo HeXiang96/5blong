@@ -20,6 +20,15 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.5.3",
+    date: "2026-10-16",
+    lines: [
+      "进房更快：等待大幅缩短",
+      "慢网络自动快速重试",
+      "声音修复同日已发 1.5.2",
+    ],
+  },
+  {
     version: "1.5.2",
     date: "2026-10-16",
     lines: [
