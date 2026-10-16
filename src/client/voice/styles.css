@@ -3243,3 +3243,18 @@ span.vx-topic[role="button"] {
   margin-top: 10px;
   flex-wrap: wrap;
 }
+
+/* 开黑圈预告入口（首页，主按钮组下方） */
+.vx-tease-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 2px auto 0;
+  opacity: 0.85;
+}
+.vx-modal .vx-modal-body {
+  margin: 8px 0;
+  font-size: 14px;
+  line-height: 1.7;
+  text-align: left;
+}
