@@ -508,6 +508,7 @@ npm run feedback:admin list 20   # 终端查看最近反馈（url / list / rm �
 <!-- AUTO-LOG:START -->
 ### 近期提交（自动生成）
 
+- `e8de825` fix: WebView2 后台节流改走浏览器参数（backgroundThrottling 仅 macOS 支持）（10-16 21:50）
 - `9dfa97b` fix: 共享方切后台 1fps（WebView2 后台节流）+ 重连成员在后台档案永远显示已离开（10-16 21:35）
 - `f6c11d9` release: v1.5.4（10-16 21:32）
 - `143d0ae` fix: 房主主动结束房间也出今晚小结（10-16 21:31）
@@ -516,8 +517,6 @@ npm run feedback:admin list 20   # 终端查看最近反馈（url / list / rm �
 - `e03ce59` docs: 1.5.3 更新公告（10-16 20:15）
 - `7f94755` perf: 进房等待提速——welcome 单次超时 12s→7s（10-16 20:15）
 - `22cba0a` release: v1.5.2（10-16 20:01）
-- `b3097cf` docs: 1.5.2 修复说明（README + 更新公告）（10-16 19:56）
-- `392e0d6` fix: 远端音频全程静音——远端流需经静音元素泵动解码器（Chromium 40094084）（10-16 19:49）
 <!-- AUTO-LOG:END -->
 
 ## 怎么用
