@@ -257,6 +257,20 @@ fn grant_webview2_permissions(app: &tauri::AppHandle) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    /*
+     * 共享方切后台不掉帧（2026-10-16：最小化客户端后观众掉到 1fps/78kbps）。
+     * WebView2 默认对"不可见"的窗口做 Occlusion 判定并节流渲染/定时器——
+     * 共享屏幕时客户端常驻后台，必须关掉这组节流。须在 WebView2 环境创建
+     * **之前**设置（Tauri 配置里的 backgroundThrottling 在 Windows 上不支持，
+     * 见 tauri.conf schema 的 Platform-specific 说明）。
+     */
+    std::env::set_var(
+        "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
+        "--disable-features=CalculateNativeWinOcclusion \
+         --disable-backgrounding-occluded-windows \
+         --disable-background-timer-throttling \
+         --disable-renderer-backgrounding",
+    );
     tauri::Builder::default()
         .manage(UpdaterState { pending: Mutex::new(None) })
         .manage(loopback::LoopbackState::default())
