@@ -20,6 +20,16 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.5.1",
+    date: "2026-10-16",
+    lines: [
+      "新增房间遥测：完整档案",
+      "支持房间号搜索与导出",
+      "成员延迟/接入方式可查",
+      "历史档案保留 30 天",
+    ],
+  },
+  {
     version: "1.5.0",
     date: "2026-10-15",
     lines: [
