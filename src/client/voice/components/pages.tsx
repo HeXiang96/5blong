@@ -73,6 +73,8 @@ export function LandingView({
   const boardItem =
     boardItems.length > 0 ? boardItems[boardIdx % boardItems.length] : undefined;
   const [joinOpen, setJoinOpen] = useState(false);
+  /** 开黑圈预告弹窗。 */
+  const [teaseOpen, setTeaseOpen] = useState(false);
   const [joinText, setJoinText] = useState("");
   /**
    * 只负责"输入格式对不对"。进房失败的**真实原因**由引擎给出（`error` prop）——
@@ -245,6 +247,32 @@ export function LandingView({
             <LogIn size={18} /> 加入语音房
           </button>
         </div>
+
+        {/* 开黑圈（5v5 自定义内战房）：下个大版本上线的预告入口 */}
+        <button type="button" className="vx-link-btn vx-tease-btn" onClick={() => setTeaseOpen(true)}>
+          🎮 开黑圈 · 下个大版本上线
+        </button>
+
+        {teaseOpen ? (
+          <div className="vx-modal-backdrop" onClick={() => setTeaseOpen(false)}>
+            <div className="vx-modal" onClick={(event) => event.stopPropagation()}>
+              <h2>🎮 开黑圈</h2>
+              <p className="vx-modal-sub">5v5 自定义内战房 · 正在打磨，下个大版本上线</p>
+              <p className="vx-modal-body">
+                专为无畏契约、CS2 这类游戏自定义设计：一个房间码拉满两队，免注册直接进，
+                语音稳、延迟低，边打边吼不散伙。
+              </p>
+              <p className="vx-modal-hint">
+                想催更？到「设置 → 帮助 → 意见反馈」吼一嗓子，人多就插队排期。
+              </p>
+              <div className="vx-modal-actions">
+                <button type="button" className="vx-btn vx-btn-primary" onClick={() => setTeaseOpen(false)}>
+                  知道了
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
 
         {/*
           进房的"进行中"与"失败原因"。这两条就是以前缺的那块：

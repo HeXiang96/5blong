@@ -20,6 +20,15 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.5.5",
+    date: "2026-10-16",
+    lines: [
+      "预告新玩法：开黑圈",
+      "5v5 自定义内战房",
+      "下个大版本上线",
+    ],
+  },
+  {
     version: "1.5.4",
     date: "2026-10-16",
     lines: [
