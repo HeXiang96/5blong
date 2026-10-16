@@ -834,8 +834,16 @@ export const HEARTBEAT_MS = 2000;
 export const HEARTBEAT_TIMEOUT_MS = 6000;
 /** 访客连续收不到房主 pong 多久后判定掉线并尝试重连。 */
 export const HOST_SILENCE_TIMEOUT_MS = 10_000;
-/** 连上信令后等待房主 welcome 的上限。 */
-export const WELCOME_TIMEOUT_MS = 12_000;
+/**
+ * 连上信令后等待房主 welcome 的上限（单次）。
+ *
+ * 2026-10-16 从 12s 调到 7s：这个值是"公共 PeerJS 云信令延迟 4~35 秒"时代的遗产；
+ * 信令自建后注册与消息转发都是秒级，welcome 迟到基本只剩"访客↔房主握手数据通道
+ * 的 ICE 慢/失败"一种情况——这种情况下拖满 12s 也一样失败，**早超时早重拨**才是
+ * 正确姿势（重拨=全新 ICE，往往一次就通）。3 次重拨的总预算从 ~36s 收到 ~21s，
+ * 与确认页的 JOIN_WAIT_HINT 文案对应。
+ */
+export const WELCOME_TIMEOUT_MS = 7_000;
 
 export type AdmissionVerdict =
   | { ok: true }
@@ -921,4 +929,4 @@ export function isJoinInFlight(status: string): boolean {
  * 进房等待期的说明文案。上限 = `WELCOME_TIMEOUT_MS` × `MAX_DIAL_ATTEMPTS`（约 36s）。
  * 说清"在等多久"和"别重复点"，比留一个转圈给人的确定感高得多。
  */
-export const JOIN_WAIT_HINT = "网络较慢时会自动换线路重试，最长约半分钟，请不要重复点击";
+export const JOIN_WAIT_HINT = "通常几秒就能进入；网络慢时会自动换线路重试，最长约二十秒，请不要重复点击";
