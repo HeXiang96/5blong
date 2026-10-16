@@ -471,6 +471,18 @@ npm run feedback:admin list 20   # 终端查看最近反馈（url / list / rm �
 - `2e1115a` release: v1.4.4（10-14 22:24）
 <!-- AUTO-LOG:END -->
 
+<!-- AUTO-LOG:START -->
+### 近期提交（自动生成）
+
+- `1aebc14` release: v1.5.1（10-16 09:17）
+- `b2922a4` feat: 房间遥测与后台档案（1.6.0 候选，暂不发版）（10-16 08:43）
+- `eead29a` release: v1.5.0（10-15 22:42）
+- `0f24131` release: v1.4.8（10-15 21:01）
+- `007fd3e` release: v1.4.7（10-14 23:24）
+- `c1825a6` release: v1.4.6（10-14 22:53）
+- `1085e0b` Merge remote-tracking branch 'origin/main'（10-14 22:49）
+<!-- AUTO-LOG:END -->
+
 ## 怎么用
 
 ### 方式一：网页（推荐，加入者零安装）
