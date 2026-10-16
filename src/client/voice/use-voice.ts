@@ -31,6 +31,7 @@ import {
   type ShareQuality,
 } from "./screen-share";
 import type { ScreenViewPreference } from "./protocol";
+import { loadLastRoom, saveLastRoom, type LastRoom, type SessionSummary } from "./session-stats";
 
 /**
  * 提示条停留多久（毫秒）。
@@ -89,6 +90,10 @@ export function useVoice() {
   const [notice, setNotice] = useState<Notice | null>(null);
   const [joinError, setJoinError] = useState<string | null>(null);
   const [ended, setEnded] = useState<{ reason: EndReason; detail?: string } | null>(null);
+  /** 房主铭牌公告（房主本地编辑 / 访客收广播都会更新）。 */
+  const [topic, setTopicState] = useState("");
+  /** 房间结束后的"今晚小结"（null = 没有可展示的）。 */
+  const [lastSummary, setLastSummary] = useState<SessionSummary | null>(null);
   const [chatOpen, setChatOpen] = useState(false);
   const [unread, setUnread] = useState(0);
   const [joined, setJoined] = useState(false);
@@ -256,7 +261,12 @@ export function useVoice() {
         if (!message.self && !chatOpenRef.current) setUnread((value) => value + 1);
       },
       ended: (reason, detail) => setEnded({ reason, detail }),
-      ready: setInvite,
+      ready: (invite) => {
+        setInvite(invite);
+        // 房主视角：建房成功就记住房间码（访客在 joinRoom 里记）。
+        saveLastRoom(invite.code);
+      },
+      topic: (text) => setTopicState(text),
       pen: (event) => {
         const now = Date.now();
         setPenEvents((prev) => [
@@ -859,6 +869,9 @@ export function useVoice() {
     const wasJoined = joinedRef.current;
     const detail = ended.detail;
     const reason = ended.reason;
+    // 小结必须在引擎销毁**之前**取出（teardown 会把引擎丢掉）。
+    const summary = wasJoined ? engineRef.current?.getSessionSummary() ?? null : null;
+    setLastSummary(summary);
     teardown();
     setStatus("idle");
     setMembers([]);
@@ -868,6 +881,12 @@ export function useVoice() {
       // 根本没进去：留在原地把原因说清楚，允许直接重试。
       setEnded(null);
       setJoinError(detail ?? "无法进入房间");
+      return;
+    }
+
+    if (summary) {
+      // 有"今晚小结"：切回首页并把小结卡片停在屏幕上，由用户关闭（dismissEnded）。
+      setView("landing");
       return;
     }
 
@@ -891,6 +910,7 @@ export function useVoice() {
   const createRoom = useCallback(async () => {
     // 房间状态整体重置，但先把 invite 清掉避免闪一下旧房间码。
     resetRoom();
+    setTopicState("");
     setNotice(null);
     setJoinError(null);
     setInvite(null);
@@ -902,8 +922,11 @@ export function useVoice() {
   const joinRoom = useCallback(
     async (target: JoinTarget, muted: boolean) => {
       resetRoom();
+      setTopicState("");
       setNotice(null);
       setJoinError(null);
+      // 访客视角也记住房间码：下次首页可以"一键重进"（房主视角在 ready 事件里记）。
+      saveLastRoom(target.code);
       const engine = startEngine();
       // 注意：这里不能靠 await join() 的返回来切页。
       // 引擎在收到房主欢迎的那一刻就已经算进房（status → connected → joined），
@@ -1276,6 +1299,28 @@ export function useVoice() {
     // 之前是投喂瞬间就涨——猪还没动体型先变大，观感很怪。
   }, []);
 
+  /** 房主修改铭牌公告（乐观更新本地，引擎广播给全房）。 */
+  const setRoomTopic = useCallback((text: string) => {
+    setTopicState(text);
+    engineRef.current?.setTopic(text);
+  }, []);
+
+  /** 关掉"今晚小结"卡片：清状态、清 URL，回到干净的首页。 */
+  const dismissEnded = useCallback(() => {
+    setEnded(null);
+    setLastSummary(null);
+    resetRoom();
+    setView("landing");
+    const clean = window.location.href.split("#")[0] ?? "";
+    window.history.replaceState(null, "", clean);
+  }, [resetRoom]);
+
+  /** 上次房间（进房/建房时写入；只在首页展示，离开首页即清缓存值）。 */
+  const lastRoom: LastRoom | null = useMemo(
+    () => (view === "landing" && !ended ? loadLastRoom() : null),
+    [view, ended],
+  );
+
   return {
     identity,
     identitySaving,
@@ -1290,6 +1335,11 @@ export function useVoice() {
     notice,
     joinError,
     ended,
+    lastSummary,
+    dismissEnded,
+    topic,
+    setRoomTopic,
+    lastRoom,
     chatOpen,
     unread,
     joined,

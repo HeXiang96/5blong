@@ -73,6 +73,7 @@ import { bindSpeaker, openMic, resumeAudio } from "./devices";
 import { ensureIceServers, iceServers } from "./ice";
 import { latestChangelog } from "./changelog";
 import { isTauriRuntime } from "./loopback";
+import { SessionStatsRecorder, type SessionSummary } from "./session-stats";
 
 /*
  * ICE 配置已迁到 ./ice.ts（STUN 兜底 + 由服务端 /ice 签发 Cloudflare TURN 短期凭据）。
@@ -220,6 +221,8 @@ export interface EngineEvents {
    * 与某个成员的媒体 P2P 连接状态变化，用于界面区分"直连 / 中继 / 连不通"。
    */
   mediaState: (peerId: string, state: MediaLinkState) => void;
+  /** 房主铭牌公告变化（房主本地修改与访客收到广播都会触发；空串 = 清除）。 */
+  topic?: (text: string) => void;
   /**
    * 屏幕共享状态变化（房主权威广播；null = 停播，电视回雪花）。
    * **与语音链路完全隔离**：这条回调的实现里绝不允许碰音频/PeerJS 媒体。
@@ -536,6 +539,7 @@ export class VoiceMesh {
         this.events.status("connected");
         this.events.ready({ code, hostId: id, roomKey: this.roomKey });
         this.startRoomTelemetry();
+        this.startSessionStats();
         return;
       }
 
@@ -738,6 +742,68 @@ export class VoiceMesh {
     this.roomTelemetry = null;
   }
 
+  // ------------------------------------------------- 今晚小结（本地采样统计）
+
+  /** 本地会话统计（每个客户端各自采样，见 session-stats.ts）。 */
+  private stats: SessionStatsRecorder | null = null;
+  private statsTimer = 0;
+  private lastSummary: SessionSummary | null = null;
+
+  /** 进房成功后启动：每 10 秒采样一次名册 + 说话状态，供"今晚小结"。 */
+  private startSessionStats(): void {
+    if (this.statsTimer || this.destroyed) return;
+    this.stats = new SessionStatsRecorder();
+    this.stats.begin();
+    this.sampleSessionStats();
+    this.statsTimer = this.timers.every(10_000, () => this.sampleSessionStats());
+  }
+
+  private sampleSessionStats(): void {
+    if (!this.stats) return;
+    const members = [...this.members.values()].map((m) => ({ id: m.id, name: m.name, local: m.local }));
+    this.stats.observe(members, this.speaking);
+  }
+
+  /** 停止统计。keepSummary=true（正常结束）时保留小结供 UI 展示。 */
+  private stopSessionStats(keepSummary: boolean): void {
+    if (this.statsTimer) {
+      this.timers.cancel(this.statsTimer);
+      this.statsTimer = 0;
+    }
+    if (keepSummary) {
+      this.lastSummary = this.stats?.finish() ?? this.lastSummary;
+    }
+    this.stats = null;
+  }
+
+  /**
+   * 取"今晚小结"（房间结束后由界面读取）。
+   * 幂等：没开过统计（没真正进过房）返回 null；结束时刻以第一次调用为准。
+   */
+  getSessionSummary(): SessionSummary | null {
+    if (!this.lastSummary && this.stats) {
+      this.lastSummary = this.stats.finish();
+      this.stopSessionStats(false);
+    }
+    return this.lastSummary;
+  }
+
+  // ------------------------------------------------------- 房主铭牌公告
+
+  /** 房主铭牌公告（只有房主能改；随 welcome / roster 捎带给全房）。 */
+  private topic = "";
+
+  /** 房主设置公告（≤60 字）。广播 roster（捎带 topic）并通知本机界面。 */
+  setTopic(text: string): void {
+    if (!this.hosting || this.destroyed) return;
+    const next = text.replace(/\s+/g, " ").trim().slice(0, 60);
+    if (next === this.topic) return;
+    this.topic = next;
+    this.events.topic?.(this.topic);
+    // 改公告本身也值得全房知道：捎带在下一次 roster 里，这里立即广播一次。
+    this.broadcastHost({ t: "roster", members: this.roster(), topic: this.topic || undefined });
+  }
+
   /** 记一条房间事件（进会话档案的异常流水）。 */
   private pushRoomEvent(kind: string, detail: string): void {
     const t = this.roomTelemetry;
@@ -862,6 +928,7 @@ export class VoiceMesh {
     if (this.destroyed) return;
     this.destroyed = true;
     this.stopRoomTelemetry();
+    this.stopSessionStats(true);
     stopPoseTickerFn();
 
     this.timers.clear();
@@ -1312,6 +1379,8 @@ export class VoiceMesh {
       locked: this.locked,
       // 新成员也要知道电视亮没亮（中途加入直接去围观）。
       screenShare: this.screenShareState ?? undefined,
+      // 房主铭牌公告（空串不上报，向后兼容老客户端）。
+      topic: this.topic || undefined,
     });
   }
 
@@ -2033,6 +2102,12 @@ export class VoiceMesh {
       this.events.status("connected");
       this.send(conn, { t: "joined" });
       this.joined = true;
+      // 房主铭牌公告（welcome 里捎带；老房主没有这个字段 = 没有公告）。
+      if (typeof message.topic === "string" && message.topic !== this.topic) {
+        this.topic = message.topic;
+        this.events.topic?.(this.topic);
+      }
+      this.startSessionStats();
       // 中途进房：把"电视亮没亮"一并接管（缺席 = 没在共享）。
       if (message.screenShare && !this.screenShareState) {
         this.screenShareState = message.screenShare;
@@ -2107,6 +2182,11 @@ export class VoiceMesh {
         this.callPeers();
         // 我是共享者时：名单变化（新人进圈/有人退）都要补齐画面直连（幂等）。
         if (this.screenShareState?.sharerId === this.myId) this.startScreenCalls();
+        // 房主铭牌公告随名册捎带（改动时会广播一次带 topic 的 roster）。
+        if (typeof message.topic === "string" && message.topic !== this.topic) {
+          this.topic = message.topic;
+          this.events.topic?.(this.topic);
+        }
         break;
       }
       case "peer-join": {

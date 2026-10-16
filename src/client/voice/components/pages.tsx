@@ -1,13 +1,16 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { Copy, Download, LogIn, Plus, Settings as SettingsIcon } from "lucide-react";
+import { Copy, Download, History, LogIn, Plus, Settings as SettingsIcon } from "lucide-react";
 import { getVersion } from "@tauri-apps/api/app";
 import { boardEntries } from "../changelog";
+import type { LastRoom, SessionSummary } from "../session-stats";
 
 import { AVATAR_COLORS, initials, type Identity } from "../identity";
 import { CODE_HINT, CODE_PLACEHOLDER, JOIN_PARSE_ERROR, JOIN_WAIT_HINT, ROOM_CODE_LEN } from "../protocol";
 import { saveIdentity } from "../identity";
 import { Avatar, Spinner, Toggle } from "./ui";
 import { PenFrame } from "./PigPen";
+import { HealthCheck } from "./HealthCheck";
+import type { VoiceSettings } from "../settings";
 import landingPigUrl from "../assets/landing-pig.gif?url";
 
 /** 由 ID 稳定推导一个颜色：同一个房间码每次都显示同一种颜色，便于口头对号。 */
@@ -41,6 +44,7 @@ export function LandingView({
   error = null,
   onCancelJoin,
   onDismissError,
+  lastRoom = null,
 }: {
   identity: Identity;
   onIdentityChange: (next: Identity) => void;
@@ -56,6 +60,8 @@ export function LandingView({
   error?: string | null;
   onCancelJoin?: () => void;
   onDismissError?: () => void;
+  /** 上次房间（本机记忆；null = 没有或不展示）。 */
+  lastRoom?: LastRoom | null;
 }) {
 
   /**
@@ -202,8 +208,22 @@ export function LandingView({
         <div className="vx-actions">
           {/*
             进房中禁用这两个按钮：重复点"加入"会再跑一次 joinRoom，
-            把 welcome 的 12 秒超时重置掉（等于自己把进房越拖越久）。
+            把 welcome 超时重置掉（等于自己把进房越拖越久）。
           */}
+          {lastRoom && !joining ? (
+            <button
+              type="button"
+              className="vx-btn vx-btn-ghost vx-last-room"
+              onClick={() => {
+                setParseError(null);
+                onDismissError?.();
+                onJoin(lastRoom.code);
+              }}
+              title="回到你上次的房间（房主在线才能进）"
+            >
+              <History size={18} /> 上次房间 {lastRoom.code} · 一键重进
+            </button>
+          ) : null}
           <button
             type="button"
             className="vx-btn vx-btn-primary"
@@ -393,6 +413,7 @@ export function ConfirmView({
   onJoin,
   onCancel,
   onSettings,
+  settings,
 }: {
   code: string;
   hostId: string;
@@ -402,6 +423,8 @@ export function ConfirmView({
   onJoin: (muted: boolean) => void;
   onCancel: () => void;
   onSettings: () => void;
+  /** 交给"一键体检"用（麦克风采集约束）。 */
+  settings: VoiceSettings;
 }) {
   const [muted, setMuted] = useState(true);
 
@@ -449,8 +472,70 @@ export function ConfirmView({
           </button>
         </div>
 
-        <button type="button" className="vx-link-btn" onClick={onSettings}>
-          先调整麦克风 / 昵称
+        <div className="vx-confirm-tools">
+          <HealthCheck settings={settings} triggerLabel="先检查设备" triggerClass="vx-link-btn" />
+          <button type="button" className="vx-link-btn" onClick={onSettings}>
+            先调整麦克风 / 昵称
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- 今晚小结
+
+function fmtDuration(ms: number): string {
+  const totalSec = Math.max(0, Math.round(ms / 1000));
+  const min = Math.floor(totalSec / 60);
+  const sec = totalSec % 60;
+  if (min === 0) return `${sec} 秒`;
+  return sec === 0 ? `${min} 分钟` : `${min} 分 ${sec} 秒`;
+}
+
+function fmtSpoken(seconds: number): string {
+  return seconds >= 60 ? `${Math.round(seconds / 60)} 分钟` : `${seconds} 秒`;
+}
+
+/**
+ * 房间结束后的"今晚小结"卡片。
+ * 数据来自本机 10 秒粒度的采样（session-stats.ts），只有时长/人次这类统计，
+ * 没有任何内容；谁说了多久房内本来就互相可见，趣味榜只是把它变得好看了点。
+ */
+export function SessionSummaryCard({
+  summary,
+  onClose,
+}: {
+  summary: SessionSummary;
+  onClose: () => void;
+}) {
+  const top = summary.speakers[0];
+  const quiet = summary.speakers.length >= 2 ? summary.speakers[summary.speakers.length - 1] : undefined;
+  const showTop = top && top.seconds >= 10;
+  const showQuiet = quiet && showTop && quiet.id !== top?.id;
+  return (
+    <div className="vx-overlay vx-summary-overlay" onClick={onClose}>
+      <div className="vx-overlay-card vx-summary-card" onClick={(event) => event.stopPropagation()}>
+        <b className="vx-summary-title">🌙 今晚小结</b>
+        <p className="vx-summary-line">
+          聊了 {fmtDuration(summary.endedAt - summary.startedAt)} · 最多 {summary.peakMembers}{" "}
+          人同圈 · 进出 {summary.totalJoins} 人次
+        </p>
+        {showTop ? (
+          <p className="vx-summary-line vx-summary-fun">
+            🏆 话痨王：<strong>{top.name}</strong>（说了 {fmtSpoken(top.seconds)}）
+          </p>
+        ) : null}
+        {showQuiet ? (
+          <p className="vx-summary-line vx-summary-fun">
+            🤫 最安静：<strong>{quiet.name}</strong>（只说了 {fmtSpoken(quiet.seconds)}）
+          </p>
+        ) : null}
+        {summary.peakMembers <= 1 ? (
+          <p className="vx-summary-line vx-summary-fun">🌱 下次多喊几个朋友来，更热闹</p>
+        ) : null}
+        <button type="button" className="vx-btn vx-btn-primary vx-btn-wide" onClick={onClose}>
+          回到首页
         </button>
       </div>
     </div>

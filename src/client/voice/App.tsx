@@ -4,7 +4,7 @@ import { preloadRnnoise } from "./engine";
 import { shouldShowOnboarding } from "./onboarding";
 import { isJoinInFlight } from "./protocol";
 import { useVoice } from "./use-voice";
-import { ConfirmView, LandingView } from "./components/pages";
+import { ConfirmView, LandingView, SessionSummaryCard } from "./components/pages";
 import { RoomView } from "./components/RoomView";
 import { FeedbackDialog } from "./components/FeedbackDialog";
 import { OnboardingDialog } from "./components/OnboardingDialog";
@@ -156,6 +156,7 @@ export function App() {
         onJoin={(muted) => void voice.joinRoom(voice.pending!, muted)}
         onCancel={voice.cancelJoin}
         onSettings={voice.openSettings}
+        settings={voice.settings}
       />
     );
   }
@@ -211,6 +212,8 @@ export function App() {
         onForceMute={voice.forceMute}
         onToggleLock={voice.toggleRoomLock}
         onInteract={voice.interact}
+        topic={voice.topic}
+        onSetTopic={voice.setRoomTopic}
         screenShare={voice.screenShare}
         shareStream={voice.shareStream}
         sharePc={voice.sharePc}
@@ -268,17 +271,22 @@ export function App() {
         error={voice.joinError}
         onCancelJoin={voice.cancelJoin}
         onDismissError={() => voice.setJoinError(null)}
+        lastRoom={voice.lastRoom}
       />
       {voice.ended ? (
-        <div className="vx-overlay">
-          <div className="vx-overlay-card">
-            <p>
-              {voice.ended.reason === "host-left"
-                ? "房主已离开，房间已结束"
-                : voice.ended.detail ?? "连接已结束"}
-            </p>
+        voice.lastSummary ? (
+          <SessionSummaryCard summary={voice.lastSummary} onClose={voice.dismissEnded} />
+        ) : (
+          <div className="vx-overlay">
+            <div className="vx-overlay-card">
+              <p>
+                {voice.ended.reason === "host-left"
+                  ? "房主已离开，房间已结束"
+                  : voice.ended.detail ?? "连接已结束"}
+              </p>
+            </div>
           </div>
-        </div>
+        )
       ) : null}
     </>
   );

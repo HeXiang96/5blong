@@ -20,6 +20,16 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.5.4",
+    date: "2026-10-16",
+    lines: [
+      "首页可一键回到上次房间",
+      "结束房间有今晚小结",
+      "新增一键体检：设备自查",
+      "房主可挂铭牌公告",
+    ],
+  },
+  {
     version: "1.5.3",
     date: "2026-10-16",
     lines: [

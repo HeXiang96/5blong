@@ -3100,3 +3100,146 @@ html[data-theme="light"][data-daypart="dusk"] .vx-settings {
   .vx-onboard-foot { gap: 8px; }
   .vx-onboard-hint { text-align: center; }
 }
+
+/* ------------------------------------------------ 一键回房（首页上次房间） */
+.vx-last-room {
+  width: 100%;
+  justify-content: center;
+}
+
+/* ------------------------------------------------ 房主铭牌公告 */
+.vx-topic {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 220px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  color: var(--vx-text-dim, inherit);
+  background: color-mix(in srgb, currentColor 8%, transparent);
+  cursor: default;
+  user-select: none;
+}
+span.vx-topic[role="button"] {
+  cursor: pointer;
+}
+.vx-topic-empty {
+  opacity: 0.55;
+  border: 1px dashed color-mix(in srgb, currentColor 30%, transparent);
+}
+.vx-topic-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.vx-topic-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  flex: none;
+}
+.vx-topic-clear:hover {
+  background: color-mix(in srgb, currentColor 15%, transparent);
+}
+.vx-topic-editing {
+  gap: 6px;
+  background: none;
+}
+.vx-topic-input {
+  width: 200px;
+  height: 26px;
+  font-size: 12px;
+  padding: 2px 8px;
+}
+
+/* ------------------------------------------------ 今晚小结 */
+.vx-summary-overlay {
+  z-index: 120;
+}
+.vx-summary-card {
+  max-width: 420px;
+  width: min(420px, calc(100vw - 40px));
+  text-align: center;
+}
+.vx-summary-title {
+  display: block;
+  font-size: 18px;
+  margin-bottom: 10px;
+}
+.vx-summary-line {
+  margin: 6px 0;
+  color: var(--vx-text-dim, inherit);
+}
+.vx-summary-fun {
+  font-size: 15px;
+}
+.vx-summary-fun strong {
+  color: var(--vx-text, inherit);
+}
+.vx-summary-card .vx-btn-wide {
+  margin-top: 14px;
+}
+
+/* ------------------------------------------------ 一键体检 */
+.vx-hc-modal {
+  max-width: 460px;
+}
+.vx-hc-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 10px 0;
+}
+.vx-hc-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: color-mix(in srgb, currentColor 5%, transparent);
+  text-align: left;
+}
+.vx-hc-icon {
+  display: inline-flex;
+  flex: none;
+}
+.vx-hc-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+.vx-hc-body small {
+  color: var(--vx-text-dim, inherit);
+  font-size: 12px;
+}
+.vx-hc-state {
+  font-style: normal;
+  margin-left: 6px;
+  font-weight: 700;
+}
+.vx-hc-ok .vx-hc-state {
+  color: #1a9e5c;
+}
+.vx-hc-warn .vx-hc-state {
+  color: #c98a12;
+}
+.vx-hc-fail .vx-hc-state {
+  color: #d64545;
+}
+.vx-hc-action {
+  flex: none;
+}
+.vx-confirm-tools {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}

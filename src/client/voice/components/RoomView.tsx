@@ -29,6 +29,7 @@ import {
   MessageSquare,
   Mic,
   MicOff,
+  Megaphone,
   MousePointer2,
   PartyPopper,
   PhoneOff,
@@ -141,6 +142,8 @@ export function RoomView({
   onForceMute,
   onToggleLock,
   onInteract,
+  topic,
+  onSetTopic,
   screenShare,
   shareStream,
   sharePc,
@@ -213,6 +216,10 @@ export function RoomView({
   onForceMute: (id: string, muted: boolean) => void;
   onToggleLock: () => void;
   onInteract: (peerId: string, personId: string, kind: InteractKind) => void;
+  /** 房主铭牌公告（全房可见；空串 = 没设）。 */
+  topic: string;
+  /** 房主修改公告（访客端不触发）。 */
+  onSetTopic: (text: string) => void;
   /** 屏幕共享状态（房主权威广播；null = 电视不在场）。 */
   screenShare: ScreenShareState | null;
   /** 电视正在播的画面流（观看端订阅 / 共享者本机采集）。 */
@@ -237,6 +244,9 @@ export function RoomView({
   const self = members.find((member) => member.local) ?? null;
   const muted = self?.muted ?? true;
   const [copied, setCopied] = useState<"code" | "invite" | null>(null);
+  /** 房主铭牌公告的行内编辑态。 */
+  const [topicEditing, setTopicEditing] = useState(false);
+  const [topicDraft, setTopicDraft] = useState("");
 
   // ------------------------------------------------------------ 围炉看 TV
 
@@ -704,6 +714,79 @@ export function RoomView({
                 {copied === "code" ? <Check size={12} /> : <CopyIcon size={12} />}
               </span>
             </button>
+          ) : null}
+
+          {/*
+            房主铭牌公告：房主可写一句话挂在铭牌上（全房可见，随 roster/welcome 捎带）。
+            访客只读；房主点击编辑，公告上的 × 只清空不改其它。
+          */}
+          {(topic || isHost) && !topicEditing ? (
+            <span
+              className={`vx-topic${topic ? "" : " vx-topic-empty"}`}
+              role={isHost ? "button" : undefined}
+              tabIndex={isHost ? 0 : undefined}
+              onClick={() => {
+                if (isHost) {
+                  setTopicDraft(topic);
+                  setTopicEditing(true);
+                }
+              }}
+              onKeyDown={(e) => {
+                if (isHost && (e.key === "Enter" || e.key === " ")) {
+                  setTopicDraft(topic);
+                  setTopicEditing(true);
+                }
+              }}
+              title={isHost ? "点击设置房间公告" : topic || undefined}
+            >
+              <Megaphone size={13} />
+              <span className="vx-topic-text">{topic || "设公告"}</span>
+              {isHost && topic ? (
+                <span
+                  className="vx-topic-clear"
+                  role="button"
+                  tabIndex={-1}
+                  aria-label="清除公告"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onSetTopic("");
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.stopPropagation();
+                      onSetTopic("");
+                    }
+                  }}
+                >
+                  <X size={11} />
+                </span>
+              ) : null}
+            </span>
+          ) : null}
+          {topicEditing ? (
+            <form
+              className="vx-topic vx-topic-editing"
+              onSubmit={(e) => {
+                e.preventDefault();
+                onSetTopic(topicDraft);
+                setTopicEditing(false);
+              }}
+            >
+              <input
+                className="vx-input vx-topic-input"
+                value={topicDraft}
+                autoFocus
+                maxLength={60}
+                placeholder="今晚聊什么（一句公告）"
+                onChange={(e) => setTopicDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") setTopicEditing(false);
+                }}
+              />
+              <button type="submit" className="vx-btn vx-btn-small vx-btn-primary">
+                好
+              </button>
+            </form>
           ) : null}
 
           <span className={`vx-sign-conn vx-conn-${status}`}>

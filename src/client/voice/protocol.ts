@@ -535,7 +535,7 @@ export type GuestMessage =
 
 /** 房主 → 访客。 */
 export type HostMessage =
-  | { t: "welcome"; code: string; hostId: string; proof: string; roster: WireMember[]; you: string; locked?: boolean; screenShare?: ScreenShareState }
+  | { t: "welcome"; code: string; hostId: string; proof: string; roster: WireMember[]; you: string; locked?: boolean; screenShare?: ScreenShareState; topic?: string }
   | { t: "reject"; reason: RejectReason }
   | { t: "kick"; id: string }
   | { t: "force-mute"; id: string; muted: boolean }
@@ -546,7 +546,7 @@ export type HostMessage =
   /** 转发给共享者的观众画质偏好（from = 提出偏好的成员 id）。 */
   | { t: "screen-pref"; from: string; mode: ScreenViewPreference }
   | { t: "chat"; id: string; name: string; text: string; ts: number }
-  | { t: "roster"; members: WireMember[] }
+  | { t: "roster"; members: WireMember[]; topic?: string }
   | { t: "peer-join"; member: WireMember }
   | { t: "peer-leave"; id: string }
   | { t: "speaking"; id: string; speaking: boolean }
@@ -681,6 +681,8 @@ export function parseHostMessage(data: unknown): HostMessage | null {
         you,
         roster: parseRoster(msg["roster"]),
         locked: msg["locked"] === true,
+        // 房主铭牌公告（向后兼容：缺席 = 没有公告）。
+        topic: str(msg["topic"], 60) || undefined,
         // 中途进房的人也要知道"电视亮没亮"（缺席 = 没在共享，向后兼容）。
         screenShare: msg["screenShare"] === undefined ? undefined : parseScreenShareState(msg["screenShare"]) ?? undefined,
       };
@@ -729,7 +731,7 @@ export function parseHostMessage(data: unknown): HostMessage | null {
       };
     }
     case "roster":
-      return { t: "roster", members: parseRoster(msg["members"]) };
+      return { t: "roster", members: parseRoster(msg["members"]), topic: str(msg["topic"], 60) || undefined };
     case "peer-join": {
       const member = parseMember(msg["member"]);
       return member ? { t: "peer-join", member } : null;

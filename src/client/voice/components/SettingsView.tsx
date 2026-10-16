@@ -19,6 +19,7 @@ import {
 } from "../devices";
 import { toAvatarDataUrl } from "../storage";
 import { Avatar, Toggle } from "./ui";
+import { HealthCheck } from "./HealthCheck";
 
 type Tab = "profile" | "audio" | "shortcuts" | "help";
 
@@ -508,6 +509,15 @@ export function SettingsView({
 
         {tab === "help" ? (
           <>
+            <section className="vx-card">
+              <h3 className="vx-card-title">一键体检</h3>
+              <small>
+                进房前先自查：麦克风有没有声、扬声器响不响、中转线路通不通。
+                哪一环亮 ✕ 一眼看清，不用再猜"到底是谁的问题"。
+              </small>
+              <HealthCheck settings={settings} triggerLabel="开始体检" triggerClass="vx-btn vx-btn-small" />
+            </section>
+
             <section className="vx-card">
               <h3 className="vx-card-title">功能介绍</h3>
               <small>
