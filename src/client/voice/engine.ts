@@ -839,6 +839,15 @@ export class VoiceMesh {
         t.members.set(key, stat);
       }
       stat.name = member.name;
+      /*
+       * 断线重连的成员：会话档是同一个 key，但 peerId 已经换新。
+       * 必须清掉上一段会话留下的"离开"标记并更新 peerId——否则面板会永远显示
+       * "已离开"、RTT 也不更新（2026-10-16 实测：访客重连后在后台档案一直显示已离开）。
+       */
+      if (stat.leftAt || stat.peerId !== member.id) {
+        stat.leftAt = null;
+        stat.peerId = member.id;
+      }
       if (!member.local) {
         const pc = this.calls.get(member.id)?.peerConnection ?? null;
         if (pc) {
