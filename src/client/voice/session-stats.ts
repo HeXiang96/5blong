@@ -28,8 +28,9 @@ export interface SessionSummary {
   totalJoins: number;
 }
 
-/** 采样间隔：与房间遥测一致（10 秒粗粒度足够"小结"这种趣味场景）。 */
-export const STATS_SAMPLE_SEC = 10;
+/** 采样间隔：2 秒。太粗会漏掉短会话（2026-10-16 业主反馈：说两句就退，小结全是 0 秒）；
+ *  2 秒粒度对"趣味小结"足够准，开销可忽略（每 2 秒遍历一次 ≤8 人名册）。 */
+export const STATS_SAMPLE_SEC = 2;
 
 export class SessionStatsRecorder {
   private startedAt = 0;
@@ -97,13 +98,19 @@ const LAST_ROOM_KEY = "5blong:v1:lastRoom";
 export interface LastRoom {
   code: string;
   savedAt: number;
+  /** 记录来源：只有 guest（加入别人的房）才展示"一键重进"——
+   *  房主自己关掉的房间不存在了，"重进"没有意义（2026-10-16 业主反馈）。 */
+  role?: "guest";
 }
 
-export function saveLastRoom(code: string): void {
+export function saveLastRoom(code: string, role: "guest"): void {
   const normalized = code.trim();
   if (!/^[0-9]{4}$/.test(normalized)) return;
   try {
-    localStorage.setItem(LAST_ROOM_KEY, JSON.stringify({ code: normalized, savedAt: Date.now() } satisfies LastRoom));
+    localStorage.setItem(
+      LAST_ROOM_KEY,
+      JSON.stringify({ code: normalized, savedAt: Date.now(), role } satisfies LastRoom),
+    );
   } catch {
     /* 隐私模式等存不进去就算了 */
   }
@@ -114,8 +121,10 @@ export function loadLastRoom(): LastRoom | null {
     const raw = localStorage.getItem(LAST_ROOM_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<LastRoom>;
-    if (typeof parsed?.code === "string" && /^[0-9]{4}$/.test(parsed.code)) {
-      return { code: parsed.code, savedAt: typeof parsed.savedAt === "number" ? parsed.savedAt : 0 };
+    // 旧记录没带 role（可能是自己开过的房），一律不展示。
+    if (parsed?.role !== "guest") return null;
+    if (typeof parsed.code === "string" && /^[0-9]{4}$/.test(parsed.code)) {
+      return { code: parsed.code, savedAt: typeof parsed.savedAt === "number" ? parsed.savedAt : 0, role: "guest" };
     }
   } catch {
     /* 坏数据当没有 */

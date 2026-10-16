@@ -73,7 +73,7 @@ import { bindSpeaker, openMic, resumeAudio } from "./devices";
 import { ensureIceServers, iceServers } from "./ice";
 import { latestChangelog } from "./changelog";
 import { isTauriRuntime } from "./loopback";
-import { SessionStatsRecorder, type SessionSummary } from "./session-stats";
+import { SessionStatsRecorder, STATS_SAMPLE_SEC, type SessionSummary } from "./session-stats";
 
 /*
  * ICE 配置已迁到 ./ice.ts（STUN 兜底 + 由服务端 /ice 签发 Cloudflare TURN 短期凭据）。
@@ -749,13 +749,13 @@ export class VoiceMesh {
   private statsTimer = 0;
   private lastSummary: SessionSummary | null = null;
 
-  /** 进房成功后启动：每 10 秒采样一次名册 + 说话状态，供"今晚小结"。 */
+  /** 进房成功后启动：每 2 秒采样一次名册 + 说话状态，供"今晚小结"（粒度粗了短会话全 0）。 */
   private startSessionStats(): void {
     if (this.statsTimer || this.destroyed) return;
     this.stats = new SessionStatsRecorder();
     this.stats.begin();
     this.sampleSessionStats();
-    this.statsTimer = this.timers.every(10_000, () => this.sampleSessionStats());
+    this.statsTimer = this.timers.every(STATS_SAMPLE_SEC * 1000, () => this.sampleSessionStats());
   }
 
   private sampleSessionStats(): void {

@@ -10,19 +10,7 @@
     "beforeBuildCommand": "npm run build:web:pages"
   },
   "app": {
-    "windows": [
-      {
-        "label": "main",
-        "title": "5blong",
-        "width": 1080,
-        "height": 760,
-        "minWidth": 820,
-        "minHeight": 600,
-        "resizable": true,
-        "center": true,
-        "fullscreen": false
-      }
-    ],
+    "windows": [],
     "security": {
       "csp": null
     }
