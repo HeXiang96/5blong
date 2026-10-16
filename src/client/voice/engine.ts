@@ -71,6 +71,8 @@ import type { AudioProcessing, VoiceSettings } from "./settings";
 import { MIC_VOLUME_MAX, PEER_VOLUME_MAX } from "./settings";
 import { bindSpeaker, openMic, resumeAudio } from "./devices";
 import { ensureIceServers, iceServers } from "./ice";
+import { latestChangelog } from "./changelog";
+import { isTauriRuntime } from "./loopback";
 
 /*
  * ICE 配置已迁到 ./ice.ts（STUN 兜底 + 由服务端 /ice 签发 Cloudflare TURN 短期凭据）。
@@ -516,6 +518,7 @@ export class VoiceMesh {
         this.emitMembers();
         this.events.status("connected");
         this.events.ready({ code, hostId: id, roomKey: this.roomKey });
+        this.startRoomTelemetry();
         return;
       }
 
@@ -692,9 +695,156 @@ export class VoiceMesh {
     this.send(this.hostConn, { t: "chat", text: trimmed });
   }
 
+  // ------------------------------------------------------------ 房间遥测（仅房主）
+
+  /** 房主进房后启动：每 ~10 秒把房间快照经信令 WebSocket 顺路上报。 */
+  private startRoomTelemetry(): void {
+    if (this.roomTelemetry || this.destroyed || !this.code) return;
+    this.roomTelemetry = {
+      sessionId: randomToken(12),
+      code: this.code,
+      createdAt: new Date().toISOString(),
+      members: new Map(),
+      events: [],
+      share: { active: false, totalS: 0, transport: "", last: "" },
+      timer: 0,
+    };
+    this.roomTelemetry.timer = this.timers.every(10_000, () => {
+      void this.sendRoomSnapshot();
+    });
+    void this.sendRoomSnapshot();
+  }
+
+  private stopRoomTelemetry(): void {
+    if (!this.roomTelemetry) return;
+    this.timers.cancel(this.roomTelemetry.timer);
+    this.roomTelemetry = null;
+  }
+
+  /** 记一条房间事件（进会话档案的异常流水）。 */
+  private pushRoomEvent(kind: string, detail: string): void {
+    const t = this.roomTelemetry;
+    if (!t) return;
+    t.events.push({ at: new Date().toISOString(), kind, detail: detail.slice(0, 180) });
+    if (t.events.length > 40) t.events.splice(0, t.events.length - 40);
+  }
+
+  /**
+   * 组装并上报一份房间快照。
+   * 成员的 RTT/抖动/丢包来自各自媒体连接的 getStats；说话时长按 10 秒粗粒度累计；
+   * 已离开的成员保留在成员表里（leftAt 标记），历史面板能看到完整进出。
+   */
+  private async sendRoomSnapshot(): Promise<void> {
+    const t = this.roomTelemetry;
+    const socket = (this.peer as unknown as { socket?: { send?: (m: unknown) => void } } | null)?.socket;
+    if (!t || !socket || typeof socket.send !== "function" || this.destroyed) return;
+    const nowIso = new Date().toISOString();
+
+    const seen = new Set<string>();
+    const membersPayload: unknown[] = [];
+    for (const member of this.members.values()) {
+      const key = member.sessionId || member.id;
+      seen.add(member.id);
+      let stat = t.members.get(key);
+      if (!stat) {
+        stat = {
+          peerId: member.id, name: member.name, joinedAt: nowIso, leftAt: null,
+          rttSum: 0, rttCount: 0, rttMax: 0, jitterMax: 0, lossPct: 0,
+          link: member.local ? "self" : "connecting", reconnects: 0, speakingS: 0,
+          runtime: isTauriRuntime() ? "client" : "web", version: latestChangelog()?.version ?? "",
+        };
+        t.members.set(key, stat);
+      }
+      stat.name = member.name;
+      if (!member.local) {
+        const pc = this.calls.get(member.id)?.peerConnection ?? null;
+        if (pc) {
+          try {
+            const stats = await pc.getStats();
+            let rttMs: number | null = null;
+            let jitterMs: number | null = null;
+            let lost = 0;
+            let received = 0;
+            stats.forEach((report) => {
+              if (report.type === "candidate-pair" && (report.state === "succeeded" || report.nominated)) {
+                const rtt = (report as RTCIceCandidatePairStats).currentRoundTripTime;
+                if (typeof rtt === "number") rttMs = Math.round(rtt * 1000);
+              }
+              if (report.type === "inbound-rtp" && report.kind === "audio") {
+                jitterMs = Math.round(((report as { jitter?: number }).jitter ?? 0) * 1000);
+                lost += (report as { packetsLost?: number }).packetsLost ?? 0;
+                received += (report as { packetsReceived?: number }).packetsReceived ?? 0;
+              }
+            });
+            if (typeof rttMs === "number") {
+              stat.rttSum += rttMs;
+              stat.rttCount += 1;
+              stat.rttMax = Math.max(stat.rttMax, rttMs);
+            }
+            if (typeof jitterMs === "number") stat.jitterMax = Math.max(stat.jitterMax, jitterMs);
+            if (received + lost > 0) stat.lossPct = Math.round((lost / (received + lost)) * 1000) / 10;
+          } catch {
+            /* getStats 不可用：跳过本成员本次采样 */
+          }
+        }
+        stat.link = this.roomLinkState.get(member.id) ?? stat.link;
+      } else {
+        stat.link = "self";
+      }
+      if (this.speaking.has(member.id)) stat.speakingS += 10;
+      membersPayload.push({
+        key, name: stat.name, joinedAt: stat.joinedAt, leftAt: stat.leftAt,
+        rttSum: stat.rttSum, rttCount: stat.rttCount, rttMax: stat.rttMax,
+        jitterMax: stat.jitterMax, lossPct: stat.lossPct, link: stat.link,
+        reconnects: stat.reconnects, speakingS: stat.speakingS,
+        runtime: stat.runtime, version: stat.version,
+      });
+    }
+    // 已离开的成员：标记离开时间（保留在快照里，历史面板能看到完整进出）
+    for (const stat of t.members.values()) {
+      if (!seen.has(stat.peerId) && !stat.leftAt) stat.leftAt = nowIso;
+    }
+    // 排除掉完全没进过房间的幽灵条目（理论上不会出现）
+    const departed = [...t.members.values()].filter((m) => m.leftAt && !seen.has(m.peerId));
+    for (const stat of departed) {
+      membersPayload.push({
+        key: stat.peerId, name: stat.name, joinedAt: stat.joinedAt, leftAt: stat.leftAt,
+        rttSum: stat.rttSum, rttCount: stat.rttCount, rttMax: stat.rttMax,
+        jitterMax: stat.jitterMax, lossPct: stat.lossPct, link: stat.link,
+        reconnects: stat.reconnects, speakingS: stat.speakingS,
+        runtime: stat.runtime, version: stat.version,
+      });
+    }
+
+    const share = this.getScreenShareState();
+    if (share) {
+      t.share.active = true;
+      t.share.transport = share.transport === "sfu" ? "SFU" : "P2P";
+      t.share.last = share.quality ?? "";
+    }
+
+    const payload = {
+      sessionId: t.sessionId,
+      code: t.code,
+      createdAt: t.createdAt,
+      runtime: isTauriRuntime() ? "client" : "web",
+      version: latestChangelog()?.version ?? "",
+      members: membersPayload.slice(0, 64),
+      events: t.events.slice(-20),
+      share: { active: t.share.active, totalS: t.share.totalS, transport: t.share.transport, last: t.share.last },
+    };
+    t.events = [];
+    try {
+      socket.send({ type: "ROOM-SNAPSHOT", payload });
+    } catch {
+      /* 发送失败静默：下一轮快照会补 */
+    }
+  }
+
   destroy(): void {
     if (this.destroyed) return;
     this.destroyed = true;
+    this.stopRoomTelemetry();
     stopPoseTickerFn();
 
     this.timers.clear();
@@ -2225,6 +2375,28 @@ export class VoiceMesh {
   /** 观众端：收到的画面呼叫 → 自愈解绑函数（呼叫对象作键，关闭时清理）。 */
   private viewerHeals = new WeakMap<MediaConnection, () => void>();
 
+  /**
+   * 房间遥测（仅房主）：会话档案 + 成员明细。
+   * 经信令 WebSocket 顺路上报（ROOM-SNAPSHOT，每 ~10 秒），由自建信令服务落历史档案。
+   * 口径：成员 = 匿名编号（sessionScopedId）+ 昵称（业主确认收集）；只有技术指标，无任何内容。
+   */
+  private roomTelemetry: {
+    sessionId: string;
+    code: string;
+    createdAt: string;
+    members: Map<string, {
+      peerId: string; name: string; joinedAt: string; leftAt: string | null;
+      rttSum: number; rttCount: number; rttMax: number;
+      jitterMax: number; lossPct: number; link: string;
+      reconnects: number; speakingS: number; runtime: string; version: string;
+    }>;
+    events: { at: string; kind: string; detail: string }[];
+    share: { active: boolean; totalS: number; transport: string; last: string };
+    timer: number;
+  } | null = null;
+  /** 每个成员最近的媒体链路状态（direct/relay/…），供遥测取"接入方式"。 */
+  private roomLinkState = new Map<string, string>();
+
   /** 开播确认后（自己就是共享者）：向所有成员发起画面直连（幂等）。 */
   private startScreenCalls(): void {
     if (!this.screenStream || this.destroyed) return;
@@ -2513,8 +2685,21 @@ export class VoiceMesh {
           } catch {
             /* noop */
           }
+          const link = relay ? "relay" : "direct";
+          const prev = this.roomLinkState.get(peerId);
+          if (prev === "failed" && this.roomTelemetry) {
+            // 掉线后恢复：计一次重连（网络不稳的信号）
+            const sessionIdKey = this.members.get(peerId)?.sessionId ?? "";
+            const stat = sessionIdKey ? this.roomTelemetry.members.get(sessionIdKey) : null;
+            if (stat) stat.reconnects += 1;
+            this.pushRoomEvent("reconnect", `成员链路恢复（曾失败）· ${link}`);
+          }
+          this.roomLinkState.set(peerId, link);
           this.events.mediaState(peerId, relay ? "relay" : "connected");
         } else if (ice === "failed") {
+          this.roomLinkState.set(peerId, "failed");
+          const name = this.members.get(peerId)?.name ?? "";
+          this.pushRoomEvent("error", `与成员「${name || peerId.slice(0, 6)}」的连接失败`);
           this.events.mediaState(peerId, "failed");
         } else if (ice === "disconnected" || ice === "checking" || ice === "new") {
           this.events.mediaState(peerId, "connecting");
@@ -2584,6 +2769,7 @@ export class VoiceMesh {
      * 表现就是"别人说话我听不见"。现在把失败上报给界面。
      */
     void element.play().catch((error) => {
+      this.pushRoomEvent("error", "浏览器拦截了自动播放（对方听不到声音的常见原因）");
       this.events.playbackBlocked(peerId, String(error?.message ?? error));
       void resumeAudio(this.ctx).then(() => element.play().catch(() => {}));
     });

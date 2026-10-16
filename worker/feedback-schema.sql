@@ -34,3 +34,54 @@ CREATE TABLE IF NOT EXISTS rooms (
 
 CREATE INDEX IF NOT EXISTS idx_rooms_seen ON rooms (last_seen DESC);
 CREATE INDEX IF NOT EXISTS idx_rooms_ip ON rooms (ip_hash, last_seen DESC);
+
+-- 房间会话档案（排障与运营统计）。
+-- 隐私口径：房间码明文（运营者自查用）；成员用匿名编号 + 昵称（业主确认收集）；
+-- IP 只存不可逆哈希；永不存聊天内容 / 麦克风 / 屏幕画面。历史默认保留 30 天。
+CREATE TABLE IF NOT EXISTS room_sessions (
+  id           TEXT PRIMARY KEY,        -- 会话 id（随机）
+  code         TEXT NOT NULL,           -- 房间码（明文）
+  created_at   TEXT NOT NULL,
+  ended_at     TEXT,                    -- NULL = 可能仍在进行（由兜底落库补齐）
+  duration_s   INTEGER,
+  peak_members INTEGER DEFAULT 1,
+  host_runtime TEXT,
+  host_version TEXT,
+  snapshot_json TEXT                    -- 最后一份快照（崩溃兜底 / 深度排障）
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_code ON room_sessions (code, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_sessions_created ON room_sessions (created_at DESC);
+
+CREATE TABLE IF NOT EXISTS room_members (
+  session_id  TEXT NOT NULL,
+  member_key  TEXT NOT NULL,            -- 匿名编号（同一人一场房内稳定）
+  name        TEXT,                     -- 昵称（业主确认收集）
+  joined_at   TEXT NOT NULL,
+  left_at     TEXT,
+  duration_s  INTEGER,
+  rtt_avg_ms  INTEGER,
+  rtt_max_ms  INTEGER,
+  jitter_avg_ms INTEGER,
+  loss_pct    REAL,
+  link        TEXT,                     -- lan | direct | relay
+  reconnects  INTEGER DEFAULT 0,
+  speaking_s  INTEGER DEFAULT 0,
+  runtime     TEXT,
+  version     TEXT,
+  PRIMARY KEY (session_id, member_key)
+);
+
+CREATE TABLE IF NOT EXISTS room_events (
+  session_id TEXT NOT NULL,
+  at         TEXT NOT NULL,
+  kind       TEXT NOT NULL,             -- share_start | share_end | error | reconnect
+  detail     TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_events_session ON room_events (session_id, at);
+
+CREATE TABLE IF NOT EXISTS room_samples (  -- 人数曲线采样（约每 5 分钟一点）
+  session_id TEXT NOT NULL,
+  at         TEXT NOT NULL,
+  members    INTEGER NOT NULL,
+  PRIMARY KEY (session_id, at)
+);

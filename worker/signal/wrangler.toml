@@ -12,6 +12,13 @@ compatibility_date = "2026-10-01"
 name = "SIGNAL_HUB"
 class_name = "SignalHub"
 
+# 房间遥测历史：直接写 D1（与反馈后台同一库）
+[[d1_databases]]
+binding = "DB"
+database_name = "5blong-feedback"
+database_id = "08696950-cbff-471f-a72a-99755e421380"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["SignalHub"]
+
