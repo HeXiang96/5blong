@@ -508,6 +508,8 @@ npm run feedback:admin list 20   # 终端查看最近反馈（url / list / rm �
 <!-- AUTO-LOG:START -->
 ### 近期提交（自动生成）
 
+- `4cd81d9` fix: set_var 需要 unsafe 块（Rust 2024 edition，CI 编译失败 E0133）+ 灯箱最大化与底部两行布局（10-16 22:04）
+- `28c1d4f` fix: 灯箱误点空白误关 + 音量记忆（10-16 21:59）
 - `e8de825` fix: WebView2 后台节流改走浏览器参数（backgroundThrottling 仅 macOS 支持）（10-16 21:50）
 - `9dfa97b` fix: 共享方切后台 1fps（WebView2 后台节流）+ 重连成员在后台档案永远显示已离开（10-16 21:35）
 - `f6c11d9` release: v1.5.4（10-16 21:32）
@@ -515,8 +517,6 @@ npm run feedback:admin list 20   # 终端查看最近反馈（url / list / rm �
 - `f63e999` feat: 一键回房 · 今晚小结 · 一键体检 · 房主铭牌公告（10-16 21:18）
 - `61d8753` release: v1.5.3（10-16 20:15）
 - `e03ce59` docs: 1.5.3 更新公告（10-16 20:15）
-- `7f94755` perf: 进房等待提速——welcome 单次超时 12s→7s（10-16 20:15）
-- `22cba0a` release: v1.5.2（10-16 20:01）
 <!-- AUTO-LOG:END -->
 
 ## 怎么用
