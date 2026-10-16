@@ -76,6 +76,9 @@ export default {
     if (url.pathname === "/rooms/summary") {
       return handleRoomsSummary(request, env);
     }
+    if (url.pathname === "/rooms/export") {
+      return handleRoomsExport(request, env);
+    }
 
     // 非 /sfu 请求 → 静态网页资源
     if (!/^\/sfu\/sessions?\//.test(url.pathname)) {
@@ -665,71 +668,164 @@ async function handleRooms(request, env) {
   if (request.method !== "GET") return new Response("method not allowed", { status: 405 });
   const guard = await requireAdminToken(request, env);
   if (guard.error) return guard.error;
+  const url = new URL(request.url);
+  const token = url.searchParams.get("token") ?? request.headers.get("x-admin-token") ?? "";
+  const code = (url.searchParams.get("code") ?? "").trim().slice(0, 16);
   try {
-    const rooms = await loadOnlineRooms(env);
-    return adminPage("在线房间", roomsPanelHtml(rooms), 200);
+    const [live, history] = await Promise.all([loadLiveRooms(env, token), loadHistory(env, code)]);
+    return adminPage("在线房间与历史", roomsPanelHtml(live, history, code, token), 200);
   } catch (error) {
     return adminPage("读取失败", `<p>${escapeHtml(String(error?.message ?? error))}</p>`, 500);
   }
 }
 
-async function handleRoomsSummary(request, env) {
+/** 在线房间：从自建信令服务的内存态读（实时、秒级）。 */
+async function loadLiveRooms(env, token) {
+  if (!env.SIGNAL) return [];
+  try {
+    const res = await env.SIGNAL.fetch("https://signal.internal/rooms-live", {
+      headers: { "x-admin-token": token },
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return Array.isArray(data?.rooms) ? data.rooms : [];
+  } catch {
+    return [];
+  }
+}
+
+/** 历史档案：会话 + 成员明细 + 事件 + 人数采样（支持按房间号搜索）。 */
+async function loadHistory(env, code) {
+  if (!env.DB) return { sessions: [], daily: [] };
+  await gcOldRoomSessions(env);
+  const sessions = code
+    ? (await env.DB.prepare("SELECT * FROM room_sessions WHERE code LIKE ? ORDER BY created_at DESC LIMIT 100").bind(`%${code}%`).all()).results ?? []
+    : (await env.DB.prepare("SELECT * FROM room_sessions ORDER BY created_at DESC LIMIT 100").all()).results ?? [];
+  for (const session of sessions) {
+    session.members = (await env.DB.prepare("SELECT * FROM room_members WHERE session_id = ? ORDER BY joined_at").bind(session.id).all()).results ?? [];
+    session.events = (await env.DB.prepare("SELECT at, kind, detail FROM room_events WHERE session_id = ? ORDER BY at DESC LIMIT 50").bind(session.id).all()).results ?? [];
+    session.samples = (await env.DB.prepare("SELECT at, members FROM room_samples WHERE session_id = ? ORDER BY at LIMIT 200").bind(session.id).all()).results ?? [];
+  }
+  const daily = (await env.DB.prepare(
+    "SELECT substr(created_at, 1, 10) AS day, COUNT(*) AS sessions, SUM(peak_members) AS peak_total " +
+      "FROM room_sessions GROUP BY day ORDER BY day DESC LIMIT 14",
+  ).all()).results ?? [];
+  return { sessions, daily };
+}
+
+/** 历史保留 30 天：面板打开时顺手清理（低频）。 */
+async function gcOldRoomSessions(env) {
+  const cutoff = new Date(Date.now() - 30 * 86_400_000).toISOString();
+  const stale = (await env.DB.prepare("SELECT id FROM room_sessions WHERE created_at < ? LIMIT 50").bind(cutoff).all()).results ?? [];
+  for (const row of stale) {
+    await env.DB.prepare("DELETE FROM room_members WHERE session_id = ?").bind(row.id).run();
+    await env.DB.prepare("DELETE FROM room_events WHERE session_id = ?").bind(row.id).run();
+    await env.DB.prepare("DELETE FROM room_samples WHERE session_id = ?").bind(row.id).run();
+    await env.DB.prepare("DELETE FROM room_sessions WHERE id = ?").bind(row.id).run();
+  }
+}
+
+/** 历史会话导出 CSV（留档/做表用）。 */
+async function handleRoomsExport(request, env) {
+  if (request.method !== "GET") return new Response("method not allowed", { status: 405 });
   const guard = await requireAdminToken(request, env);
   if (guard.error) return guard.error;
-  const rooms = await loadOnlineRooms(env);
-  return json(
-    {
-      online: rooms.length,
-      members: rooms.reduce((sum, room) => sum + (room.members ?? 0), 0),
-      sharing: rooms.filter((room) => room.sharing === 1).length,
-      rooms,
-    },
-    200,
-  );
+  if (!env.DB) return new Response("database not bound", { status: 503 });
+  const sessions = (await env.DB.prepare("SELECT * FROM room_sessions ORDER BY created_at DESC LIMIT 500").all()).results ?? [];
+  const lines = ["房间号,创建时间,结束时间,时长(秒),峰值人数,客户端,版本,会话id"];
+  for (const s of sessions) {
+    lines.push([s.code, s.created_at, s.ended_at ?? "", s.duration_s ?? "", s.peak_members ?? "", s.host_runtime ?? "", s.host_version ?? "", s.id]
+      .map((v) => `"${String(v).replace(/"/g, '""')}"`).join(","));
+  }
+  return new Response("\ufeff" + lines.join("\n"), {
+    headers: { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": 'attachment; filename="rooms.csv"' },
+  });
 }
 
-function relSeconds(iso) {
-  const then = Date.parse(iso);
-  if (!Number.isFinite(then)) return "-";
-  const seconds = Math.max(0, Math.round((Date.now() - then) / 1000));
-  if (seconds < 60) return `${seconds} 秒前`;
-  return `${Math.round(seconds / 60)} 分钟前`;
+function fmtDuration(seconds) {
+  const n = Number(seconds);
+  if (!Number.isFinite(n) || n < 0) return "-";
+  if (n < 60) return `${n} 秒`;
+  const m = Math.floor(n / 60);
+  if (m < 60) return `${m} 分钟`;
+  return `${Math.floor(m / 60)} 小时 ${m % 60} 分`;
 }
 
-function onlineMinutes(iso) {
-  const then = Date.parse(iso);
-  if (!Number.isFinite(then)) return "-";
-  const minutes = Math.max(0, Math.round((Date.now() - then) / 60000));
-  return minutes < 60 ? `${minutes} 分钟` : `${Math.floor(minutes / 60)} 小时 ${minutes % 60} 分`;
-}
+function roomsPanelHtml(live, history, code, token) {
+  const liveMembers = live.reduce((sum, room) => sum + (room.members ?? []).filter((m) => !m.leftAt).length, 0);
+  const sharing = live.reduce((sum, room) => sum + ((room.share?.active) ? 1 : 0), 0);
 
-function roomsPanelHtml(rooms) {
-  const members = rooms.reduce((sum, room) => sum + (room.members ?? 0), 0);
-  const sharing = rooms.filter((room) => room.sharing === 1).length;
-  const rows = rooms
-    .map((room) => {
-      const short = String(room.id).slice(0, 6);
-      return `<tr>
-  <td><code>${escapeHtml(short)}</code></td>
-  <td class="num">${room.members ?? 0}</td>
-  <td>${room.sharing === 1 ? '<span class="tag tag-live">共享中</span>' : "—"}</td>
-  <td>v${escapeHtml(room.version || "?")} · ${escapeHtml(room.runtime || "?")}</td>
-  <td>${escapeHtml(relSeconds(room.last_seen))}</td>
-  <td>${escapeHtml(onlineMinutes(room.created_at))}</td>
+  const liveCards = live.length === 0
+    ? '<p class="empty">现在没有房间在线。</p>'
+    : live.map((room) => {
+        const rows = (room.members ?? []).map((m) => {
+          const active = !m.leftAt;
+          const rtt = m.rttCount > 0 ? `${Math.round(m.rttSum / m.rttCount)}ms（峰值 ${m.rttMax}ms）` : "采样中…";
+          const linkText = m.link === "relay" ? "经中继" : m.link === "self" ? "房主本人" : m.link === "direct" ? "直连" : m.link || "—";
+          return `<tr>
+  <td><b>${escapeHtml(m.name || "-")}</b>${active ? "" : ' <span class="tag">已离开</span>'}</td>
+  <td class="num">${active ? "在房" : "—"}</td>
+  <td>${escapeHtml(relSeconds(m.joinedAt))}</td>
+  <td>${escapeHtml(m.leftAt ? relSeconds(m.leftAt) : "-")}</td>
+  <td class="num">${escapeHtml(rtt)}</td>
+  <td>${escapeHtml(linkText)}</td>
+  <td>抖动 ${escapeHtml(String(m.jitterMax || 0))}ms · 丢包 ${escapeHtml(String(m.lossPct || 0))}% · 重连 ${escapeHtml(String(m.reconnects || 0))} · 说话 ${fmtDuration(m.speakingS)}</td>
 </tr>`;
-    })
-    .join("\n");
+        }).join("");
+        return `<details class="room-card" open>
+  <summary><b>房间 ${escapeHtml(room.code)}</b> · ${room.runtime || "?"} v${escapeHtml(room.version || "?")} ·
+    ${fmtDuration(Math.round((Date.now() - Date.parse(room.createdAt)) / 1000))} · 当前 ${(room.members ?? []).filter((m) => !m.leftAt).length} 人</summary>
+  <table><thead><tr><th>成员</th><th>状态</th><th>加入</th><th>离开</th><th>延迟(RTT)</th><th>接入</th><th>其它</th></tr></thead><tbody>${rows}</tbody></table>
+</details>`;
+      }).join("");
+
+  const historyRows = history.sessions.map((s) => {
+    const memberRows = (s.members ?? []).map((m) => {
+      const rtt = m.rtt_avg_ms != null ? `${m.rtt_avg_ms}ms（峰值 ${m.rtt_max_ms ?? "-"}）` : "-";
+      const linkText = m.link === "relay" ? "经中继" : m.link === "direct" ? "公网直连" : m.link === "lan" ? "局域网" : m.link || "-";
+      return `<tr>
+  <td><b>${escapeHtml(m.name || "-")}</b> <code>${escapeHtml(String(m.member_key).slice(0, 8))}</code></td>
+  <td>${escapeHtml(formatLocalTime(m.joined_at))}</td>
+  <td>${escapeHtml(m.left_at ? formatLocalTime(m.left_at) : "未记录")}</td>
+  <td class="num">${fmtDuration(m.duration_s)}</td>
+  <td class="num">${escapeHtml(rtt)}</td>
+  <td>${escapeHtml(linkText)}</td>
+  <td>抖动 ${escapeHtml(String(m.jitter_avg_ms ?? 0))}ms · 丢包 ${escapeHtml(String(m.loss_pct ?? 0))}% · 重连 ${escapeHtml(String(m.reconnects ?? 0))} · 说话 ${fmtDuration(m.speaking_s)}</td>
+</tr>`;
+    }).join("");
+    const eventRows = (s.events ?? []).map((e) => `<div>· ${escapeHtml(formatLocalTime(e.at))} ${escapeHtml(e.kind)} — ${escapeHtml(e.detail || "")}</div>`).join("");
+    const curve = (s.samples ?? []).map((p) => `${formatLocalTime(p.at).slice(5)}: ${p.members}人`).join(" · ");
+    return `<details class="room-card">
+  <summary><b>房间 ${escapeHtml(s.code)}</b> · ${escapeHtml(formatLocalTime(s.created_at))} →
+    ${s.ended_at ? escapeHtml(formatLocalTime(s.ended_at)) : "<b>未正常结束</b>"} ·
+    ${fmtDuration(s.duration_s)} · 峰值 ${s.peak_members ?? "?"} 人 · 成员 ${s.members?.length ?? 0}</summary>
+  <table><thead><tr><th>成员</th><th>加入</th><th>离开</th><th>在房</th><th>延迟(RTT)</th><th>接入</th><th>其它</th></tr></thead><tbody>${memberRows}</tbody></table>
+  ${curve ? `<p class="summary">人数曲线：${escapeHtml(curve)}</p>` : ""}
+  ${eventRows ? `<p class="summary">事件：${eventRows}</p>` : ""}
+</details>`;
+  }).join("");
+
+  const dailyRows = history.daily.map((d) => `<span class="kv">${escapeHtml(d.day)}：${d.sessions} 场 · 峰值合计 ${d.peak_total ?? 0} 人</span>`).join(" · ");
+
   return `<div class="stats">
-  <div class="stat"><span class="big">${rooms.length}</span><span class="label">在线房间</span></div>
-  <div class="stat"><span class="big">${members}</span><span class="label">在线人数</span></div>
+  <div class="stat"><span class="big">${live.length}</span><span class="label">在线房间</span></div>
+  <div class="stat"><span class="big">${liveMembers}</span><span class="label">在线人数</span></div>
   <div class="stat"><span class="big">${sharing}</span><span class="label">正在共享屏幕</span></div>
 </div>
-<p class="summary">口径：房主每 60 秒报一次心跳，150 秒没动静即视为离线（关浏览器/断网也会自动消失）。只统计房间数、人数与是否共享，不收集任何聊天或个人内容。</p>
-${
-  rooms.length === 0
-    ? '<p class="empty">现在没有房间在线。</p>'
-    : `<table><thead><tr><th>房间</th><th>人数</th><th>状态</th><th>客户端</th><th>最后心跳</th><th>在线时长</th></tr></thead><tbody>${rows}</tbody></table>`
-}`;
+<form method="get" class="searchbar">
+  <input type="hidden" name="token" value="${escapeHtml(token)}" />
+  <input type="text" name="code" value="${escapeHtml(code)}" placeholder="按房间号搜索（如 7490）" />
+  <button type="submit" class="vx-btn vx-btn-small">搜索</button>
+  <a class="export" href="/rooms/export?token=${encodeURIComponent(token)}">导出 CSV</a>
+</form>
+<p class="summary">口径：在线 = 房主的信令连接还活着（断开即离线，秒级）；历史保留 30 天。
+成员显示匿名编号 + 昵称与<b>技术指标</b>（延迟/接入方式/重连/说话时长），永不采集聊天与媒体内容。</p>
+${liveCards ? `<h3 class="sec">在线房间（点开看成员明细）</h3>${liveCards}` : '<p class="empty">现在没有房间在线。</p>'}
+<h3 class="sec">每日汇总（近 14 天）</h3>
+<p class="summary">${dailyRows || "暂无数据"}</p>
+<h3 class="sec">历史房间 ${history.sessions.length ? `（${history.sessions.length} 场${code ? `，按“${escapeHtml(code)}”过滤` : ""}）` : ""}</h3>
+${historyRows || '<p class="empty">还没有历史房间（房主正常关房后，这里会出现完整档案）。</p>'}
+<p class="summary"><a class="export" href="/rooms/export?token=${encodeURIComponent(token)}">导出全部历史 CSV</a></p>`;
 }
 
 function formatLocalTime(iso) {

@@ -18,6 +18,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const WRANGLER_CONFIG = path.join(process.env.APPDATA ?? "", "xdg.config", ".wrangler", "config", "default.toml");
 const PROJECT_NAME = "5blong";
 const SIGNAL_SERVICE = "5blong-signal";
+const SECRETS_PATH = path.join(root, ".dev-secrets.json");
 
 const log = (step, msg) => process.stdout.write(`[${step}] ${msg}\n`);
 
@@ -78,6 +79,8 @@ async function main() {
   if (!account) throw new Error("凭据下没有可用账号");
 
   const project = await api(token, `/accounts/${account.id}/pages/projects/${PROJECT_NAME}`);
+  const secrets = existsSync(SECRETS_PATH) ? JSON.parse(readFileSync(SECRETS_PATH, "utf8")) : {};
+  if (!secrets.feedbackToken) throw new Error("找不到 feedbackToken：先跑 npm run feedback:setup");
   const patch = {};
   for (const envName of ["production", "preview"]) {
     const current = project?.deployment_configs?.[envName] ?? {};
@@ -85,6 +88,11 @@ async function main() {
       ...current,
       // Pages 的 service binding：绑定名 → 目标 Worker
       services: { ...(current.services ?? {}), SIGNAL: { service: SIGNAL_SERVICE } },
+      // 预览环境也要有令牌（否则预览站的面板会 501）
+      env_vars: {
+        ...(current.env_vars ?? {}),
+        FEEDBACK_TOKEN: { type: "secret_text", value: secrets.feedbackToken },
+      },
     };
   }
   await api(token, `/accounts/${account.id}/pages/projects/${PROJECT_NAME}`, {
@@ -92,6 +100,13 @@ async function main() {
     body: JSON.stringify({ deployment_configs: patch }),
   });
   log("pages", `已绑定 SIGNAL → ${SIGNAL_SERVICE}（生产 + 预览）`);
+
+  // 信令 Worker 需要同一把令牌来校验 /rooms-live 的访问（存成 Secret，不进仓库）
+  await api(token, `/accounts/${account.id}/workers/scripts/${SIGNAL_SERVICE}/secrets`, {
+    method: "PUT",
+    body: JSON.stringify({ name: "FEEDBACK_TOKEN", text: secrets.feedbackToken, type: "secret_text" }),
+  });
+  log("worker", `已写入 ${SIGNAL_SERVICE} 的 FEEDBACK_TOKEN Secret`);
 
   const after = await api(token, `/accounts/${account.id}/pages/projects/${PROJECT_NAME}`);
   const bound = after?.deployment_configs?.production?.services?.SIGNAL;
