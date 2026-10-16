@@ -989,8 +989,13 @@ export function useVoice() {
   }, [clearHash, resetRoom, teardown]);
 
   const leave = useCallback(() => {
+    // 房主/访客主动离开也要有"今晚小结"：必须在引擎销毁前取出统计。
+    const wasJoined = joinedRef.current;
+    const summary = wasJoined ? engineRef.current?.getSessionSummary() ?? null : null;
+    setLastSummary(summary);
     teardown();
     resetRoom();
+    setTopicState("");
     setPending(null);
     setNotice(null);
     setJoinError(null);

@@ -273,20 +273,18 @@ export function App() {
         onDismissError={() => voice.setJoinError(null)}
         lastRoom={voice.lastRoom}
       />
-      {voice.ended ? (
-        voice.lastSummary ? (
-          <SessionSummaryCard summary={voice.lastSummary} onClose={voice.dismissEnded} />
-        ) : (
-          <div className="vx-overlay">
-            <div className="vx-overlay-card">
-              <p>
-                {voice.ended.reason === "host-left"
-                  ? "房主已离开，房间已结束"
-                  : voice.ended.detail ?? "连接已结束"}
-              </p>
-            </div>
+      {voice.lastSummary ? (
+        <SessionSummaryCard summary={voice.lastSummary} onClose={voice.dismissEnded} />
+      ) : voice.ended ? (
+        <div className="vx-overlay">
+          <div className="vx-overlay-card">
+            <p>
+              {voice.ended.reason === "host-left"
+                ? "房主已离开，房间已结束"
+                : voice.ended.detail ?? "连接已结束"}
+            </p>
           </div>
-        )
+        </div>
       ) : null}
     </>
   );
