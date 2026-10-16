@@ -79,6 +79,9 @@ export default {
     if (url.pathname === "/rooms/export") {
       return handleRoomsExport(request, env);
     }
+    if (url.pathname === "/rooms/export") {
+      return handleRoomsExport(request, env);
+    }
 
     // 非 /sfu 请求 → 静态网页资源
     if (!/^\/sfu\/sessions?\//.test(url.pathname)) {
@@ -504,6 +507,43 @@ function adminPage(title, contentHtml, status) {
     body { padding: 14px; }
     .meta { margin-left: 0; width: 100%; }
   }
+  /* —— 运营后台（/rooms）—— */
+  .page-sub { color: #6b6257; font-size: 13px; margin: 0 0 16px; }
+  .sec-title { display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 700; margin: 24px 0 10px; }
+  .sec-title::before { content: ""; width: 4px; height: 16px; border-radius: 2px; background: #b07a34; }
+  .stat { gap: 4px; }
+  .stat .ico { width: 34px; height: 34px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 17px; margin-bottom: 4px; }
+  .ico-live { background: #e2f2e6; } .ico-people { background: #fdf0dc; } .ico-share { background: #e7ecf9; }
+  .searchbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 0 0 14px; }
+  .searchbar input[type=text] { flex: 0 1 280px; border: 1px solid #d6cfc2; border-radius: 999px; padding: 8px 16px; font-size: 13.5px; background: #fff; outline: none; }
+  .searchbar input[type=text]:focus { border-color: #b07a34; box-shadow: 0 0 0 3px rgba(176,122,52,.15); }
+  .btn-accent { background: #b07a34; border-color: #b07a34; color: #fff; font-weight: 600; border-radius: 999px; padding: 8px 18px; }
+  .btn-accent:hover { background: #9c692a; }
+  .export-btn { display: inline-flex; align-items: center; gap: 6px; border: 1px solid #d6cfc2; background: #fff; border-radius: 999px; padding: 8px 16px; font-size: 13px; color: #2b2620; text-decoration: none; }
+  .export-btn:hover { background: #faf8f4; }
+  details.room-card { background: #fff; border: 1px solid #e3ded4; border-radius: 14px; margin-bottom: 12px; overflow: hidden; }
+  details.room-card > summary { list-style: none; cursor: pointer; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 13px 16px; }
+  details.room-card > summary::-webkit-details-marker { display: none; }
+  details.room-card > summary:hover { background: #faf6ee; }
+  details.room-card.done { background: #fdfcf9; }
+  details.room-card.done .badge-code { background: #8a8175; }
+  .badge-code { background: #2b2620; color: #ffefd0; border-radius: 8px; padding: 3px 12px; font-weight: 700; font-size: 14px; letter-spacing: .06em; font-variant-numeric: tabular-nums; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .dot-on { background: #22a55c; box-shadow: 0 0 0 3px rgba(34,165,92,.18); }
+  .dot-off { background: #b3a894; }
+  .live-word { color: #22a55c; font-weight: 600; font-size: 13px; }
+  .room-meta { color: #6b6257; font-size: 12.5px; display: flex; flex-wrap: wrap; gap: 10px; }
+  .room-body { padding: 0 16px 14px; }
+  .chev { margin-left: auto; color: #8a8175; transition: transform .15s ease; font-size: 11px; }
+  details[open] > summary .chev { transform: rotate(90deg); }
+  .empty-box { background: #fff; border: 1px dashed #d6cfc2; border-radius: 14px; padding: 28px; text-align: center; color: #8a8175; font-size: 13.5px; }
+  .empty-emoji { font-size: 30px; margin-bottom: 6px; }
+  .empty-sub { color: #a89c8c; font-size: 12.5px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .tag-warn { background: #fdeaea; color: #b3403a; }
+  td.dim, .dim { color: #8a8175; font-size: 12.5px; }
+  .ev { color: #6b6257; font-size: 12.5px; }
+  .curve { color: #8a8175; font-size: 12.5px; }
 </style>
 </head>
 <body>
@@ -751,17 +791,33 @@ function fmtDuration(seconds) {
   return `${Math.floor(m / 60)} 小时 ${m % 60} 分`;
 }
 
+function relSeconds(iso) {
+  const then = Date.parse(iso);
+  if (!Number.isFinite(then)) return "-";
+  const seconds = Math.max(0, Math.round((Date.now() - then) / 1000));
+  if (seconds < 60) return `${seconds} 秒前`;
+  return `${Math.round(seconds / 60)} 分钟前`;
+}
+
+function onlineMinutes(iso) {
+  const then = Date.parse(iso);
+  if (!Number.isFinite(then)) return "-";
+  const minutes = Math.max(0, Math.round((Date.now() - then) / 60000));
+  return minutes < 60 ? `${minutes} 分钟` : `${Math.floor(minutes / 60)} 小时 ${minutes % 60} 分`;
+}
+
 function roomsPanelHtml(live, history, code, token) {
   const liveMembers = live.reduce((sum, room) => sum + (room.members ?? []).filter((m) => !m.leftAt).length, 0);
   const sharing = live.reduce((sum, room) => sum + ((room.share?.active) ? 1 : 0), 0);
 
   const liveCards = live.length === 0
-    ? '<p class="empty">现在没有房间在线。</p>'
+    ? '<div class="empty-box"><div class="empty-emoji">🐷</div>现在没有房间在线<br><span class="empty-sub">房主创建房间并进入后，这里会实时出现（秒级）</span></div>'
     : live.map((room) => {
         const rows = (room.members ?? []).map((m) => {
           const active = !m.leftAt;
-          const rtt = m.rttCount > 0 ? `${Math.round(m.rttSum / m.rttCount)}ms（峰值 ${m.rttMax}ms）` : "采样中…";
+          const rtt = m.link === "self" ? "—" : (m.rttCount > 0 ? `${Math.round(m.rttSum / m.rttCount)}ms（峰值 ${m.rttMax}ms）` : "采样中…");
           const linkText = m.link === "relay" ? "经中继" : m.link === "self" ? "房主本人" : m.link === "direct" ? "直连" : m.link || "—";
+          const extra = m.link === "self" ? "—" : `抖动 ${escapeHtml(String(m.jitterMax || 0))}ms · 丢包 ${escapeHtml(String(m.lossPct || 0))}% · 重连 ${escapeHtml(String(m.reconnects || 0))} · 说话 ${fmtDuration(m.speakingS)}`;
           return `<tr>
   <td><b>${escapeHtml(m.name || "-")}</b>${active ? "" : ' <span class="tag">已离开</span>'}</td>
   <td class="num">${active ? "在房" : "—"}</td>
@@ -769,20 +825,31 @@ function roomsPanelHtml(live, history, code, token) {
   <td>${escapeHtml(m.leftAt ? relSeconds(m.leftAt) : "-")}</td>
   <td class="num">${escapeHtml(rtt)}</td>
   <td>${escapeHtml(linkText)}</td>
-  <td>抖动 ${escapeHtml(String(m.jitterMax || 0))}ms · 丢包 ${escapeHtml(String(m.lossPct || 0))}% · 重连 ${escapeHtml(String(m.reconnects || 0))} · 说话 ${fmtDuration(m.speakingS)}</td>
+  <td class="dim">${extra}</td>
 </tr>`;
         }).join("");
-        return `<details class="room-card" open>
-  <summary><b>房间 ${escapeHtml(room.code)}</b> · ${room.runtime || "?"} v${escapeHtml(room.version || "?")} ·
-    ${fmtDuration(Math.round((Date.now() - Date.parse(room.createdAt)) / 1000))} · 当前 ${(room.members ?? []).filter((m) => !m.leftAt).length} 人</summary>
-  <table><thead><tr><th>成员</th><th>状态</th><th>加入</th><th>离开</th><th>延迟(RTT)</th><th>接入</th><th>其它</th></tr></thead><tbody>${rows}</tbody></table>
+        return `<details class="room-card live" open>
+  <summary>
+    <span class="badge-code">${escapeHtml(room.code)}</span>
+    <span class="dot dot-on"></span><span class="live-word">在线</span>
+    <span class="room-meta">${room.runtime === "client" ? "🖥 客户端" : "🌐 网页"} v${escapeHtml(room.version || "?")} · 已持续 ${fmtDuration(Math.round((Date.now() - Date.parse(room.createdAt)) / 1000))} · 当前 ${(room.members ?? []).filter((m) => !m.leftAt).length} 人</span>
+    <span class="chev">▶</span>
+  </summary>
+  <div class="room-body">
+    <table><thead><tr><th>成员</th><th>状态</th><th>加入</th><th>离开</th><th>延迟(RTT)</th><th>接入</th><th>其它</th></tr></thead><tbody>${rows}</tbody></table>
+  </div>
 </details>`;
       }).join("");
 
-  const historyRows = history.sessions.map((s) => {
+  // 闪断/刷新记录（<15 秒且峰值 ≤1）默认隐藏，避免刷屏
+  const flash = history.sessions.filter((s) => (s.duration_s ?? 0) < 15 && (s.peak_members ?? 0) <= 1);
+  const realSessions = history.sessions.filter((s) => !flash.includes(s));
+  const flashNote = flash.length ? `<p class="summary">另有 ${flash.length} 条刷新/秒开秒关产生的空记录未显示。</p>` : "";
+
+  const historyRows = realSessions.map((s) => {
     const memberRows = (s.members ?? []).map((m) => {
       const rtt = m.rtt_avg_ms != null ? `${m.rtt_avg_ms}ms（峰值 ${m.rtt_max_ms ?? "-"}）` : "-";
-      const linkText = m.link === "relay" ? "经中继" : m.link === "direct" ? "公网直连" : m.link === "lan" ? "局域网" : m.link || "-";
+      const linkText = m.link === "relay" ? "经中继" : m.link === "direct" ? "公网直连" : m.link === "lan" ? "局域网" : m.link === "self" ? "房主本人" : m.link || "-";
       return `<tr>
   <td><b>${escapeHtml(m.name || "-")}</b> <code>${escapeHtml(String(m.member_key).slice(0, 8))}</code></td>
   <td>${escapeHtml(formatLocalTime(m.joined_at))}</td>
@@ -790,42 +857,48 @@ function roomsPanelHtml(live, history, code, token) {
   <td class="num">${fmtDuration(m.duration_s)}</td>
   <td class="num">${escapeHtml(rtt)}</td>
   <td>${escapeHtml(linkText)}</td>
-  <td>抖动 ${escapeHtml(String(m.jitter_avg_ms ?? 0))}ms · 丢包 ${escapeHtml(String(m.loss_pct ?? 0))}% · 重连 ${escapeHtml(String(m.reconnects ?? 0))} · 说话 ${fmtDuration(m.speaking_s)}</td>
+  <td class="dim">抖动 ${escapeHtml(String(m.jitter_avg_ms ?? 0))}ms · 丢包 ${escapeHtml(String(m.loss_pct ?? 0))}% · 重连 ${escapeHtml(String(m.reconnects ?? 0))} · 说话 ${fmtDuration(m.speaking_s)}</td>
 </tr>`;
     }).join("");
-    const eventRows = (s.events ?? []).map((e) => `<div>· ${escapeHtml(formatLocalTime(e.at))} ${escapeHtml(e.kind)} — ${escapeHtml(e.detail || "")}</div>`).join("");
-    const curve = (s.samples ?? []).map((p) => `${formatLocalTime(p.at).slice(5)}: ${p.members}人`).join(" · ");
-    return `<details class="room-card">
-  <summary><b>房间 ${escapeHtml(s.code)}</b> · ${escapeHtml(formatLocalTime(s.created_at))} →
-    ${s.ended_at ? escapeHtml(formatLocalTime(s.ended_at)) : "<b>未正常结束</b>"} ·
-    ${fmtDuration(s.duration_s)} · 峰值 ${s.peak_members ?? "?"} 人 · 成员 ${s.members?.length ?? 0}</summary>
-  <table><thead><tr><th>成员</th><th>加入</th><th>离开</th><th>在房</th><th>延迟(RTT)</th><th>接入</th><th>其它</th></tr></thead><tbody>${memberRows}</tbody></table>
-  ${curve ? `<p class="summary">人数曲线：${escapeHtml(curve)}</p>` : ""}
-  ${eventRows ? `<p class="summary">事件：${eventRows}</p>` : ""}
+    const eventRows = (s.events ?? []).map((e) => `<div class="ev">· ${escapeHtml(formatLocalTime(e.at))} ${escapeHtml(e.kind)} — ${escapeHtml(e.detail || "")}</div>`).join("");
+    const curve = (s.samples ?? []).map((p) => `${formatLocalTime(p.at).slice(5, 16)} ${p.members}人`).join(" · ");
+    const endedBad = s.ended_at ? "" : ' <span class="tag tag-warn">未正常结束</span>';
+    return `<details class="room-card done">
+  <summary>
+    <span class="badge-code">${escapeHtml(s.code)}</span>
+    <span class="dot dot-off"></span>
+    <span class="room-meta">${escapeHtml(formatLocalTime(s.created_at))} → ${s.ended_at ? escapeHtml(formatLocalTime(s.ended_at)) : "进行中"} · ${fmtDuration(s.duration_s)} · 峰值 ${s.peak_members ?? "?"} 人 · 成员 ${s.members?.length ?? 0}${endedBad}</span>
+    <span class="chev">▶</span>
+  </summary>
+  <div class="room-body">
+    ${memberRows ? `<table><thead><tr><th>成员</th><th>加入</th><th>离开</th><th>在房</th><th>延迟(RTT)</th><th>接入</th><th>其它</th></tr></thead><tbody>${memberRows}</tbody></table>` : '<p class="summary">该会话没有成员记录（打开后很快关闭）。</p>'}
+    ${curve ? `<p class="summary curve">人数曲线：${escapeHtml(curve)}</p>` : ""}
+    ${eventRows ? `<p class="summary">事件流水：${eventRows}</p>` : ""}
+  </div>
 </details>`;
   }).join("");
 
-  const dailyRows = history.daily.map((d) => `<span class="kv">${escapeHtml(d.day)}：${d.sessions} 场 · 峰值合计 ${d.peak_total ?? 0} 人</span>`).join(" · ");
+  const dailyChips = history.daily.map((d) => `<span class="kv">${escapeHtml(d.day)} · ${d.sessions} 场 · 峰值合计 ${d.peak_total ?? 0} 人</span>`).join(" ");
 
-  return `<div class="stats">
-  <div class="stat"><span class="big">${live.length}</span><span class="label">在线房间</span></div>
-  <div class="stat"><span class="big">${liveMembers}</span><span class="label">在线人数</span></div>
-  <div class="stat"><span class="big">${sharing}</span><span class="label">正在共享屏幕</span></div>
+  return `<p class="page-sub">实时数据来自房主的信令连接（断开即离线，秒级）；历史档案保留 30 天。排障：让用户报<b>房间号 + 大概时间</b>，在下面搜索即可调出整段记录。</p>
+<div class="stats">
+  <div class="stat"><span class="ico ico-live">🏠</span><span class="big">${live.length}</span><span class="label">在线房间</span></div>
+  <div class="stat"><span class="ico ico-people">👥</span><span class="big">${liveMembers}</span><span class="label">在线人数</span></div>
+  <div class="stat"><span class="ico ico-share">📺</span><span class="big">${sharing}</span><span class="label">正在共享屏幕</span></div>
 </div>
 <form method="get" class="searchbar">
   <input type="hidden" name="token" value="${escapeHtml(token)}" />
-  <input type="text" name="code" value="${escapeHtml(code)}" placeholder="按房间号搜索（如 7490）" />
-  <button type="submit" class="vx-btn vx-btn-small">搜索</button>
-  <a class="export" href="/rooms/export?token=${encodeURIComponent(token)}">导出 CSV</a>
+  <input type="text" name="code" value="${escapeHtml(code)}" placeholder="按房间号搜索，如 7490" />
+  <button type="submit" class="vx-btn-small btn-accent">搜索</button>
+  <a class="export-btn" href="/rooms/export?token=${encodeURIComponent(token)}">⬇ 导出全部历史 CSV</a>
 </form>
-<p class="summary">口径：在线 = 房主的信令连接还活着（断开即离线，秒级）；历史保留 30 天。
-成员显示匿名编号 + 昵称与<b>技术指标</b>（延迟/接入方式/重连/说话时长），永不采集聊天与媒体内容。</p>
-${liveCards ? `<h3 class="sec">在线房间（点开看成员明细）</h3>${liveCards}` : '<p class="empty">现在没有房间在线。</p>'}
-<h3 class="sec">每日汇总（近 14 天）</h3>
-<p class="summary">${dailyRows || "暂无数据"}</p>
-<h3 class="sec">历史房间 ${history.sessions.length ? `（${history.sessions.length} 场${code ? `，按“${escapeHtml(code)}”过滤` : ""}）` : ""}</h3>
-${historyRows || '<p class="empty">还没有历史房间（房主正常关房后，这里会出现完整档案）。</p>'}
-<p class="summary"><a class="export" href="/rooms/export?token=${encodeURIComponent(token)}">导出全部历史 CSV</a></p>`;
+<div class="sec-title">在线房间（点开看成员明细）</div>
+${liveCards}
+<div class="sec-title">每日汇总（近 14 天）</div>
+<p class="chips">${dailyChips || '<span class="kv">暂无数据</span>'}</p>
+<div class="sec-title">历史房间（${realSessions.length} 场${code ? ` · 按房间号「${escapeHtml(code)}」过滤` : ""}）</div>
+${historyRows || '<div class="empty-box"><div class="empty-emoji">🗂️</div>还没有历史房间<br><span class="empty-sub">房主正常关房后，这里会出现完整档案（含每个成员的进出与网络质量）</span></div>'}
+<p class="summary"><a class="export-btn" href="/rooms/export?token=${encodeURIComponent(token)}">⬇ 导出全部历史 CSV</a></p>`;
 }
 
 function formatLocalTime(iso) {
