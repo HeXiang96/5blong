@@ -522,15 +522,14 @@ npm run feedback:admin list 20   # 终端查看最近反馈（url / list / rm �
 <!-- AUTO-LOG:START -->
 ### 近期提交（自动生成）
 
+- `c024b58` release: v1.5.6（10-16 22:48）
+- `85804c9` fix: WebView2 参数改走窗口 Builder（环境变量被 wry 的 API 参数覆盖，1.5.4/1.5.5 修复无效）（10-16 22:48）
 - `e9b11c2` release: v1.5.5（10-16 22:26）
 - `ef04757` feat: 开黑圈预告入口（首页按钮 + 木牌弹窗，5v5 自定义内战房 · 下个大版本上线）（10-16 22:26）
 - `4cd81d9` fix: set_var 需要 unsafe 块（Rust 2024 edition，CI 编译失败 E0133）+ 灯箱最大化与底部两行布局（10-16 22:04）
 - `28c1d4f` fix: 灯箱误点空白误关 + 音量记忆（10-16 21:59）
 - `e8de825` fix: WebView2 后台节流改走浏览器参数（backgroundThrottling 仅 macOS 支持）（10-16 21:50）
 - `9dfa97b` fix: 共享方切后台 1fps（WebView2 后台节流）+ 重连成员在后台档案永远显示已离开（10-16 21:35）
-- `f6c11d9` release: v1.5.4（10-16 21:32）
-- `143d0ae` fix: 房主主动结束房间也出今晚小结（10-16 21:31）
-- `f63e999` feat: 一键回房 · 今晚小结 · 一键体检 · 房主铭牌公告（10-16 21:18）
 <!-- AUTO-LOG:END -->
 
 ## 怎么用
