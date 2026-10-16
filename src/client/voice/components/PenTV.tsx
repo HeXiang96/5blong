@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
-import { Volume2, VolumeX, X } from "lucide-react";
+import { Maximize2, Minimize2, Volume2, VolumeX, X } from "lucide-react";
 
 import { FIRE_POS, PROJ_POS, SCREEN_POS, feetViewportPx } from "../pen";
 import type { ScreenShareState, ScreenViewPreference } from "../protocol";
@@ -20,9 +20,11 @@ const TV_AUDIO_KEY = "5blong:v1:tvAudio";
 interface TvAudio {
   volume: number;
   muted: boolean;
+  /** 灯箱最大化偏好（有人喜欢铺满整窗看）。 */
+  big?: boolean;
 }
 
-/** 读取上次的灯箱音量（没有记录 / 数据坏掉 → 默认开声、100%）。 */
+/** 读取上次的灯箱音量/最大化偏好（没有记录 / 数据坏掉 → 默认开声、100%、窗口化）。 */
 function loadTvAudio(): TvAudio {
   const stored = readJson<Partial<TvAudio>>(TV_AUDIO_KEY, {});
   return {
@@ -31,6 +33,7 @@ function loadTvAudio(): TvAudio {
         ? stored.volume
         : 1,
     muted: stored.muted === true,
+    big: stored.big === true,
   };
 }
 
@@ -303,9 +306,18 @@ export function PenTvLightbox({ state, stream, sharerName, pc, viewMode, onViewM
    */
   const [muted, setMuted] = useState(() => loadTvAudio().muted);
   const [volume, setVolume] = useState(() => loadTvAudio().volume);
+  /** 最大化：铺满整窗 + 尽量申请系统全屏（有人喜欢放最大看，偏好记住）。 */
+  const [big, setBig] = useState(() => loadTvAudio().big === true);
+  const rootRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
-    writeJson(TV_AUDIO_KEY, { volume, muted } satisfies TvAudio);
-  }, [volume, muted]);
+    writeJson(TV_AUDIO_KEY, { volume, muted, big } satisfies TvAudio);
+  }, [volume, muted, big]);
+  // 挂载即最大化（用户点幕布的手势链内申请全屏；被拒就只用 CSS 铺满）。
+  useEffect(() => {
+    if (!big) return;
+    void rootRef.current?.requestFullscreen?.().catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   /**
    * 实时链路数据（每 2s 刷新）：一眼看清卡在编码、传输还是解码。
    *
@@ -379,7 +391,10 @@ export function PenTvLightbox({ state, stream, sharerName, pc, viewMode, onViewM
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.key !== "Escape") return;
+      // 全屏中按 ESC：先让浏览器退全屏，这一次不关灯箱。
+      if (document.fullscreenElement) return;
+      onClose();
     };
     window.addEventListener("keydown", onKey);
     // 放大时暂停场景里的全部无限动画（火苗/雪花/光束…）：
@@ -391,12 +406,30 @@ export function PenTvLightbox({ state, stream, sharerName, pc, viewMode, onViewM
     };
   }, [onClose]);
 
+  /** 最大化 / 还原：CSS 铺满整窗，并尝试同步系统全屏（失败只影响全屏不影响铺满）。 */
+  const toggleBig = () => {
+    setBig((prev) => {
+      const next = !prev;
+      if (next) {
+        void rootRef.current?.requestFullscreen?.().catch(() => {});
+      } else if (document.fullscreenElement) {
+        void document.exitFullscreen().catch(() => {});
+      }
+      return next;
+    });
+  };
+
   return createPortal(
     /*
      * 背景**不再**点击关闭（2026-10-16 业主反馈：看共享时误点空白处，画面直接被关掉）。
      * 关闭只走两个明确入口：ESC / 右上角 ×。
      */
-    <div className="vx-tv-lightbox" role="dialog" aria-label="共享屏幕（放大）">
+    <div
+      ref={rootRef}
+      className={`vx-tv-lightbox${big ? " vx-tv-max" : ""}`}
+      role="dialog"
+      aria-label="共享屏幕（放大）"
+    >
       <div className="vx-tv-stagebig" onClick={(event) => event.stopPropagation()}>
         <header className="vx-tv-bighead">
           <span className="vx-tv-bigdot" />
@@ -411,6 +444,15 @@ export function PenTvLightbox({ state, stream, sharerName, pc, viewMode, onViewM
           <span className={`vx-tv-mode${state.transport === "sfu" ? " vx-tv-mode-sfu" : ""}`}>
             {state.transport === "sfu" ? "SFU 转发" : "P2P 直连"}
           </span>
+          <button
+            type="button"
+            className="vx-icon-btn"
+            onClick={toggleBig}
+            aria-label={big ? "退出最大化" : "最大化"}
+            title={big ? "还原窗口大小" : "铺满整窗（偏好会记住）"}
+          >
+            {big ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
+          </button>
           <button type="button" className="vx-icon-btn" onClick={onClose} aria-label="关闭放大画面">
             <X size={18} />
           </button>
@@ -426,18 +468,25 @@ export function PenTvLightbox({ state, stream, sharerName, pc, viewMode, onViewM
           )}
         </div>
         <footer className="vx-tv-bigfoot">
-          {stats ? (
-            <span className="vx-tv-stats" title="实时链路数据（每 2 秒刷新）">
-              {statsRole === "send" ? "[发送端] " : statsRole === "recv" ? "[接收端] " : ""}
-              {stats}
-            </span>
-          ) : null}
-          {/* 多档发布时把三层各自的码率摊开——"码率低在哪一层"一眼可见 */}
-          {layers ? (
-            <span className="vx-tv-layers" title="simulcast 各层读数（f 主层 / h 半档 / q 省流）">
-              三层：{layers}
-            </span>
-          ) : null}
+          {/*
+            底部拆两行：数据行（每 2 秒变长）独占一行且定高省略号，
+            控件行位置恒定——以前挤在同一排，数据一变按钮就来回跳（业主实拍"UI 来回变"）。
+          */}
+          <div className="vx-tv-statsline">
+            {stats ? (
+              <span className="vx-tv-stats" title="实时链路数据（每 2 秒刷新）">
+                {statsRole === "send" ? "[发送端] " : statsRole === "recv" ? "[接收端] " : ""}
+                {stats}
+              </span>
+            ) : null}
+            {/* 多档发布时把三层各自的码率摊开——"码率低在哪一层"一眼可见 */}
+            {layers ? (
+              <span className="vx-tv-layers" title="simulcast 各层读数（f 主层 / h 半档 / q 省流）">
+                三层：{layers}
+              </span>
+            ) : null}
+          </div>
+          <div className="vx-tv-controls">
           {stream ? (
             <>
               {/* 观众的画质开关：换来的是"发送端按你的偏好降档"（P2P）
@@ -513,6 +562,7 @@ export function PenTvLightbox({ state, stream, sharerName, pc, viewMode, onViewM
             </>
           ) : null}
           <span className="vx-tv-bighint">ESC 或右上角 × 关闭</span>
+          </div>
         </footer>
       </div>
     </div>,

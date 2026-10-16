@@ -264,13 +264,17 @@ pub fn run() {
      * **之前**设置（Tauri 配置里的 backgroundThrottling 在 Windows 上不支持，
      * 见 tauri.conf schema 的 Platform-specific 说明）。
      */
-    std::env::set_var(
-        "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
-        "--disable-features=CalculateNativeWinOcclusion \
-         --disable-backgrounding-occluded-windows \
-         --disable-background-timer-throttling \
-         --disable-renderer-backgrounding",
-    );
+    // SAFETY：此处仍在 main 线程、任何 WebView2 环境与子线程创建之前，
+    // 设置进程环境变量无并发风险（Rust 2024 edition 起 set_var 为 unsafe）。
+    unsafe {
+        std::env::set_var(
+            "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
+            "--disable-features=CalculateNativeWinOcclusion \
+             --disable-backgrounding-occluded-windows \
+             --disable-background-timer-throttling \
+             --disable-renderer-backgrounding",
+        );
+    }
     tauri::Builder::default()
         .manage(UpdaterState { pending: Mutex::new(None) })
         .manage(loopback::LoopbackState::default())
