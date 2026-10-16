@@ -416,6 +416,23 @@ export class VoiceMesh {
     string,
     { source: MediaStreamAudioSourceNode; gain: GainNode; limiter: DynamicsCompressorNode | null; dest: MediaStreamAudioDestinationNode }
   >();
+  /**
+   * 远端流的"泵"元素（静音、不出声）。
+   *
+   * ⚠️ 2026-10-16 全员无声事故的根因（Chromium 已知缺陷
+   * issues.chromium.org/40094084）：**远端** WebRTC 音频流若只接进 WebAudio
+   * （createMediaStreamSource→…→MediaStreamDestination→<audio>），而原始流
+   * 没有被任何 media element 消费，Chromium 就不会去"拉动"解码器——表现是
+   * RTP 包照常到达、getStats 里 energy=0、MediaStreamAudioSourceNode 读到的
+   * 全是零样本静音，于是**双向都听不到对方**。本地采集流没有这个问题，
+   * 所以发送链（麦克风）一直正常， receiving 链全军覆没。
+   *
+   * 修复＝把原始远端流同时挂到一个 muted 的 audio 元素上并 play()，
+   * 让浏览器的 WebRTCAudioRenderer 开始 pull；增益链照常出声，泵元素静音
+   * 不会重复出声（业界标准做法，Cacophony 等库同款）。
+   * 必须持有引用（Map），否则元素被 GC 后拉动又会停止。
+   */
+  private pumpEls = new Map<string, HTMLAudioElement>();
   private outDestNode: MediaStreamAudioDestinationNode | null = null;
   private nsEnabled = false;
 
@@ -2743,6 +2760,42 @@ export class VoiceMesh {
     }
   }
 
+  /**
+   * 把原始远端流挂到静音泵元素上（详见 pumpEls 注释）。
+   * 同一成员流重建时复用元素、只换 srcObject；play() 失败静默（unlockAudio 会重试）。
+   */
+  private primePeerAudio(peerId: string, stream: MediaStream): void {
+    try {
+      let pump = this.pumpEls.get(peerId);
+      if (!pump) {
+        pump = document.createElement("audio");
+        pump.muted = true;
+        pump.autoplay = true;
+        pump.dataset["pump"] = peerId;
+        document.body.appendChild(pump);
+        this.pumpEls.set(peerId, pump);
+      }
+      if (pump.srcObject !== stream) pump.srcObject = stream;
+      void pump.play().catch(() => {});
+    } catch {
+      /* 泵失败不影响主链路（Firefox 等本就不需要泵） */
+    }
+  }
+
+  /** 拆掉某个成员的泵元素（成员离开时）。 */
+  private dropPumpAudio(peerId: string): void {
+    const pump = this.pumpEls.get(peerId);
+    if (!pump) return;
+    this.pumpEls.delete(peerId);
+    try {
+      pump.pause();
+      pump.srcObject = null;
+      pump.remove();
+    } catch {
+      /* noop */
+    }
+  }
+
   private playStream(peerId: string, stream: MediaStream): void {
     let element = this.audio.get(peerId);
     if (!element) {
@@ -2759,6 +2812,8 @@ export class VoiceMesh {
        */
       this.bindElementSpeaker(element);
     }
+    // 必须在 WebAudio 增益链之前：先把原始流"泵"起来，解码器才会真正出样本
+    this.primePeerAudio(peerId, stream);
     this.routePeerAudio(peerId, stream, element);
     void resumeAudio(this.ctx);
     this.monitor(peerId, stream, false);
@@ -2797,6 +2852,7 @@ export class VoiceMesh {
       this.audio.delete(peerId);
       this.teardownPeerAudio(peerId);
     }
+    this.dropPumpAudio(peerId);
     const monitor = this.monitors.get(peerId);
     if (monitor) {
       this.monitors.delete(peerId);
