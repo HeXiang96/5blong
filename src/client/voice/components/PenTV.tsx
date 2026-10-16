@@ -4,6 +4,7 @@ import { Volume2, VolumeX, X } from "lucide-react";
 
 import { FIRE_POS, PROJ_POS, SCREEN_POS, feetViewportPx } from "../pen";
 import type { ScreenShareState, ScreenViewPreference } from "../protocol";
+import { readJson, writeJson } from "../storage";
 import {
   SHARE_QUALITY_PRESETS,
   formatScreenLayers,
@@ -11,6 +12,27 @@ import {
   summarizeScreenReport,
   type RateSample,
 } from "../screen-share";
+
+// ---------------------------------------------------------------- 灯箱音量记忆
+
+const TV_AUDIO_KEY = "5blong:v1:tvAudio";
+
+interface TvAudio {
+  volume: number;
+  muted: boolean;
+}
+
+/** 读取上次的灯箱音量（没有记录 / 数据坏掉 → 默认开声、100%）。 */
+function loadTvAudio(): TvAudio {
+  const stored = readJson<Partial<TvAudio>>(TV_AUDIO_KEY, {});
+  return {
+    volume:
+      typeof stored.volume === "number" && stored.volume >= 0 && stored.volume <= 1
+        ? stored.volume
+        : 1,
+    muted: stored.muted === true,
+  };
+}
 
 /**
  * 围炉看投影：坡上内嵌幕布（常驻）+ 投影仪（共享时从天而降）+ 光束 + 放大灯箱。
@@ -273,9 +295,17 @@ interface PenTvLightboxProps {
 /** 点击幕布弹出的放大层：16:9 大画面 + 来源标签 + 音量（共享带声音时）。 */
 export function PenTvLightbox({ state, stream, sharerName, pc, viewMode, onViewMode, isSharer, onClose }: PenTvLightboxProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  // 打开灯箱是用户点击手势，可以直接出声（默认开音量；场景里的小幕布保持静音防双声）
-  const [muted, setMuted] = useState(false);
-  const [volume, setVolume] = useState(1);
+  /*
+   * 音量/静音**持久化**：以前是组件内 state，关一次灯箱就丢——用户调好的音量
+   * 再打开又回到 100%（2026-10-16 业主反馈）。现在读写 localStorage（本机记忆）。
+   * 打开灯箱是用户点击手势，可以直接出声；首次使用默认开音量。
+   * 场景里的小幕布依旧保持静音防双声（与本记忆无关）。
+   */
+  const [muted, setMuted] = useState(() => loadTvAudio().muted);
+  const [volume, setVolume] = useState(() => loadTvAudio().volume);
+  useEffect(() => {
+    writeJson(TV_AUDIO_KEY, { volume, muted } satisfies TvAudio);
+  }, [volume, muted]);
   /**
    * 实时链路数据（每 2s 刷新）：一眼看清卡在编码、传输还是解码。
    *
@@ -362,7 +392,11 @@ export function PenTvLightbox({ state, stream, sharerName, pc, viewMode, onViewM
   }, [onClose]);
 
   return createPortal(
-    <div className="vx-tv-lightbox" onClick={onClose} role="dialog" aria-label="共享屏幕（放大）">
+    /*
+     * 背景**不再**点击关闭（2026-10-16 业主反馈：看共享时误点空白处，画面直接被关掉）。
+     * 关闭只走两个明确入口：ESC / 右上角 ×。
+     */
+    <div className="vx-tv-lightbox" role="dialog" aria-label="共享屏幕（放大）">
       <div className="vx-tv-stagebig" onClick={(event) => event.stopPropagation()}>
         <header className="vx-tv-bighead">
           <span className="vx-tv-bigdot" />
@@ -478,7 +512,7 @@ export function PenTvLightbox({ state, stream, sharerName, pc, viewMode, onViewM
               </div>
             </>
           ) : null}
-          <span className="vx-tv-bighint">ESC 或点击空白处关闭</span>
+          <span className="vx-tv-bighint">ESC 或右上角 × 关闭</span>
         </footer>
       </div>
     </div>,
