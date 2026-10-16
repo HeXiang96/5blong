@@ -20,6 +20,15 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.5.6",
+    date: "2026-10-16",
+    lines: [
+      "修：共享切后台掉帧真修好了",
+      "一键重进只记加入的房",
+      "小结说话时长更准",
+    ],
+  },
+  {
     version: "1.5.5",
     date: "2026-10-16",
     lines: [

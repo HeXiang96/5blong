@@ -1,6 +1,11 @@
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
-import { SessionStatsRecorder, loadLastRoom, saveLastRoom } from "../src/client/voice/session-stats";
+import {
+  SessionStatsRecorder,
+  STATS_SAMPLE_SEC,
+  loadLastRoom,
+  saveLastRoom,
+} from "../src/client/voice/session-stats";
 
 // vitest 跑在 node 环境，没有 localStorage：按 onboarding.test.ts 的同款方式补一个。
 beforeAll(() => {
@@ -27,13 +32,13 @@ describe("SessionStatsRecorder（今晚小结）", () => {
       { id: "b", name: "乙" },
       { id: "c", name: "丙" },
     ];
-    // 甲说 3 拍、乙说 1 拍、丙没说
+    // 甲说 3 拍、乙说 1 拍、丙没说（每拍 = STATS_SAMPLE_SEC 秒）
     rec.observe(members, new Set(["a"]));
     rec.observe(members, new Set(["a", "b"]));
     rec.observe(members, new Set(["a"]));
     const s = rec.finish()!;
-    expect(s.speakers[0]).toMatchObject({ id: "a", name: "甲", seconds: 30 });
-    expect(s.speakers[1]).toMatchObject({ id: "b", name: "乙", seconds: 10 });
+    expect(s.speakers[0]).toMatchObject({ id: "a", name: "甲", seconds: STATS_SAMPLE_SEC * 3 });
+    expect(s.speakers[1]).toMatchObject({ id: "b", name: "乙", seconds: STATS_SAMPLE_SEC });
     expect(s.speakers[2]).toMatchObject({ id: "c", name: "丙", seconds: 0 });
   });
 
@@ -83,11 +88,20 @@ describe("SessionStatsRecorder（今晚小结）", () => {
 
 describe("上次房间记忆", () => {
   it("只认 4 位数字的房间码", () => {
-    saveLastRoom("abcd");
+    saveLastRoom("abcd", "guest");
     expect(loadLastRoom()).toBeNull();
-    saveLastRoom("8294");
+    saveLastRoom("8294", "guest");
     expect(loadLastRoom()?.code).toBe("8294");
-    saveLastRoom("123");
+    saveLastRoom("123", "guest");
     expect(loadLastRoom()?.code).toBe("8294");
+  });
+
+  it("只展示访客身份的记录（房主自己的房不显示一键重进）", () => {
+    localStorage.removeItem("5blong:v1:lastRoom");
+    // 模拟旧版记录：没带 role（可能是房主自己开的房）
+    localStorage.setItem("5blong:v1:lastRoom", JSON.stringify({ code: "7001", savedAt: 1 }));
+    expect(loadLastRoom()).toBeNull();
+    saveLastRoom("7002", "guest");
+    expect(loadLastRoom()?.role).toBe("guest");
   });
 });

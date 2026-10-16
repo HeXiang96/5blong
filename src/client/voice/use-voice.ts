@@ -261,11 +261,7 @@ export function useVoice() {
         if (!message.self && !chatOpenRef.current) setUnread((value) => value + 1);
       },
       ended: (reason, detail) => setEnded({ reason, detail }),
-      ready: (invite) => {
-        setInvite(invite);
-        // 房主视角：建房成功就记住房间码（访客在 joinRoom 里记）。
-        saveLastRoom(invite.code);
-      },
+      ready: setInvite,
       topic: (text) => setTopicState(text),
       pen: (event) => {
         const now = Date.now();
@@ -925,8 +921,9 @@ export function useVoice() {
       setTopicState("");
       setNotice(null);
       setJoinError(null);
-      // 访客视角也记住房间码：下次首页可以"一键重进"（房主视角在 ready 事件里记）。
-      saveLastRoom(target.code);
+      // 只有"加入别人的房间"才记一键重进；自己开过的房关了就没了，记了反而误导
+      // （2026-10-16 业主反馈：创完房退出还显示"上次房间"干嘛）。
+      saveLastRoom(target.code, "guest");
       const engine = startEngine();
       // 注意：这里不能靠 await join() 的返回来切页。
       // 引擎在收到房主欢迎的那一刻就已经算进房（status → connected → joined），

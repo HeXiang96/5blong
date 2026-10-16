@@ -258,23 +258,19 @@ fn grant_webview2_permissions(app: &tauri::AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     /*
-     * 共享方切后台不掉帧（2026-10-16：最小化客户端后观众掉到 1fps/78kbps）。
-     * WebView2 默认对"不可见"的窗口做 Occlusion 判定并节流渲染/定时器——
-     * 共享屏幕时客户端常驻后台，必须关掉这组节流。须在 WebView2 环境创建
-     * **之前**设置（Tauri 配置里的 backgroundThrottling 在 Windows 上不支持，
-     * 见 tauri.conf schema 的 Platform-specific 说明）。
+     * 共享方切后台不掉帧（2026-10-16：最小化客户端后观众掉到 1fps）。
+     * WebView2 默认对"不可见"的窗口做 Occlusion 判定并节流渲染/定时器。
+     *
+     * ⚠️ 传参必须走 additional_browser_args（API 参数）——之前用
+     * WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS 环境变量注入是**无效**的：
+     * wry 总是显式调用 CreateCoreWebView2EnvironmentWithOptions，
+     * 而 WebView2 规则是 API 参数**覆盖**该环境变量（实测 1.5.4/1.5.5 未生效）。
+     * 显式传参会替换 wry 默认参数串，所以必须把 wry 默认的三项合并进来。
      */
-    // SAFETY：此处仍在 main 线程、任何 WebView2 环境与子线程创建之前，
-    // 设置进程环境变量无并发风险（Rust 2024 edition 起 set_var 为 unsafe）。
-    unsafe {
-        std::env::set_var(
-            "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
-            "--disable-features=CalculateNativeWinOcclusion \
-             --disable-backgrounding-occluded-windows \
-             --disable-background-timer-throttling \
-             --disable-renderer-backgrounding",
-        );
-    }
+    let browser_args = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,CalculateNativeWinOcclusion \
+         --disable-backgrounding-occluded-windows \
+         --disable-background-timer-throttling \
+         --disable-renderer-backgrounding";
     tauri::Builder::default()
         .manage(UpdaterState { pending: Mutex::new(None) })
         .manage(loopback::LoopbackState::default())
@@ -299,6 +295,17 @@ pub fn run() {
                         .build(),
                 )?;
             }
+
+            // ---- 主窗口：改用 Builder 创建（窗口参数原在 tauri.conf.json），
+            //      以便通过 additional_browser_args 传入防后台节流参数（见 run() 顶部说明）----
+            tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::default())
+                .title("5blong")
+                .inner_size(1080.0, 760.0)
+                .min_inner_size(820.0, 600.0)
+                .resizable(true)
+                .center()
+                .additional_browser_args(browser_args)
+                .build()?;
 
             // ---- 托盘 ----
             let show_item = MenuItem::with_id(app, "show", "显示 5blong", true, None::<&str>)?;
