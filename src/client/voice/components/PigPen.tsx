@@ -164,6 +164,7 @@ export function PenFrame({ width: _width = 0 }: { width?: number }) {
         </span>
         <span className="vx-bat vx-bat-1" />
         <span className="vx-bat vx-bat-2" />
+        <span className="vx-bat vx-bat-3" />
         <span className="vx-halloween-fog" />
       </div>
     </div>
