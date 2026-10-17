@@ -167,6 +167,15 @@ function proxyPeerJs(url, request, env) {
   return fetch(upstream.toString(), request);
 }
 
+const CN_TIME = new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+function cnTime(at) {
+  try {
+    return CN_TIME.format(new Date(at));
+  } catch {
+    return String(at);
+  }
+}
+
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
@@ -1025,10 +1034,12 @@ async function handleGameVerify(request, env) {
   const [expiresAt, code, sig] = parts;
   const expect = await hmacHex(secret, `game:${expiresAt}:${code}`);
   if (sig !== expect || Number(expiresAt) < Date.now()) return json({ error: "invalid" }, 403);
-  const row = await env.DB.prepare("SELECT uses_left, expires_at, revoked FROM game_codes WHERE code = ?")
+  // 注意：uses_left 只约束"激活次数"（entitle 时扣），不影响已激活令牌的后续校验。
+  // 吊销/过期才是校验时要拦的。
+  const row = await env.DB.prepare("SELECT expires_at, revoked FROM game_codes WHERE code = ?")
     .bind(code)
     .first();
-  if (!row || row.revoked || row.uses_left <= 0 || row.expires_at < Date.now()) {
+  if (!row || row.revoked || row.expires_at < Date.now()) {
     return json({ error: "revoked" }, 403);
   }
   return json({ ok: true });
@@ -1059,6 +1070,8 @@ async function handleGameAdmin(request, env) {
     return adminPage("开黑圈运营 · 无权访问", "<p>令牌无效或已被吊销。</p>", 401);
   }
   const flash = [];
+  const urlFlash = url.searchParams.get("flash");
+  if (urlFlash) flash.push(urlFlash);
   if (request.method === "POST") {
     const form = await request.formData();
     const action = String(form.get("action") ?? "");
@@ -1100,8 +1113,12 @@ async function handleGameAdmin(request, env) {
     if (action === "revoke_staff" && who.role === "main") {
       const id = String(form.get("id") ?? "");
       await env.DB.prepare("UPDATE staff_tokens SET revoked = 1 WHERE id = ?").bind(id).run();
-      flash.push("员工令牌已吊销");
     }
+    // PRG：POST 处理完 302 回本页（提示随参数带回），刷新永远不会重复提交（业主实测踩坑）
+    return new Response(null, {
+      status: 302,
+      headers: { location: url.pathname + "?staff=" + encodeURIComponent(url.searchParams.get("staff") ?? "") + "&flash=" + encodeURIComponent(flash.join("<br/>")) },
+    });
   }
 
   const codes = (await env.DB.prepare("SELECT * FROM game_codes ORDER BY created_at DESC LIMIT 30").all()).results ?? [];
@@ -1113,7 +1130,7 @@ async function handleGameAdmin(request, env) {
   const codeRows = codes
     .map(
       (row) => `<tr><td><code>${row.code}</code></td><td>${row.note ?? ""}</td><td>${row.uses_left}</td>
-      <td>${new Date(row.expires_at).toLocaleDateString("zh-CN")}</td>
+      <td>${cnTime(row.expires_at).slice(0, 10)}</td>
       <td>${row.revoked ? "已吊销" : "有效"}</td>
       <td><form method="post" style="display:inline"><input type="hidden" name="action" value="revoke_code"/>
         <input type="hidden" name="code" value="${row.code}"/><button type="submit">吊销</button></form></td></tr>`,
@@ -1121,14 +1138,14 @@ async function handleGameAdmin(request, env) {
     .join("");
   const staffRows = staff
     .map(
-      (row) => `<tr><td>${row.name}</td><td>${row.scope}</td><td>${new Date(row.expires_at).toLocaleDateString("zh-CN")}</td>
+      (row) => `<tr><td>${row.name}</td><td>${row.scope}</td><td>${cnTime(row.expires_at).slice(0, 10)}</td>
       <td>${row.revoked ? "已吊销" : "有效"}</td>
       <td><form method="post" style="display:inline"><input type="hidden" name="action" value="revoke_staff"/>
         <input type="hidden" name="id" value="${row.id}"/><button type="submit">吊销</button></form></td></tr>`,
     )
     .join("");
   const auditRows = audit
-    .map((row) => `<tr><td>${new Date(row.at).toLocaleString("zh-CN")}</td><td>${row.actor}</td><td>${row.action}</td><td>${row.detail ?? ""}</td></tr>`)
+    .map((row) => `<tr><td>${cnTime(row.at)}</td><td>${row.actor}</td><td>${row.action}</td><td>${row.detail ?? ""}</td></tr>`)
     .join("");
 
   const html = `

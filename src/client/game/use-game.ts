@@ -55,14 +55,8 @@ export async function activateEntitlement(code: string): Promise<GameEntitlement
    * 让预览站也能完整验收开黑圈。正式站部署后会走真实校验（403 拦截）。
    */
   if (!response.ok) {
-    /*
-     * 预览分支（非生产域名）还没有权限数据时给"试用令牌"，方便业主验收开黑圈；
-     * 生产域名严格按 Worker 结果走（403 就是无效码，不放行）。
-     */
-    if (window.location.hostname !== "5blong.pages.dev") {
-      const trial = { token: `trial:${Date.now()}`, expiresAt: Date.now() + 7 * 86_400_000 };
-      saveEntitlement(trial);
-      return trial;
+    if (response.status === 404 || response.status === 501) {
+      throw new Error("权限服务未就绪，请稍后再试");
     }
     throw new Error(response.status === 403 ? "创建码无效或已过期" : "校验失败，请稍后重试");
   }
