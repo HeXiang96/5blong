@@ -173,6 +173,14 @@ export class GameMesh {
         const message = raw as HostToGuest;
         if (message?.t === "gwelcome") {
           this.applyWelcome(message);
+          // 访客也要触发 ready：房间视图靠它从落地页切进来（此前只建房才发，访客卡在弹窗）
+          this.events.ready({
+            code: message.code,
+            hostId: message.hostId,
+            roomKey: "",
+            title: message.title ?? "",
+            map: message.map ?? "",
+          });
           window.clearTimeout(timer);
           this.timers.delete(timer);
           settle(null);
@@ -465,6 +473,8 @@ export class GameMesh {
         members: this.serializeMembers(guestId),
         scores: this.scores,
         you: guestId,
+        title: this.title,
+        map: this.map,
       });
       this.broadcastRoster();
       this.emitRoster();
