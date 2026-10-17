@@ -18,6 +18,20 @@ import {
 } from "./game-types";
 import { readJson, writeJson } from "../voice/storage";
 
+/*
+ * 接口基址：桌面端前端由本地协议（tauri.localhost）提供，**没有同域服务端**，
+ * 相对路径会打到本地资产上（返回 HTML → "Unexpected token '<'"）。
+ * 与语音房的 /ice 同款口径：桌面端走公网主域名，网页端保持相对路径。
+ */
+const API_BASE = (() => {
+  if (import.meta.env.DEV) return "";
+  const host = typeof location !== "undefined" ? location.hostname : "";
+  if (host === "tauri.localhost" || host.endsWith(".tauri.localhost")) {
+    return "https://5blong.pages.dev";
+  }
+  return "";
+})();
+
 const TUTORIAL_KEY = "5blong:v1:gameTutorialSeen";
 const MIC_BOOST_KEY = "5blong:v1:gameMicBoost";
 const NS_KEY = "5blong:v1:gameNs";
@@ -45,7 +59,7 @@ export function saveEntitlement(value: GameEntitlement): void {
 export async function activateEntitlement(code: string): Promise<GameEntitlement> {
   let response: Response;
   try {
-    response = await fetch("/game/entitle", {
+    response = await fetch(`${API_BASE}/game/entitle`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ code: code.trim() }),
@@ -63,7 +77,12 @@ export async function activateEntitlement(code: string): Promise<GameEntitlement
     }
     throw new Error(response.status === 403 ? "创建码无效或已过期" : "校验失败，请稍后重试");
   }
-  const data = (await response.json()) as { token?: string; expiresAt?: number };
+  let data: { token?: string; expiresAt?: number } = {};
+  try {
+    data = (await response.json()) as { token?: string; expiresAt?: number };
+  } catch {
+    throw new Error("激活服务返回异常，请稍后重试（若在客户端，请更新到最新版本）");
+  }
   if (!data.token || !data.expiresAt) throw new Error("校验失败，请稍后重试");
   const value = { token: data.token, expiresAt: data.expiresAt };
   saveEntitlement(value);
@@ -81,7 +100,7 @@ export async function verifyEntitlement(): Promise<boolean> {
     return false;
   }
   try {
-    const response = await fetch("/game/verify", {
+    const response = await fetch(`${API_BASE}/game/verify`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ token: value.token }),
