@@ -191,6 +191,7 @@ export function useGame() {
   const [muted, setMutedState] = useState(false);
   const [kicked, setKicked] = useState(false);
   const [summary, setSummary] = useState<GameSummary | null>(null);
+  const [speaking, setSpeaking] = useState<Set<string>>(() => new Set());
   const [devices, setDevices] = useState<{ inputs: { id: string; label: string }[]; outputs: { id: string; label: string }[] }>({
     inputs: [],
     outputs: [],
@@ -224,7 +225,11 @@ export function useGame() {
           setRoom(null);
           setMembers([]);
         },
+        speaking: (ids) => setSpeaking(new Set(ids)),
       });
+    }
+    if (typeof window !== "undefined" && window.location.hostname !== "5blong.pages.dev") {
+      (window as unknown as { __gameMesh?: GameMesh }).__gameMesh = meshRef.current;
     }
     return meshRef.current;
   }, []);
@@ -413,6 +418,7 @@ export function useGame() {
     toggleNs,
     peerVolumes,
     setPeerVolume,
+    speaking,
     summary,
     clearSummary: () => setSummary(null),
     devices,

@@ -241,6 +241,7 @@ export function App() {
           onSetMicDevice={game.setMicDevice}
           outputDevice={game.outputDevice}
           onSetOutputDevice={game.setOutputDevice}
+          speaking={game.speaking}
         />
       </>
     );
