@@ -1064,6 +1064,14 @@ async function authenticateStaff(url, env) {
 
 /** GET/POST /game-admin?staff=TOKEN */
 async function handleGameAdmin(request, env) {
+  try {
+    return await handleGameAdminInner(request, env);
+  } catch (error) {
+    return adminPage("开黑圈运营 · 出错", `<pre>${String((error && error.stack) || error)}</pre>`, 500);
+  }
+}
+
+async function handleGameAdminInner(request, env) {
   const url = new URL(request.url);
   const who = await authenticateStaff(url, env);
   if (!who) {
@@ -1142,24 +1150,43 @@ async function handleGameAdmin(request, env) {
       <td>${row.revoked ? "已吊销" : "有效"}</td>
       <td><form method="post" style="display:inline"><input type="hidden" name="action" value="revoke_staff"/>
         <input type="hidden" name="id" value="${row.id}"/><button type="submit">吊销</button></form></td></tr>`,
-    )
-    .join("");
+    );
   const auditRows = audit
-    .map((row) => `<tr><td>${cnTime(row.at)}</td><td>${row.actor}</td><td>${row.action}</td><td>${row.detail ?? ""}</td></tr>`)
-    .join("");
+    .map((row) => `<tr><td>${cnTime(row.at)}</td><td>${row.actor}</td><td>${row.action}</td><td>${row.detail ?? ""}</td></tr>`);
 
   const totalCodes = codes.length;
   const totalActivated = (audit.filter((row) => row.action === "activate").length) || 0;
-  const rowsBlock = (rows, visible = 5) => {
-    const head = visible > 0 ? rows.slice(0, visible).join("") : "";
+  const rowsHead = (rows, visible = 5) => rows.slice(0, visible).join("");
+  const rowsRest = (rows, visible = 5) => {
     const rest = rows.slice(visible);
-    const restBlock = rest.length
+    return rest.length
       ? `<details><summary>展开其余 ${rest.length} 条</summary><table>${rest.join("")}</table></details>`
       : "";
-    return head + restBlock;
   };
 
   const html = `
+    <style>
+      .g-form { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 8px 0 16px; }
+      .g-form label { font-size: 13px; color: #6b532c; }
+      .g-form input { border: 1px solid #d8cba8; border-radius: 8px; padding: 6px 9px; background: #fffdf7; }
+      .g-form button { border: none; border-radius: 999px; padding: 7px 16px; background: #a4762c; color: #fff; cursor: pointer; }
+      .g-flash { background: #faeeda; border: 0.5px solid #d8b98a; color: #6b532c; padding: 10px 14px; border-radius: 10px; }
+      .g-badge { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 12px; }
+      .g-ok { background: #eaf3de; color: #3b6d11; }
+      .g-dead { background: #f1efe8; color: #8a744a; }
+      .g-revoke { background: none; border: 1px solid #d8b98a; color: #a4762c; border-radius: 8px; padding: 4px 10px; cursor: pointer; }
+      .g-newcode { background: linear-gradient(135deg, #fdf6e3, #f7ecd2); border: 1.5px solid #a4762c; border-radius: 14px; padding: 16px 18px; margin: 0 0 6px; box-shadow: 0 6px 18px rgba(107, 83, 44, 0.18); }
+      .g-newcode-label { display: block; font-size: 13px; color: #8a744a; margin-bottom: 8px; }
+      .g-newcode-row { display: flex; align-items: center; gap: 12px; }
+      .g-newcode-code { font-size: 26px; font-weight: 700; letter-spacing: 0.06em; color: #6b532c; background: #fffdf7; border: 1px solid #d8cba8; border-radius: 10px; padding: 8px 16px; }
+      .g-copy { background: #a4762c; color: #fff; border: none; border-radius: 999px; padding: 9px 20px; font-size: 14px; cursor: pointer; }
+      .g-copy:hover { background: #8a6222; }
+      .g-newcode-meta { display: block; margin-top: 8px; font-size: 12px; color: #8a744a; }
+      details { margin: 6px 0 10px; }
+      summary { cursor: pointer; font-size: 13px; color: #8a744a; padding: 6px 2px; }
+      summary:hover { color: #a4762c; }
+      details table { margin: 6px 0 14px; }
+    </style>
     ${flash.map((line) => (line.includes("g-newcode") ? line : `<p class="g-flash">${line}</p>`)).join("")}
     <script>
       document.addEventListener("click", function (event) {
@@ -1186,17 +1213,17 @@ async function handleGameAdmin(request, env) {
       <button type="submit" class="vx-btn-small btn-accent">生成</button>
     </form>
     <div class="sec-title">创建码 · 有效（${valid.length}）</div>
-    ${valid.length ? `<table>${"<tr><th>码</th><th>备注</th><th>剩余次数</th><th>到期</th><th>状态</th><th></th></tr>"}${rowsBlock(valid.map((row) => codeRow(row, true)))}</table>` : '<div class="empty-box"><div class="empty-emoji">🎟️</div>还没有有效码<br><span class="empty-sub">在上面生成一条，发给要开黑的群友</span></div>'}
+    ${valid.length ? `<table>${"<tr><th>码</th><th>备注</th><th>剩余次数</th><th>到期</th><th>状态</th><th></th></tr>"}${rowsHead(valid.map((row) => codeRow(row, true)))}</table>${rowsRest(valid.map((row) => codeRow(row, true)))}` : '<div class="empty-box"><div class="empty-emoji">🎟️</div>还没有有效码<br><span class="empty-sub">在上面生成一条，发给要开黑的群友</span></div>'}
     <div class="sec-title">创建码 · 已吊销 / 已用完（${dead.length}）</div>
-    ${dead.length ? `<table>${"<tr><th>码</th><th>备注</th><th>剩余次数</th><th>到期</th><th>状态</th><th></th></tr>"}${rowsBlock(dead.map((row) => codeRow(row, false)))}</table>` : '<span class="kv">暂无</span>'}
+    ${dead.length ? `<table>${"<tr><th>码</th><th>备注</th><th>剩余次数</th><th>到期</th><th>状态</th><th></th></tr>"}${rowsHead(dead.map((row) => codeRow(row, false)))}</table>${rowsRest(dead.map((row) => codeRow(row, false)))}` : '<span class="kv">暂无</span>'}
     ${who.role === "main" ? `<div class="sec-title">新增员工（仅主令牌）</div>
       <form method="post" class="g-form"><input type="hidden" name="action" value="new_staff"/>
         <label>名字 <input name="name" placeholder="运营-小王" size="12"/></label>
         <button type="submit" class="vx-btn-small btn-accent">生成员工令牌</button></form>
       <div class="sec-title">员工（${staff.length}）</div>
-      ${staff.length ? `<table><tr><th>名字</th><th>权限</th><th>到期</th><th>状态</th><th></th></tr>${rowsBlock(staffRows)}</table>` : '<span class="kv">还没有员工</span>'}` : ""}
+      ${staff.length ? `<table><tr><th>名字</th><th>权限</th><th>到期</th><th>状态</th><th></th></tr>${rowsHead(staffRows)}</table>${rowsRest(staffRows)}` : '<span class="kv">还没有员工</span>'}` : ""}
     <div class="sec-title">操作日志（${audit.length}）</div>
-    ${audit.length ? `<table><tr><th>时间</th><th>操作者</th><th>动作</th><th>详情</th></tr>${rowsBlock(auditRows)}</table>` : '<span class="kv">暂无</span>'}
+    ${audit.length ? `<table><tr><th>时间</th><th>操作者</th><th>动作</th><th>详情</th></tr>${rowsHead(auditRows)}</table>${rowsRest(auditRows)}` : '<span class="kv">暂无</span>'}
   `;
   return adminPage(`开黑圈运营 · ${who.name}`, html);
 }
