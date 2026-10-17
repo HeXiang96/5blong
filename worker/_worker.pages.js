@@ -1116,7 +1116,8 @@ async function handleGameAdminInner(request, env) {
       )
         .bind(gameRandomToken(6), name, hash, Date.now(), Date.now() + 90 * GAME_DAY)
         .run();
-      flash.push(`员工令牌（${name}，90 天）：<code>${token}</code><br/>发给对方，让他打开 <code>/game-admin?staff=${token}</code>`);
+      const staffUrl = `${url.origin}/game-admin?staff=${token}`;
+      flash.push(`<div class="g-newcode g-staffcard"><span class="g-newcode-label">👤 员工令牌（${name}）· 90 天</span><code class="g-newcode-code">${token.slice(0, 8)}…</code><button type="button" class="g-copy" data-code="${staffUrl}">复制登录链接</button><span class="g-newcode-meta">把复制的完整链接发给对方即可，只显示这一次</span></div>`);
     }
     if (action === "revoke_staff" && who.role === "main") {
       const id = String(form.get("id") ?? "");
@@ -1190,9 +1191,11 @@ async function handleGameAdminInner(request, env) {
       details table { margin: 6px 0 14px; }
     </style>
     ${(() => {
-      const newCodes = flash.filter((line) => line.includes("g-newcode"));
+      const cards = flash.filter((line) => line.includes("g-newcode"));
+      const lastCode = cards.filter((line) => !line.includes("g-staffcard")).pop() ?? "";
+      const lastStaff = cards.filter((line) => line.includes("g-staffcard")).pop() ?? "";
       const others = flash.filter((line) => !line.includes("g-newcode"));
-      return (newCodes.length ? newCodes[newCodes.length - 1] : "") + others.map((line) => `<p class="g-flash">${line}</p>`).join("");
+      return lastCode + lastStaff + others.map((line) => `<p class="g-flash">${line}</p>`).join("");
     })()}
     <script>
       document.addEventListener("click", function (event) {
