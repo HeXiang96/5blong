@@ -8,7 +8,7 @@
  */
 
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
-import { Crown, Mic, MicOff, Sparkles, Users } from "lucide-react";
+import { Crown, Mic, MicOff, Sparkles, Users, Volume2 } from "lucide-react";
 
 import {
   GAME_ENABLED_LIMIT,
@@ -434,6 +434,20 @@ export function GameRoomView({
                         <Mic size={12} />
                       </span>
                     )}
+                    {!member.local ? (
+                      <button
+                        type="button"
+                        className="vx-game-volbtn"
+                        title={`调 ${member.gameId} 的音量（只影响你自己）`}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setVolId((current) => (current === member.id ? null : member.id));
+                        }}
+                      >
+                        <Volume2 size={13} />
+                        <span>{Math.round((peerVolumes[member.gameId] ?? 1) * 100)}%</span>
+                      </button>
+                    ) : null}
                     {volId === member.id ? (
                       <span className="vx-game-menu vx-game-volmenu" onClick={(event) => event.stopPropagation()}>
                         <span className="vx-game-vol-label">
