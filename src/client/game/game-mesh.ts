@@ -52,6 +52,8 @@ export interface GameEvents {
   ready: (info: GameRoomInfo) => void;
   ended: (reason: string) => void;
   kicked: () => void;
+  /** 谁在说话（按 peer id 的实时集合，电平检测得出）。 */
+  speaking: (ids: string[]) => void;
 }
 
 const WELCOME_TIMEOUT_MS = 12_000;
@@ -82,6 +84,14 @@ export class GameMesh {
   private silentStream: MediaStream | null = null;
   /** 哪些 peer 是"待分队→队伍"的单向连接（只收不听）。 */
   private silentCalls = new Set<string>();
+  /** 上一次所处的队伍：一变就整组重建连接（否则残留的静音通道会吞掉声音）。 */
+  private lastTeam: Team | null = null;
+  /** 正在说话的人（电平超过阈值）。 */
+  private speakingIds = new Set<string>();
+  private localAnalyser: AnalyserNode | null = null;
+  private localSpeakTimer = 0;
+  /** 静音汇点：分析器必须接下游才会被处理（否则电平恒 0，说话特效永远不亮）。 */
+  private silentSink: GainNode | null = null;
   private outputDeviceId = "";
   private unlocked = false;
   private hosting = false;
@@ -374,6 +384,8 @@ export class GameMesh {
       }
     }
     this.calls.clear();
+    if (this.localSpeakTimer) window.clearInterval(this.localSpeakTimer);
+    this.localSpeakTimer = 0;
     for (const entry of this.analysers.values()) window.clearInterval(entry.timer);
     this.analysers.clear();
     for (const audio of this.audios.values()) {
@@ -414,6 +426,27 @@ export class GameMesh {
   }
 
   /**
+   * 我的队伍变了 → 把所有连接推倒重建。
+   *
+   * 为什么必须全拆：切到队伍时若保留"待分队时期的静音通道"，对端听到的是静音、
+   * 我这边又因为 calls.has() 跳过新建，就会出现"第一次过去听不到、反复切几次才好"
+   * （2026-10-17 业主实测）。整组重建是最确定的做法。
+   */
+  private rebuildAudio(): void {
+    for (const [peerId, call] of this.calls) {
+      try {
+        call.close();
+      } catch {
+        /* noop */
+      }
+      this.dropAudio(peerId);
+    }
+    this.calls.clear();
+    this.silentCalls.clear();
+    this.reconcileAudio();
+  }
+
+  /**
    * 按"同队才连"重建音频连接：
    *   目标集 = 与我同 group 的成员（未分队/进攻/防守各成一组）。
    *   为避免双向重复呼叫，只由 id 较小的一方发起。
@@ -423,6 +456,13 @@ export class GameMesh {
     if (!this.joined || !this.localStream) return;
     const me = this.members.get(this.myId);
     if (!me) return;
+    if (this.lastTeam !== null && this.lastTeam !== me.team) {
+      // 我的队伍变了：先全拆再连（见 rebuildAudio 注释）
+      this.lastTeam = me.team;
+      this.rebuildAudio();
+      return;
+    }
+    this.lastTeam = me.team;
     const desired = new Set<string>();
     const unassigned = me.team === "unassigned";
     for (const member of this.members.values()) {
@@ -507,6 +547,25 @@ export class GameMesh {
     }, 300);
   }
 
+  private setSpeaking(id: string, speaking: boolean): void {
+    const had = this.speakingIds.has(id);
+    if (speaking === had) return;
+    if (speaking) this.speakingIds.add(id);
+    else this.speakingIds.delete(id);
+    this.events.speaking([...this.speakingIds]);
+  }
+
+  private getSilentSink(): GainNode | null {
+    if (!this.audioCtx) return null;
+    if (!this.silentSink) {
+      const sink = this.audioCtx.createGain();
+      sink.gain.value = 0;
+      sink.connect(this.audioCtx.destination);
+      this.silentSink = sink;
+    }
+    return this.silentSink;
+  }
+
   private touchMember(id: string): void {
     if (!this.memberStats.has(id)) this.memberStats.set(id, { joined: Date.now(), speak: 0 });
   }
@@ -534,16 +593,20 @@ export class GameMesh {
         const node = this.audioCtx.createAnalyser();
         node.fftSize = 512;
         src.connect(node);
+        const sink = this.getSilentSink();
+        if (sink) node.connect(sink);
         const buffer = new Float32Array(node.fftSize);
         const timer = window.setInterval(() => {
           node.getFloatTimeDomainData(buffer);
           let sum = 0;
           for (const v of buffer) sum += v * v;
           const rms = Math.sqrt(sum / buffer.length);
-          if (rms > 0.02) {
+          const speech = rms > 0.02;
+          if (speech) {
             const stat = this.memberStats.get(peerId);
             if (stat) stat.speak += 200;
           }
+          this.setSpeaking(peerId, speech);
         }, 200);
         this.analysers.set(peerId, { node, buffer, timer });
       } catch {
@@ -577,6 +640,19 @@ export class GameMesh {
       const audio = this.audios.get(peerId);
       if (audio) audio.volume = clamped;
     }
+  }
+
+  /** 调试快照（自动化测试用）：当前连接、静音通道、我的队伍。 */
+  getDebug(): { calls: string[]; silent: string[]; team: Team | null; speaking: string[]; rms: number } {
+    let rms = 0;
+    if (this.localAnalyser) {
+      const buf = new Float32Array(this.localAnalyser.fftSize);
+      this.localAnalyser.getFloatTimeDomainData(buf);
+      let sum = 0;
+      for (const v of buf) sum += v * v;
+      rms = Math.sqrt(sum / buf.length);
+    }
+    return { calls: [...this.calls.keys()], silent: [...this.silentCalls], team: this.lastTeam, speaking: [...this.speakingIds], rms };
   }
 
   getPeerVolumes(): Record<string, number> {
@@ -896,6 +972,30 @@ export class GameMesh {
       source.connect(gain);
     }
     gain.connect(dest);
+    /*
+     * 说话检测：从"增益之后"接分析器（静音/增益 0 时不亮），
+     * 每 160ms 采样一次，集合变化才通知 UI。
+     */
+    try {
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 512;
+      gain.connect(analyser);
+      const sink = this.getSilentSink();
+      if (sink) analyser.connect(sink);
+      this.localAnalyser = analyser;
+      if (this.localSpeakTimer) window.clearInterval(this.localSpeakTimer);
+      const buffer = new Float32Array(analyser.fftSize);
+      this.localSpeakTimer = window.setInterval(() => {
+        if (!this.localAnalyser) return;
+        this.localAnalyser.getFloatTimeDomainData(buffer);
+        let sum = 0;
+        for (const v of buffer) sum += v * v;
+        const speaking = Math.sqrt(sum / buffer.length) > 0.02 && !this.localMuted;
+        this.setSpeaking(this.myId, speaking);
+      }, 160);
+    } catch {
+      /* 检测失败不影响通话 */
+    }
     this.publishedStream = dest.stream;
     // AGC 与手动增益互搏：>100% 挂起 AGC
     await this.applyAgcForBoost(this.micBoost > 1);

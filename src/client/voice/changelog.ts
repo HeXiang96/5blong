@@ -20,6 +20,15 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.6.5",
+    date: "2026-10-17",
+    lines: [
+      "说话的人会发光 + 声波跳动",
+      "修复：第一次换队听不到声音",
+      "换队/回待分队连接即刻重建",
+    ],
+  },
+  {
     version: "1.6.4",
     date: "2026-10-17",
     lines: [

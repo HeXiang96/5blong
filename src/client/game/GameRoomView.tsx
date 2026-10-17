@@ -338,6 +338,7 @@ export function GameRoomView({
   onSetMicDevice,
   outputDevice,
   onSetOutputDevice,
+  speaking,
 }: {
   room: GameRoomInfo;
   members: GameMember[];
@@ -370,6 +371,8 @@ export function GameRoomView({
   onSetMicDevice: (id: string) => void;
   outputDevice: string;
   onSetOutputDevice: (id: string) => void;
+  /** 正在说话的人（peer id 集合）。 */
+  speaking: Set<string>;
 }) {
   const [manageId, setManageId] = useState<string | null>(null);
   /** 点成员卡弹出的"对方音量"弹层（按成员 id）。 */
@@ -480,7 +483,7 @@ export function GameRoomView({
                 {group.members.map((member) => (
                   <article
                     key={member.id}
-                    className={`vx-game-card${member.local ? " vx-game-card-me" : ""}${volId === member.id ? " vx-game-card-open" : ""}`}
+                    className={`vx-game-card${member.local ? " vx-game-card-me" : ""}${volId === member.id ? " vx-game-card-open" : ""}${speaking.has(member.id) ? " vx-game-card-speaking" : ""}`}
                     onClick={() => {
                       if (member.local) return;
                       setVolId((current) => (current === member.id ? null : member.id));
@@ -501,6 +504,12 @@ export function GameRoomView({
                     {member.muted ? (
                       <span className="vx-game-mic-off" title="已静音">
                         <MicOff size={12} />
+                      </span>
+                    ) : speaking.has(member.id) ? (
+                      <span className="vx-game-speak" title="正在说话">
+                        <i />
+                        <i />
+                        <i />
                       </span>
                     ) : (
                       <span className="vx-game-mic-on" title="麦克风开启">

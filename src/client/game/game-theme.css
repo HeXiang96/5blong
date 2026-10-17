@@ -970,3 +970,44 @@ html[data-daypart="night"] .vx-game-root {
   font-size: 12.5px;
   margin-bottom: 4px;
 }
+
+/* 正在说话：整卡描边发光 + 头像脉冲 + 声波图标（否则根本看不出谁在说） */
+.vx-game-card-speaking {
+  border-color: rgba(75, 227, 210, 0.85) !important;
+  box-shadow: 0 0 0 1px rgba(75, 227, 210, 0.45), 0 0 20px rgba(75, 227, 210, 0.35);
+  background: rgba(75, 227, 210, 0.1) !important;
+}
+.vx-game-card-speaking .vx-game-avatar {
+  box-shadow: 0 0 0 3px rgba(75, 227, 210, 0.35);
+  animation: vxGameSpeakPulse 1.1s ease-in-out infinite;
+}
+.vx-game-card-speaking .vx-game-name {
+  color: #ffffff;
+  font-weight: 600;
+}
+@keyframes vxGameSpeakPulse {
+  0%, 100% { box-shadow: 0 0 0 2px rgba(75, 227, 210, 0.3); }
+  50% { box-shadow: 0 0 0 5px rgba(75, 227, 210, 0.12); }
+}
+/* 三格声波 */
+.vx-game-speak {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 14px;
+  color: #4be3d2;
+}
+.vx-game-speak i {
+  display: block;
+  width: 2.5px;
+  background: currentColor;
+  border-radius: 2px;
+  animation: vxGameWave 0.9s ease-in-out infinite;
+}
+.vx-game-speak i:nth-child(1) { height: 6px; animation-delay: 0s; }
+.vx-game-speak i:nth-child(2) { height: 12px; animation-delay: 0.15s; }
+.vx-game-speak i:nth-child(3) { height: 8px; animation-delay: 0.3s; }
+@keyframes vxGameWave {
+  0%, 100% { transform: scaleY(0.55); }
+  50% { transform: scaleY(1); }
+}
