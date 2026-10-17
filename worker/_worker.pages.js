@@ -1097,7 +1097,7 @@ async function handleGameAdminInner(request, env) {
       await env.DB.prepare("INSERT INTO game_audit (at, actor, action, detail) VALUES (?, ?, ?, ?)")
         .bind(now, who.name, "new_code", `${code} uses=${uses} days=${days}`)
         .run();
-      flash.push(`<div class="g-newcode"><span class="g-newcode-label">🎉 新创建码（只显示这一次，先复制保存）</span><div class="g-newcode-row"><code class="g-newcode-code">${code}</code><button type="button" class="g-copy" data-code="${code}">复制</button></div><span class="g-newcode-meta">可用 ${uses} 次 · ${days} 天有效 · 已记入操作日志</span></div>`);
+      flash.push(`<div class="g-newcode"><span class="g-newcode-label">🎟 新创建码</span><code class="g-newcode-code">${code}</code><button type="button" class="g-copy" data-code="${code}">复制</button><span class="g-newcode-meta">${uses} 次 · ${days} 天 · 只显示这一次</span></div>`);
     }
     if (action === "revoke_code") {
       const code = String(form.get("code") ?? "");
@@ -1178,19 +1178,22 @@ async function handleGameAdminInner(request, env) {
       .g-ok { background: #eaf3de; color: #3b6d11; }
       .g-dead { background: #f1efe8; color: #8a744a; }
       .g-revoke { background: none; border: 1px solid #d8b98a; color: #a4762c; border-radius: 8px; padding: 4px 10px; cursor: pointer; }
-      .g-newcode { background: linear-gradient(135deg, #fdf6e3, #f7ecd2); border: 1.5px solid #a4762c; border-radius: 14px; padding: 16px 18px; margin: 0 0 6px; box-shadow: 0 6px 18px rgba(107, 83, 44, 0.18); }
-      .g-newcode-label { display: block; font-size: 13px; color: #8a744a; margin-bottom: 8px; }
-      .g-newcode-row { display: flex; align-items: center; gap: 12px; }
-      .g-newcode-code { font-size: 26px; font-weight: 700; letter-spacing: 0.06em; color: #6b532c; background: #fffdf7; border: 1px solid #d8cba8; border-radius: 10px; padding: 8px 16px; }
-      .g-copy { background: #a4762c; color: #fff; border: none; border-radius: 999px; padding: 9px 20px; font-size: 14px; cursor: pointer; }
+      .g-newcode { display: inline-flex; align-items: center; gap: 10px; flex-wrap: wrap; width: fit-content; max-width: 100%; background: #fdf6e3; border: 1px solid #d8b98a; border-radius: 999px; padding: 7px 14px 7px 12px; margin: 0 0 10px; }
+      .g-newcode-label { font-size: 13px; color: #8a744a; }
+      .g-newcode-code { font-size: 17px; font-weight: 700; letter-spacing: 0.05em; color: #6b532c; background: #fffdf7; border: 1px solid #e0d3b4; border-radius: 8px; padding: 3px 10px; }
+      .g-copy { background: #a4762c; color: #fff; border: none; border-radius: 999px; padding: 5px 13px; font-size: 12.5px; cursor: pointer; }
       .g-copy:hover { background: #8a6222; }
-      .g-newcode-meta { display: block; margin-top: 8px; font-size: 12px; color: #8a744a; }
+      .g-newcode-meta { font-size: 12px; color: #a08d68; }
       details { margin: 6px 0 10px; }
       summary { cursor: pointer; font-size: 13px; color: #8a744a; padding: 6px 2px; }
       summary:hover { color: #a4762c; }
       details table { margin: 6px 0 14px; }
     </style>
-    ${flash.map((line) => (line.includes("g-newcode") ? line : `<p class="g-flash">${line}</p>`)).join("")}
+    ${(() => {
+      const newCodes = flash.filter((line) => line.includes("g-newcode"));
+      const others = flash.filter((line) => !line.includes("g-newcode"));
+      return (newCodes.length ? newCodes[newCodes.length - 1] : "") + others.map((line) => `<p class="g-flash">${line}</p>`).join("");
+    })()}
     <script>
       document.addEventListener("click", function (event) {
         var btn = event.target.closest ? event.target.closest(".g-copy") : null;
