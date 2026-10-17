@@ -581,8 +581,11 @@ html[data-daypart="night"] .vx-game-root {
   color: rgba(233, 244, 255, 0.66);
 }
 .vx-game-modal .vx-field-label {
-  color: rgba(233, 244, 255, 0.62);
+  color: rgba(233, 244, 255, 0.62) !important;
   font-size: 12.5px;
+}
+.vx-game-modal .vx-field {
+  color: rgba(233, 244, 255, 0.62);
 }
 .vx-game-modal .vx-input {
   color: #e9f4ff;
