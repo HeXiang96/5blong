@@ -1127,18 +1127,18 @@ async function handleGameAdmin(request, env) {
     : [];
   const audit = (await env.DB.prepare("SELECT * FROM game_audit ORDER BY at DESC LIMIT 30").all()).results ?? [];
 
-  const codeRows = codes
-    .map(
-      (row) => `<tr><td><code>${row.code}</code></td><td>${row.note ?? ""}</td><td>${row.uses_left}</td>
-      <td>${cnTime(row.expires_at).slice(0, 10)}</td>
-      <td>${row.revoked ? "已吊销" : "有效"}</td>
-      <td><form method="post" style="display:inline"><input type="hidden" name="action" value="revoke_code"/>
-        <input type="hidden" name="code" value="${row.code}"/><button type="submit">吊销</button></form></td></tr>`,
-    )
-    .join("");
+  const valid = codes.filter((row) => !row.revoked && row.uses_left > 0 && row.expires_at >= Date.now());
+  const dead = codes.filter((row) => row.revoked || row.uses_left <= 0 || row.expires_at < Date.now());
+  const codeRow = (row, canRevoke) =>
+    `<tr><td><code>${row.code}</code></td><td>${row.note ?? ""}</td><td>${row.uses_left}</td>
+      <td>${cnTime(row.expires_at)}</td><td>${row.revoked ? "已吊销" : row.uses_left <= 0 ? "已用完" : "有效"}</td>
+      <td>${canRevoke ? `<form method="post" style="display:inline"><input type="hidden" name="action" value="revoke_code"/>
+        <input type="hidden" name="code" value="${row.code}"/><button type="submit">吊销</button></form>` : ""}</td></tr>`;
+  const codeRows = valid.map((row) => codeRow(row, true)).join("");
+  const deadRows = dead.map((row) => codeRow(row, false)).join("");
   const staffRows = staff
     .map(
-      (row) => `<tr><td>${row.name}</td><td>${row.scope}</td><td>${cnTime(row.expires_at).slice(0, 10)}</td>
+      (row) => `<tr><td>${row.name}</td><td>${row.scope}</td><td>${cnTime(row.expires_at)}</td>
       <td>${row.revoked ? "已吊销" : "有效"}</td>
       <td><form method="post" style="display:inline"><input type="hidden" name="action" value="revoke_staff"/>
         <input type="hidden" name="id" value="${row.id}"/><button type="submit">吊销</button></form></td></tr>`,
@@ -1149,19 +1149,20 @@ async function handleGameAdmin(request, env) {
     .join("");
 
   const html = `
-    ${flash.map((line) => `<p class="flash">${line}</p>`).join("")}
+    ${flash.map((line) => `<p class="g-flash">${line}</p>`).join("")}
     <h2>生成创建码</h2>
-    <form method="post">
+    <form method="post" class="g-form">
       <input type="hidden" name="action" value="new_code"/>
       <label>次数 <input name="uses" value="1" size="3"/></label>
       <label>有效天数 <input name="days" value="30" size="3"/></label>
       <label>备注 <input name="note" placeholder="给谁用" size="14"/></label>
       <button type="submit">生成</button>
     </form>
-    <h2>创建码</h2>
-    <table><tr><th>码</th><th>备注</th><th>剩余</th><th>到期</th><th>状态</th><th></th></tr>${codeRows || "<tr><td colspan='6'>还没有码</td></tr>"}</table>
+    <h2>创建码 · 有效</h2>
+    <table><tr><th>码</th><th>备注</th><th>剩余</th><th>到期</th><th>状态</th><th></th></tr>${codeRows || "<tr><td colspan='6'>暂无有效码</td></tr>"}</table>
+    ${deadRows ? `<h2>创建码 · 已吊销 / 已用完</h2><table><tr><th>码</th><th>备注</th><th>剩余</th><th>到期</th><th>状态</th><th></th></tr>${deadRows}</table>` : ""}
     ${who.role === "main" ? `<h2>新增员工（仅主令牌）</h2>
-      <form method="post"><input type="hidden" name="action" value="new_staff"/>
+      <form method="post" class="g-form"><input type="hidden" name="action" value="new_staff"/>
         <label>名字 <input name="name" placeholder="运营-小王" size="12"/></label>
         <button type="submit">生成员工令牌</button></form>
       <h2>员工</h2>
@@ -1169,5 +1170,21 @@ async function handleGameAdmin(request, env) {
     <h2>操作日志</h2>
     <table><tr><th>时间</th><th>操作者</th><th>动作</th><th>详情</th></tr>${auditRows || "<tr><td colspan='4'>暂无</td></tr>"}</table>
   `;
-  return adminPage(`开黑圈运营 · ${who.name}`, html);
+  return adminPage(`开黑圈运营 · ${who.name}`, `<style>${GAME_ADMIN_CSS}</style>` + html);
 }
+
+/* 开黑圈运营页样式：深色电竞风（与游戏内一致） */
+const GAME_ADMIN_CSS = `
+  body { background: #0c1220; color: #edf4ff; font-family: "Segoe UI", "Microsoft YaHei", sans-serif; margin: 0; padding: 24px; }
+  h1, h2 { color: #edf4ff; }
+  h2 { border-left: 3px solid #4be3d2; padding-left: 10px; font-size: 16px; }
+  table { width: 100%; border-collapse: collapse; margin: 10px 0 24px; background: rgba(255,255,255,.03); border-radius: 10px; overflow: hidden; }
+  th, td { padding: 9px 12px; text-align: left; border-bottom: 1px solid rgba(160,200,240,.12); font-size: 13px; }
+  th { color: rgba(205,226,255,.6); font-weight: 500; }
+  code { color: #ffd479; font-family: Consolas, monospace; }
+  button { background: rgba(255,255,255,.08); color: #edf4ff; border: 1px solid rgba(255,255,255,.2); border-radius: 8px; padding: 5px 12px; cursor: pointer; }
+  button:hover { background: rgba(255,255,255,.16); }
+  input { background: rgba(255,255,255,.07); color: #edf4ff; border: 1px solid rgba(255,255,255,.18); border-radius: 8px; padding: 6px 9px; }
+  .g-form { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; background: rgba(255,255,255,.04); padding: 12px; border-radius: 10px; }
+  .g-flash { background: rgba(255,122,69,.14); border: 1px solid rgba(255,138,92,.45); color: #ffc7a3; padding: 10px 14px; border-radius: 10px; }
+`;

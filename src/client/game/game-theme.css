@@ -818,3 +818,55 @@ html[data-daypart="night"] .vx-game-root {
   font-size: 13px;
   line-height: 1.5;
 }
+
+/* 麦克风增强滑条（底栏） */
+.vx-game-boost {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--g-line);
+  background: rgba(255, 255, 255, 0.05);
+}
+.vx-game-boost-label {
+  font-size: 12px;
+  color: var(--g-dim);
+  white-space: nowrap;
+}
+.vx-game-boost-label b {
+  color: #ffd479;
+  font-family: ui-monospace, Consolas, monospace;
+}
+.vx-game-boost input[type="range"] {
+  width: 110px;
+  accent-color: #ffd479;
+}
+.vx-game-mini-on {
+  border-color: rgba(75, 227, 210, 0.5) !important;
+  color: #7feadb !important;
+}
+/* 对方音量弹层 */
+.vx-game-volmenu {
+  min-width: 170px;
+  gap: 8px;
+}
+.vx-game-vol-label {
+  font-size: 12px;
+  color: var(--g-dim);
+}
+.vx-game-vol-label b {
+  color: var(--g-text);
+  font-family: ui-monospace, Consolas, monospace;
+}
+.vx-game-volmenu input[type="range"] {
+  width: 100%;
+  accent-color: var(--g-defend);
+}
+.vx-game-volmenu button {
+  border: 1px solid var(--g-line) !important;
+  text-align: center !important;
+}
+.vx-game-card-open {
+  border-color: rgba(75, 227, 210, 0.5) !important;
+}
