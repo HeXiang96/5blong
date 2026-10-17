@@ -16,6 +16,8 @@ import "./voice/pen-fence.css";
 import "./voice/pen-tv.css";
 // 场景主题（雪原/万圣夜）必须最后加载：按时段配色的覆盖靠层叠顺序取胜。
 import "./voice/pen-themes.css";
+// 开黑圈（独立子系统）的电竞主题
+import "./game/game-theme.css";
 
 const root = document.getElementById("root");
 if (!root) {

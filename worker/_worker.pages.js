@@ -62,6 +62,15 @@ export default {
       return proxyPeerJs(url, request, env);
     }
 
+    // /game/entitle → 开黑圈创建码校验（换 30 天签名令牌）
+    if (url.pathname === "/game/entitle") {
+      return handleGameEntitle(request, env);
+    }
+    // /game-admin → 开黑圈运营页（员工令牌 scope=game，看不到反馈与房间遥测）
+    if (url.pathname === "/game-admin") {
+      return handleGameAdmin(request, env);
+    }
+
     // /rooms → 在线房间面板（令牌保护；与反馈页分开，避免一页太臃肿）
     if (url.pathname === "/rooms") {
       return handleRooms(request, env);
@@ -924,4 +933,194 @@ function safeEqual(a, b) {
   let diff = 0;
   for (let i = 0; i < a.length; i += 1) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
   return diff === 0;
+}
+
+
+// ============================================================ 开黑圈权限（内联）
+/**
+ * 开黑圈创建权限（Pages Functions 的 /game/entitle 与 /game-admin）。
+ *
+ * 安全模型：
+ * - 主令牌（FEEDBACK_TOKEN）只留在业主手里，用来**签发员工令牌**；
+ * - 员工令牌只存哈希（staff_tokens 表），scope=game，只能生成/吊销创建码；
+ * - 创建码只存 D1（不落前端），前端通过 /game/entitle 换一枚 30 天签名令牌；
+ * - 任何密钥都不下发前端，前端只拿 HMAC 签名结果。
+ */
+
+const GAME_DAY = 86_400_000;
+
+async function hmacHex(secret, text) {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const signature = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(text));
+  return [...new Uint8Array(signature)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+function gameRandomToken(bytes = 16) {
+  const buf = new Uint8Array(bytes);
+  crypto.getRandomValues(buf);
+  return [...buf].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+function entitlementSecret(env) {
+  return env.GAME_SECRET || env.FEEDBACK_TOKEN || "";
+}
+
+/** POST /game/entitle { code } → { token, expiresAt } */
+async function handleGameEntitle(request, env) {
+  if (request.method !== "POST") return json({ error: "method" }, 405);
+  const secret = entitlementSecret(env);
+  if (!secret) return json({ error: "服务未配置" }, 501);
+  let payload;
+  try {
+    payload = await request.json();
+  } catch {
+    return json({ error: "bad json" }, 400);
+  }
+  const code = String(payload?.code ?? "").trim().toUpperCase();
+  if (!/^BLONG-[A-Z0-9]{4,12}$/.test(code)) return json({ error: "invalid code" }, 403);
+  const now = Date.now();
+  const row = await env.DB.prepare(
+    "SELECT code, uses_left, expires_at, revoked FROM game_codes WHERE code = ?",
+  )
+    .bind(code)
+    .first();
+  if (!row || row.revoked || row.expires_at < now || row.uses_left <= 0) {
+    return json({ error: "invalid code" }, 403);
+  }
+  await env.DB.prepare("UPDATE game_codes SET uses_left = uses_left - 1 WHERE code = ?").bind(code).run();
+  const expiresAt = now + 30 * GAME_DAY;
+  const token = await hmacHex(secret, `game:${expiresAt}:${code}`);
+  await env.DB.prepare(
+    "INSERT INTO game_audit (at, actor, action, detail) VALUES (?, ?, ?, ?)",
+  )
+    .bind(now, code, "activate", `expiresAt=${expiresAt}`)
+    .run();
+  return json({ token, expiresAt });
+}
+
+/** 校验员工令牌；返回 { role, name } 或 null。主令牌返回 role=main。 */
+async function authenticateStaff(url, env) {
+  const token = url.searchParams.get("staff") ?? "";
+  if (!token) return null;
+  if (env.FEEDBACK_TOKEN && safeEqual(token, env.FEEDBACK_TOKEN)) return { role: "main", name: "业主" };
+  const hash = await sha256Hex(token);
+  const row = await env.DB.prepare(
+    "SELECT name, scope, expires_at, revoked FROM staff_tokens WHERE token_hash = ?",
+  )
+    .bind(hash)
+    .first();
+  if (!row || row.revoked) return null;
+  if (row.expires_at && row.expires_at < Date.now()) return null;
+  if (!String(row.scope ?? "").includes("game")) return null;
+  return { role: "staff", name: row.name || "运营" };
+}
+
+/** GET/POST /game-admin?staff=TOKEN */
+async function handleGameAdmin(request, env) {
+  const url = new URL(request.url);
+  const who = await authenticateStaff(url, env);
+  if (!who) {
+    return adminPage("开黑圈运营 · 无权访问", "<p>令牌无效或已被吊销。</p>", 401);
+  }
+  const flash = [];
+  if (request.method === "POST") {
+    const form = await request.formData();
+    const action = String(form.get("action") ?? "");
+    if (action === "new_code") {
+      const uses = Math.max(1, Math.min(50, Number(form.get("uses") ?? 1)));
+      const days = Math.max(1, Math.min(365, Number(form.get("days") ?? 30)));
+      const note = String(form.get("note") ?? "").slice(0, 60);
+      const code = `BLONG-${gameRandomToken(3).toUpperCase()}`;
+      const now = Date.now();
+      await env.DB.prepare(
+        "INSERT INTO game_codes (code, note, uses_left, expires_at, revoked, created_at, created_by) VALUES (?, ?, ?, ?, 0, ?, ?)",
+      )
+        .bind(code, note, uses, now + days * GAME_DAY, now, who.name)
+        .run();
+      await env.DB.prepare("INSERT INTO game_audit (at, actor, action, detail) VALUES (?, ?, ?, ?)")
+        .bind(now, who.name, "new_code", `${code} uses=${uses} days=${days}`)
+        .run();
+      flash.push(`新创建码：<code>${code}</code>（可用 ${uses} 次 / ${days} 天有效，只显示这一次）`);
+    }
+    if (action === "revoke_code") {
+      const code = String(form.get("code") ?? "");
+      await env.DB.prepare("UPDATE game_codes SET revoked = 1 WHERE code = ?").bind(code).run();
+      await env.DB.prepare("INSERT INTO game_audit (at, actor, action, detail) VALUES (?, ?, ?, ?)")
+        .bind(Date.now(), who.name, "revoke_code", code)
+        .run();
+      flash.push(`已吊销 ${code}`);
+    }
+    if (action === "new_staff" && who.role === "main") {
+      const name = String(form.get("name") ?? "运营").slice(0, 20);
+      const token = gameRandomToken(24);
+      const hash = await sha256Hex(token);
+      await env.DB.prepare(
+        "INSERT INTO staff_tokens (id, name, scope, token_hash, created_at, expires_at, revoked) VALUES (?, ?, 'game', ?, ?, ?, 0)",
+      )
+        .bind(gameRandomToken(6), name, hash, Date.now(), Date.now() + 90 * GAME_DAY)
+        .run();
+      flash.push(`员工令牌（${name}，90 天）：<code>${token}</code><br/>发给对方，让他打开 <code>/game-admin?staff=${token}</code>`);
+    }
+    if (action === "revoke_staff" && who.role === "main") {
+      const id = String(form.get("id") ?? "");
+      await env.DB.prepare("UPDATE staff_tokens SET revoked = 1 WHERE id = ?").bind(id).run();
+      flash.push("员工令牌已吊销");
+    }
+  }
+
+  const codes = (await env.DB.prepare("SELECT * FROM game_codes ORDER BY created_at DESC LIMIT 30").all()).results ?? [];
+  const staff = who.role === "main"
+    ? (await env.DB.prepare("SELECT id, name, scope, created_at, expires_at, revoked FROM staff_tokens ORDER BY created_at DESC LIMIT 20").all()).results ?? []
+    : [];
+  const audit = (await env.DB.prepare("SELECT * FROM game_audit ORDER BY at DESC LIMIT 30").all()).results ?? [];
+
+  const codeRows = codes
+    .map(
+      (row) => `<tr><td><code>${row.code}</code></td><td>${row.note ?? ""}</td><td>${row.uses_left}</td>
+      <td>${new Date(row.expires_at).toLocaleDateString("zh-CN")}</td>
+      <td>${row.revoked ? "已吊销" : "有效"}</td>
+      <td><form method="post" style="display:inline"><input type="hidden" name="action" value="revoke_code"/>
+        <input type="hidden" name="code" value="${row.code}"/><button type="submit">吊销</button></form></td></tr>`,
+    )
+    .join("");
+  const staffRows = staff
+    .map(
+      (row) => `<tr><td>${row.name}</td><td>${row.scope}</td><td>${new Date(row.expires_at).toLocaleDateString("zh-CN")}</td>
+      <td>${row.revoked ? "已吊销" : "有效"}</td>
+      <td><form method="post" style="display:inline"><input type="hidden" name="action" value="revoke_staff"/>
+        <input type="hidden" name="id" value="${row.id}"/><button type="submit">吊销</button></form></td></tr>`,
+    )
+    .join("");
+  const auditRows = audit
+    .map((row) => `<tr><td>${new Date(row.at).toLocaleString("zh-CN")}</td><td>${row.actor}</td><td>${row.action}</td><td>${row.detail ?? ""}</td></tr>`)
+    .join("");
+
+  const html = `
+    ${flash.map((line) => `<p class="flash">${line}</p>`).join("")}
+    <h2>生成创建码</h2>
+    <form method="post">
+      <input type="hidden" name="action" value="new_code"/>
+      <label>次数 <input name="uses" value="1" size="3"/></label>
+      <label>有效天数 <input name="days" value="30" size="3"/></label>
+      <label>备注 <input name="note" placeholder="给谁用" size="14"/></label>
+      <button type="submit">生成</button>
+    </form>
+    <h2>创建码</h2>
+    <table><tr><th>码</th><th>备注</th><th>剩余</th><th>到期</th><th>状态</th><th></th></tr>${codeRows || "<tr><td colspan='6'>还没有码</td></tr>"}</table>
+    ${who.role === "main" ? `<h2>新增员工（仅主令牌）</h2>
+      <form method="post"><input type="hidden" name="action" value="new_staff"/>
+        <label>名字 <input name="name" placeholder="运营-小王" size="12"/></label>
+        <button type="submit">生成员工令牌</button></form>
+      <h2>员工</h2>
+      <table><tr><th>名字</th><th>权限</th><th>到期</th><th>状态</th><th></th></tr>${staffRows || "<tr><td colspan='5'>还没有员工</td></tr>"}</table>` : ""}
+    <h2>操作日志</h2>
+    <table><tr><th>时间</th><th>操作者</th><th>动作</th><th>详情</th></tr>${auditRows || "<tr><td colspan='4'>暂无</td></tr>"}</table>
+  `;
+  return adminPage(`开黑圈运营 · ${who.name}`, html);
 }

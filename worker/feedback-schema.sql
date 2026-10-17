@@ -85,3 +85,30 @@ CREATE TABLE IF NOT EXISTS room_samples (  -- 人数曲线采样（约每 5 分�
   members    INTEGER NOT NULL,
   PRIMARY KEY (session_id, at)
 );
+
+-- 开黑圈：创建码 / 员工令牌 / 操作日志（2026-10-17）
+CREATE TABLE IF NOT EXISTS game_codes (
+  code TEXT PRIMARY KEY,
+  note TEXT,
+  uses_left INTEGER NOT NULL DEFAULT 1,
+  expires_at INTEGER NOT NULL,
+  revoked INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  created_by TEXT
+);
+CREATE TABLE IF NOT EXISTS staff_tokens (
+  id TEXT PRIMARY KEY,
+  name TEXT,
+  scope TEXT NOT NULL DEFAULT 'game',
+  token_hash TEXT NOT NULL UNIQUE,
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER,
+  revoked INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS game_audit (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  at INTEGER NOT NULL,
+  actor TEXT,
+  action TEXT,
+  detail TEXT
+);

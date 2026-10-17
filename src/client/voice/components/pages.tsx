@@ -45,6 +45,8 @@ export function LandingView({
   onCancelJoin,
   onDismissError,
   lastRoom = null,
+  onCreateGame,
+  onJoinGame,
 }: {
   identity: Identity;
   onIdentityChange: (next: Identity) => void;
@@ -62,6 +64,9 @@ export function LandingView({
   onDismissError?: () => void;
   /** 上次房间（本机记忆；null = 没有或不展示）。 */
   lastRoom?: LastRoom | null;
+  /** 开黑圈：创建（需要创建码）/ 加入（输房间码）。 */
+  onCreateGame: () => void;
+  onJoinGame: () => void;
 }) {
 
   /**
@@ -248,26 +253,44 @@ export function LandingView({
           </button>
         </div>
 
-        {/* 开黑圈（5v5 自定义内战房）：下个大版本上线的预告入口 */}
+        {/* 开黑圈（5v5 自定义内战房）：独立子系统的入口 */}
         <button type="button" className="vx-link-btn vx-tease-btn" onClick={() => setTeaseOpen(true)}>
-          🎮 开黑圈 · 下个大版本上线
+          🎮 开黑圈 · 5v5 内战房
         </button>
 
         {teaseOpen ? (
           <div className="vx-modal-backdrop" onClick={() => setTeaseOpen(false)}>
             <div className="vx-modal" onClick={(event) => event.stopPropagation()}>
               <h2>🎮 开黑圈</h2>
-              <p className="vx-modal-sub">5v5 自定义内战房 · 正在打磨，下个大版本上线</p>
+              <p className="vx-modal-sub">5v5 自定义内战房 · 一个房间码拉满两队</p>
               <p className="vx-modal-body">
-                专为无畏契约、CS2 这类游戏自定义设计：一个房间码拉满两队，免注册直接进，
-                语音稳、延迟低，边打边吼不散伙。
+                专为无畏契约、CS2 这类游戏自定义设计：进游戏分好边，回来点一下自己的边，
+                <strong>队内语音自动隔离</strong>——对面听不到你们，你们也听不到对面。
+                待分队可以听全房（当裁判用）。
               </p>
               <p className="vx-modal-hint">
-                想催更？到「设置 → 帮助 → 意见反馈」吼一嗓子，人多就插队排期。
+                创建需要创建码（找房主要）；加入直接输入 4 位房间码。
               </p>
               <div className="vx-modal-actions">
-                <button type="button" className="vx-btn vx-btn-primary" onClick={() => setTeaseOpen(false)}>
-                  知道了
+                <button
+                  type="button"
+                  className="vx-btn vx-btn-ghost"
+                  onClick={() => {
+                    setTeaseOpen(false);
+                    onJoinGame();
+                  }}
+                >
+                  加入开黑圈
+                </button>
+                <button
+                  type="button"
+                  className="vx-btn vx-btn-primary"
+                  onClick={() => {
+                    setTeaseOpen(false);
+                    onCreateGame();
+                  }}
+                >
+                  创建开黑圈
                 </button>
               </div>
             </div>
