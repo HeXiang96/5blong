@@ -14,6 +14,8 @@ import "./voice/pen-scene.css";
 import "./voice/pen-life.css";
 import "./voice/pen-fence.css";
 import "./voice/pen-tv.css";
+// 场景主题（雪原/万圣夜）必须最后加载：按时段配色的覆盖靠层叠顺序取胜。
+import "./voice/pen-themes.css";
 
 const root = document.getElementById("root");
 if (!root) {

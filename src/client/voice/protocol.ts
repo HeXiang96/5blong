@@ -12,6 +12,7 @@
  */
 
 import { VEGETABLE_KINDS, type PenEvent, type VegetableKind } from "./pen";
+import { isSceneThemeId } from "./scene-theme";
 import { parseSoundEvent, type SoundEvent } from "./sounds";
 
 /**
@@ -535,7 +536,7 @@ export type GuestMessage =
 
 /** 房主 → 访客。 */
 export type HostMessage =
-  | { t: "welcome"; code: string; hostId: string; proof: string; roster: WireMember[]; you: string; locked?: boolean; screenShare?: ScreenShareState; topic?: string }
+  | { t: "welcome"; code: string; hostId: string; proof: string; roster: WireMember[]; you: string; locked?: boolean; screenShare?: ScreenShareState; topic?: string; theme?: string }
   | { t: "reject"; reason: RejectReason }
   | { t: "kick"; id: string }
   | { t: "force-mute"; id: string; muted: boolean }
@@ -547,6 +548,8 @@ export type HostMessage =
   | { t: "screen-pref"; from: string; mode: ScreenViewPreference }
   | { t: "chat"; id: string; name: string; text: string; ts: number }
   | { t: "roster"; members: WireMember[]; topic?: string }
+  /** 房主切换场景主题（"" = 回到默认，只有时段光照）。 */
+  | { t: "theme"; id: string }
   | { t: "peer-join"; member: WireMember }
   | { t: "peer-leave"; id: string }
   | { t: "speaking"; id: string; speaking: boolean }
@@ -683,6 +686,8 @@ export function parseHostMessage(data: unknown): HostMessage | null {
         locked: msg["locked"] === true,
         // 房主铭牌公告（向后兼容：缺席 = 没有公告）。
         topic: str(msg["topic"], 60) || undefined,
+        // 房主选择的场景主题（向后兼容：缺席/非法 = 默认主题）。
+        theme: isSceneThemeId(msg["theme"]) ? msg["theme"] : undefined,
         // 中途进房的人也要知道"电视亮没亮"（缺席 = 没在共享，向后兼容）。
         screenShare: msg["screenShare"] === undefined ? undefined : parseScreenShareState(msg["screenShare"]) ?? undefined,
       };
@@ -732,6 +737,9 @@ export function parseHostMessage(data: unknown): HostMessage | null {
     }
     case "roster":
       return { t: "roster", members: parseRoster(msg["members"]), topic: str(msg["topic"], 60) || undefined };
+    case "theme":
+      // 白名单外的 id 直接丢弃（不往 DOM 属性里塞任意字符串）。
+      return isSceneThemeId(msg["id"]) ? { t: "theme", id: msg["id"] } : null;
     case "peer-join": {
       const member = parseMember(msg["member"]);
       return member ? { t: "peer-join", member } : null;
