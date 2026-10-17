@@ -56,7 +56,7 @@ export type GuestToHost =
 
 /** 房主 → 访客。 */
 export type HostToGuest =
-  | { t: "gwelcome"; code: string; hostId: string; members: GameMember[]; scores: GameScores; you: string }
+  | { t: "gwelcome"; code: string; hostId: string; members: GameMember[]; scores: GameScores; you: string; title?: string; map?: string }
   | { t: "groster"; members: GameMember[]; scores: GameScores }
   | { t: "gkick" };
 
