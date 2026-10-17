@@ -699,3 +699,11 @@ html[data-daypart="night"] .vx-game-root {
 .vx-game-modal .vx-game-row .vx-field {
   margin-bottom: 0;
 }
+
+/* 抹掉字段底部残留的分隔线 */
+.vx-game-modal .vx-field,
+.vx-game-modal .vx-field::after,
+.vx-game-modal .vx-field .vx-input::after {
+  border-bottom: none !important;
+  box-shadow: none !important;
+}
