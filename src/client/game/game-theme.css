@@ -776,3 +776,33 @@ html[data-daypart="night"] .vx-game-root {
   border: 1.5px dashed rgba(160, 200, 240, 0.3);
   flex: 0 0 auto;
 }
+
+/* 底部按钮：深底上必须清晰（业主实测"关闭开黑圈"几乎看不见） */
+.vx-game-foot .vx-btn {
+  font-size: 13px;
+  font-weight: 600;
+  padding: 8px 16px;
+  border-radius: 10px;
+}
+.vx-game-foot .vx-btn-ghost {
+  color: var(--g-text);
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+}
+.vx-game-foot .vx-btn-danger {
+  color: #fff;
+  background: linear-gradient(120deg, #e25050, #b93a3a);
+  border: none;
+}
+/* 成员名字/计数提亮加大 */
+.vx-game-name {
+  font-size: 14px;
+  color: var(--g-text);
+}
+.vx-game-lane-count,
+.vx-game-lane-empty {
+  color: var(--g-dim) !important;
+}
+.vx-game-mic-on {
+  color: rgba(233, 244, 255, 0.7);
+}
