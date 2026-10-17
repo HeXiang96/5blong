@@ -19,6 +19,9 @@ import {
 import { readJson, writeJson } from "../voice/storage";
 
 const TUTORIAL_KEY = "5blong:v1:gameTutorialSeen";
+const MIC_BOOST_KEY = "5blong:v1:gameMicBoost";
+const NS_KEY = "5blong:v1:gameNs";
+const PEER_VOL_KEY = "5blong:v1:gamePeerVolumes";
 const ENTITLE_KEY = "5blong:v1:gameEntitle";
 
 export interface GameEntitlement {
@@ -92,6 +95,37 @@ export async function verifyEntitlement(): Promise<boolean> {
   }
 }
 
+/** 麦克风增强（1~4），本机记忆。 */
+export function loadMicBoost(): number {
+  const raw = readJson<number>(MIC_BOOST_KEY, 1);
+  return typeof raw === "number" && raw >= 1 && raw <= 4 ? raw : 1;
+}
+
+export function saveMicBoost(value: number): void {
+  writeJson(MIC_BOOST_KEY, value);
+}
+
+export function loadNs(): boolean {
+  return readJson<boolean>(NS_KEY, true) !== false;
+}
+
+export function saveNs(on: boolean): void {
+  writeJson(NS_KEY, on);
+}
+
+export function loadPeerVolumes(): Record<string, number> {
+  const raw = readJson<Record<string, number>>(PEER_VOL_KEY, {});
+  const out: Record<string, number> = {};
+  for (const [key, value] of Object.entries(raw ?? {})) {
+    if (typeof value === "number" && value >= 0 && value <= 2) out[key] = value;
+  }
+  return out;
+}
+
+export function savePeerVolumes(map: Record<string, number>): void {
+  writeJson(PEER_VOL_KEY, map);
+}
+
 export function tutorialSeen(): boolean {
   return readJson<boolean>(TUTORIAL_KEY, false) === true;
 }
@@ -161,6 +195,9 @@ export function useGame() {
         return;
       }
       const mesh = ensureMesh();
+      mesh.setPeerVolumes(loadPeerVolumes());
+      await mesh.setMicBoost(loadMicBoost());
+      await mesh.setNoiseSuppression(loadNs());
       await mesh.host({ ...opts, gameId });
     },
     [ensureMesh],
@@ -176,6 +213,9 @@ export function useGame() {
         return;
       }
       const mesh = ensureMesh();
+      mesh.setPeerVolumes(loadPeerVolumes());
+      await mesh.setMicBoost(loadMicBoost());
+      await mesh.setNoiseSuppression(loadNs());
       await mesh.join({ ...opts, gameId });
     },
     [ensureMesh],
@@ -220,6 +260,36 @@ export function useGame() {
     meshRef.current?.setTeamCapUnlocked(!unlocked);
   }, [unlocked]);
 
+  /** 麦克风增强（1~4），本机记忆，进房后随时可调。 */
+  const [micBoost, setMicBoostState] = useState(() => loadMicBoost());
+  const setMicBoost = useCallback((value: number) => {
+    const clamped = Math.min(4, Math.max(1, value));
+    setMicBoostState(clamped);
+    saveMicBoost(clamped);
+    void meshRef.current?.setMicBoost(clamped);
+  }, []);
+
+  /** AI 强降噪开关（本机记忆）。 */
+  const [nsOn, setNsOnState] = useState(() => loadNs());
+  const toggleNs = useCallback(() => {
+    const next = !nsOn;
+    setNsOnState(next);
+    saveNs(next);
+    void meshRef.current?.setNoiseSuppression(next);
+  }, [nsOn]);
+
+  /** 对某游戏 ID 的接收音量（0~2），本机记忆。 */
+  const [peerVolumes, setPeerVolumesState] = useState<Record<string, number>>(() => loadPeerVolumes());
+  const setPeerVolume = useCallback((gameId: string, volume: number) => {
+    const clamped = Math.min(2, Math.max(0, volume));
+    setPeerVolumesState((current) => {
+      const next = { ...current, [gameId]: clamped };
+      savePeerVolumes(next);
+      return next;
+    });
+    meshRef.current?.setPeerVolume(gameId, clamped);
+  }, []);
+
   /** 关房（房主）/ 退房（访客）。 */
   const closeRoom = useCallback(() => {
     leaveRoom();
@@ -253,5 +323,11 @@ export function useGame() {
     resetScores,
     kick,
     toggleTeamCap,
+    micBoost,
+    setMicBoost,
+    nsOn,
+    toggleNs,
+    peerVolumes,
+    setPeerVolume,
   };
 }

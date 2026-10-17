@@ -222,6 +222,12 @@ export function App() {
             if (game.room) void navigator.clipboard?.writeText(gameInviteUrl(game.room.code));
           }}
           onLeave={game.closeRoom}
+          micBoost={game.micBoost}
+          onSetMicBoost={game.setMicBoost}
+          nsOn={game.nsOn}
+          onToggleNs={game.toggleNs}
+          peerVolumes={game.peerVolumes}
+          onSetPeerVolume={game.setPeerVolume}
         />
       </>
     );

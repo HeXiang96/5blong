@@ -106,7 +106,7 @@ export function GameCreateDialog({
 
         {!entitlement ? (
           <div className="vx-game-entitle">
-            <p className="vx-modal-hint">创建开黑圈需要创建码（向房主索要）</p>
+            <p className="vx-modal-hint">创建开黑圈需要创建码（找管理员开通）</p>
             <div className="vx-game-row">
               <input className="vx-input" value={code} placeholder="BLONG-XXXX" onChange={(event) => setCode(event.target.value)} />
               <button type="button" className="vx-btn vx-btn-ghost" style={{ minWidth: 74 }} disabled={activating || !code.trim()} onClick={() => void activate()}>
@@ -217,6 +217,7 @@ export function GameTutorial({ onClose }: { onClose: () => void }) {
     { emoji: "🎯", title: "游戏里分好边，回来点一下", text: "游戏里你是进攻方，就点「我在进攻方」；防守方同理。点完立刻只听本队。" },
     { emoji: "🔒", title: "队伍之间互不相通", text: "两队之间、队伍与待分队之间互相听不到，不会串麦；想听某队只能加入那队。" },
     { emoji: "🏆", title: "房主记分", text: "房主可以在顶部记分，一局结束点「清零比分」开下一局；编制不受影响。" },
+    { emoji: "🔊", title: "音量与降噪", text: "点成员卡调某个人的音量（0~200%，本机记住）；底部拉「增强」救小嗓门；AI降噪默认开。" },
   ];
   return (
     <div className="vx-modal-backdrop" onClick={onClose}>
@@ -264,6 +265,12 @@ export function GameRoomView({
   onToggleCap,
   onCopyInvite,
   onLeave,
+  micBoost,
+  onSetMicBoost,
+  nsOn,
+  onToggleNs,
+  peerVolumes,
+  onSetPeerVolume,
 }: {
   room: GameRoomInfo;
   members: GameMember[];
@@ -282,8 +289,19 @@ export function GameRoomView({
   onToggleCap: () => void;
   onCopyInvite: () => void;
   onLeave: () => void;
+  /** 麦克风增强（1~4）。 */
+  micBoost: number;
+  onSetMicBoost: (value: number) => void;
+  /** AI 强降噪开关。 */
+  nsOn: boolean;
+  onToggleNs: () => void;
+  /** 对某游戏 ID 的接收音量（0~2）。 */
+  peerVolumes: Record<string, number>;
+  onSetPeerVolume: (gameId: string, volume: number) => void;
 }) {
   const [manageId, setManageId] = useState<string | null>(null);
+  /** 点成员卡弹出的"对方音量"弹层（按成员 id）。 */
+  const [volId, setVolId] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [showTutorial, setShowTutorial] = useState(() => !tutorialSeen());
 
@@ -302,11 +320,14 @@ export function GameRoomView({
   };
 
   useEffect(() => {
-    if (!manageId) return;
-    const close = () => setManageId(null);
+    if (!manageId && !volId) return;
+    const close = () => {
+      setManageId(null);
+      setVolId(null);
+    };
     window.addEventListener("click", close);
     return () => window.removeEventListener("click", close);
-  }, [manageId]);
+  }, [manageId, volId]);
 
   return (
     <div className="vx-game-root">
@@ -384,7 +405,15 @@ export function GameRoomView({
                   <p className="vx-game-lane-empty">都认领了，这里空了</p>
                 ) : null}
                 {group.members.map((member) => (
-                  <article key={member.id} className={`vx-game-card${member.local ? " vx-game-card-me" : ""}`}>
+                  <article
+                    key={member.id}
+                    className={`vx-game-card${member.local ? " vx-game-card-me" : ""}${volId === member.id ? " vx-game-card-open" : ""}`}
+                    onClick={() => {
+                      if (member.local) return;
+                      setVolId((current) => (current === member.id ? null : member.id));
+                    }}
+                    style={{ cursor: member.local ? "default" : "pointer" }}
+                  >
                     <span className="vx-game-avatar" aria-hidden="true">
                       {member.gameId.slice(0, 1).toUpperCase()}
                     </span>
@@ -405,6 +434,30 @@ export function GameRoomView({
                         <Mic size={12} />
                       </span>
                     )}
+                    {volId === member.id ? (
+                      <span className="vx-game-menu vx-game-volmenu" onClick={(event) => event.stopPropagation()}>
+                        <span className="vx-game-vol-label">
+                          {member.gameId} 的音量{" "}
+                          <b>{Math.round((peerVolumes[member.gameId] ?? 1) * 100)}%</b>
+                        </span>
+                        <input
+                          type="range"
+                          min={0}
+                          max={2}
+                          step={0.05}
+                          value={peerVolumes[member.gameId] ?? 1}
+                          onChange={(event) => onSetPeerVolume(member.gameId, Number(event.target.value))}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onSetPeerVolume(member.gameId, 1);
+                          }}
+                        >
+                          恢复 100%
+                        </button>
+                      </span>
+                    ) : null}
                     {isHost && !member.local ? (
                       <button
                         type="button"
@@ -474,11 +527,33 @@ export function GameRoomView({
           {muted ? <MicOff size={16} /> : <Mic size={16} />}
           {muted ? "已静音" : "麦克风开着"}
         </button>
-        <span className="vx-game-hint">
+        <span className="vx-game-boost" onClick={(event) => event.stopPropagation()}>
+            <span className="vx-game-boost-label">
+              🎙 增强 <b>{Math.round(micBoost * 100)}%</b>
+            </span>
+            <input
+              type="range"
+              min={1}
+              max={4}
+              step={0.1}
+              value={micBoost}
+              onChange={(event) => onSetMicBoost(Number(event.target.value))}
+              title="你的声音太小？拉高麦克风增强（对方实时听到）"
+            />
+          </span>
+          <button
+            type="button"
+            className={`vx-game-mini${nsOn ? " vx-game-mini-on" : ""}`}
+            onClick={onToggleNs}
+            title="RNNoise AI 强降噪：压键盘/风扇/环境声"
+          >
+            AI降噪 {nsOn ? "开" : "关"}
+          </button>
+          <span className="vx-game-hint">
           {myTeam === "unassigned"
             ? "你在待分队：能听见全房，两队都听不到你"
             : `你在${TEAM_LABEL[myTeam]}：只听得到本队（对面与待分队都听不到你）`}
-        </span>
+          </span>
         {isHost ? (
           <button type="button" className="vx-game-mini" onClick={onToggleCap} title="应对 6v4 这类游戏内真实情况">
             {unlocked ? "恢复每队 5 人" : "解锁每队人数上限"}

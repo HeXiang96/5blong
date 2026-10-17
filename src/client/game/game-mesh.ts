@@ -16,6 +16,10 @@
 
 import { Peer } from "peerjs";
 import type { DataConnection, MediaConnection } from "peerjs";
+import { RnnoiseWorkletNode, loadRnnoise } from "@sapphi-red/web-noise-suppressor";
+import rnnoiseWorkletUrl from "@sapphi-red/web-noise-suppressor/rnnoiseWorklet.js?url";
+import rnnoiseWasmUrl from "@sapphi-red/web-noise-suppressor/rnnoise.wasm?url";
+import rnnoiseSimdWasmUrl from "@sapphi-red/web-noise-suppressor/rnnoise_simd.wasm?url";
 
 import { SIGNAL_ROUTES } from "../voice/signal-routes";
 import { ensureIceServers, iceServers } from "../voice/ice";
@@ -61,6 +65,14 @@ export class GameMesh {
   private members = new Map<string, GameMember>();
   private scores: GameScores = { attack: 0, defend: 0 };
   private localStream: MediaStream | null = null;
+  /** 真正发布的流：麦克风 → (RNNoise) → 增益 → 输出。麦克风增强在这条链上真实生效。 */
+  private publishedStream: MediaStream | null = null;
+  private audioCtx: AudioContext | null = null;
+  private micSourceNode: MediaStreamAudioSourceNode | null = null;
+  private micGainNode: GainNode | null = null;
+  private nsNode: RnnoiseWorkletNode | null = null;
+  private micBoost = 1;
+  private nsOn = true;
   private unlocked = false;
   private hosting = false;
   private joined = false;
@@ -351,6 +363,13 @@ export class GameMesh {
       for (const track of this.localStream.getTracks()) track.stop();
       this.localStream = null;
     }
+    try {
+      void this.audioCtx?.close();
+    } catch {
+      /* noop */
+    }
+    this.audioCtx = null;
+    this.publishedStream = null;
     this.dropPeer();
   }
 
@@ -388,7 +407,7 @@ export class GameMesh {
       if (this.calls.has(peerId)) continue;
       if (this.myId >= peerId) continue;
       try {
-        const call = this.peer!.call(peerId, this.localStream);
+        const call = this.peer!.call(peerId, this.publishedStream ?? this.localStream);
         if (!call) continue;
         this.calls.set(peerId, call);
         call.on("stream", (stream) => this.attachAudio(peerId, stream));
@@ -416,9 +435,38 @@ export class GameMesh {
       this.audios.set(peerId, audio);
     }
     audio.srcObject = stream;
+    audio.volume = this.volumeOfPeer(peerId);
     void audio.play().catch(() => {
       /* 自动播放被拦：等用户下一次交互由 UI 再调 play */
     });
+  }
+
+  /** 某个成员的接收音量（0~2，按游戏 ID 记忆在 localStorage）。 */
+  private volumeOfPeer(peerId: string): number {
+    const gameId = this.members.get(peerId)?.gameId ?? "";
+    return this.peerVolumes[gameId] ?? 1;
+  }
+
+  private peerVolumes: Record<string, number> = {};
+
+  /** 批量载入本机记忆的接收音量（进房时调用）。 */
+  setPeerVolumes(map: Record<string, number>): void {
+    this.peerVolumes = { ...map };
+  }
+
+  /** 设置对某游戏 ID 的接收音量（0~2），立即应用到已存在的音频元素。 */
+  setPeerVolume(gameId: string, volume: number): void {
+    const clamped = Math.min(2, Math.max(0, volume));
+    this.peerVolumes = { ...this.peerVolumes, [gameId]: clamped };
+    for (const [peerId, member] of this.members) {
+      if (member.gameId !== gameId) continue;
+      const audio = this.audios.get(peerId);
+      if (audio) audio.volume = clamped;
+    }
+  }
+
+  getPeerVolumes(): Record<string, number> {
+    return { ...this.peerVolumes };
   }
 
   private dropAudio(peerId: string): void {
@@ -603,7 +651,7 @@ export class GameMesh {
           }
         });
         peer.on("call", (call) => {
-          call.answer(this.localStream ?? undefined);
+          call.answer(this.publishedStream ?? this.localStream ?? undefined);
           call.on("stream", (stream) => this.attachAudio(call.peer, stream));
           call.on("close", () => this.forgetCall(call.peer));
           this.calls.set(call.peer, call);
@@ -658,5 +706,82 @@ export class GameMesh {
     for (const track of stream.getAudioTracks()) track.enabled = !muted;
     this.localStream = stream;
     this.localMuted = muted;
+    await this.buildOutgoing();
+  }
+
+  /**
+   * 发送链：麦克风 →（RNNoise 强降噪，可关）→ 增益（麦克风增强，真 GainNode，
+   * 小嗓门队友拉到 200%~400% 是真放大）→ 输出流。publishedStream 才是发布给同伴的。
+   * ⚠️ 与语音房同一坑：采集默认开 AGC，手动增益会被 AGC 压回去——
+   * 增益 >100% 时自动挂起 AGC（applyConstraints），回到 ≤100% 恢复。
+   */
+  private async buildOutgoing(): Promise<void> {
+    if (!this.localStream) return;
+    if (!this.audioCtx || this.audioCtx.state === "closed") {
+      this.audioCtx = new AudioContext();
+    }
+    const ctx = this.audioCtx;
+    // 拆旧链（换降噪开关时重建）
+    try {
+      this.nsNode?.disconnect();
+      this.micSourceNode?.disconnect();
+      this.micGainNode?.disconnect();
+    } catch {
+      /* noop */
+    }
+    this.nsNode = null;
+
+    const source = ctx.createMediaStreamSource(this.localStream);
+    const gain = ctx.createGain();
+    gain.gain.value = this.micBoost;
+    this.micSourceNode = source;
+    this.micGainNode = gain;
+    const dest = ctx.createMediaStreamDestination();
+
+    if (this.nsOn) {
+      try {
+        await ctx.audioWorklet.addModule(rnnoiseWorkletUrl);
+        const wasmBinary = await loadRnnoise({ url: rnnoiseWasmUrl, simdUrl: rnnoiseSimdWasmUrl });
+        const ns = new RnnoiseWorkletNode(ctx, { maxChannels: 1, wasmBinary });
+        this.nsNode = ns;
+        source.connect(ns);
+        ns.connect(gain);
+      } catch {
+        source.connect(gain);
+      }
+    } else {
+      source.connect(gain);
+    }
+    gain.connect(dest);
+    this.publishedStream = dest.stream;
+    // AGC 与手动增益互搏：>100% 挂起 AGC
+    await this.applyAgcForBoost(this.micBoost > 1);
+  }
+
+  private async applyAgcForBoost(boosted: boolean): Promise<void> {
+    const track = this.localStream?.getAudioTracks()[0];
+    if (!track || typeof track.applyConstraints !== "function") return;
+    try {
+      await track.applyConstraints({ advanced: [{ autoGainControl: !boosted }] });
+    } catch {
+      /* 设备不支持运行时改约束就算了 */
+    }
+  }
+
+  /** 麦克风增强（1.0 = 原声，最大 4.0），即时生效并持久化由调用方负责。 */
+  async setMicBoost(value: number): Promise<void> {
+    const clamped = Math.min(4, Math.max(1, value));
+    this.micBoost = clamped;
+    if (this.micGainNode && this.audioCtx) {
+      this.micGainNode.gain.setTargetAtTime(clamped, this.audioCtx.currentTime, 0.01);
+    }
+    await this.applyAgcForBoost(clamped > 1);
+  }
+
+  /** 开关 RNNoise 强降噪（重建发送链）。 */
+  async setNoiseSuppression(on: boolean): Promise<void> {
+    if (this.nsOn === on) return;
+    this.nsOn = on;
+    await this.buildOutgoing();
   }
 }
