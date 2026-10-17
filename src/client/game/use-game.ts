@@ -71,7 +71,12 @@ export async function activateEntitlement(code: string): Promise<GameEntitlement
 export async function verifyEntitlement(): Promise<boolean> {
   const value = loadEntitlement();
   if (!value) return false;
-  if (value.token.startsWith("trial:")) return true;
+  // 历史遗留的 trial 令牌（早期预览兜底发的）一律作废——它绕过全部校验，
+  // 业主吊销后仍能建房就是它（2026-10-17 实测暴露）。
+  if (value.token.startsWith("trial:")) {
+    writeJson(ENTITLE_KEY, null);
+    return false;
+  }
   try {
     const response = await fetch("/game/verify", {
       method: "POST",
