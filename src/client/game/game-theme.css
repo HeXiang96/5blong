@@ -549,22 +549,33 @@ html[data-daypart="night"] .vx-game-root {
   position: relative;
   overflow: hidden;
   background:
-    radial-gradient(120% 80% at 85% -10%, rgba(53, 224, 208, 0.14), transparent 55%),
-    radial-gradient(120% 80% at 10% 110%, rgba(255, 122, 69, 0.12), transparent 55%),
-    linear-gradient(180deg, #131b26, #0a0f16);
+    radial-gradient(85% 55% at 88% -8%, rgba(255, 122, 69, 0.22), transparent 58%),
+    radial-gradient(85% 55% at 8% 108%, rgba(53, 224, 208, 0.2), transparent 58%),
+    linear-gradient(165deg, #182636 0%, #101b2b 46%, #0e1727 100%);
   color: var(--g-text, #e9f4ff);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  box-shadow: 0 30px 70px rgba(0, 0, 0, 0.55);
+  border: 1px solid rgba(120, 220, 230, 0.28);
+  box-shadow: 0 30px 70px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.08);
 }
 .vx-game-modal::before {
   content: "";
   position: absolute;
   inset: 0;
   background-image:
-    linear-gradient(to right, rgba(90, 200, 220, 0.08) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(90, 200, 220, 0.08) 1px, transparent 1px);
+    linear-gradient(to right, rgba(90, 210, 230, 0.12) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(90, 210, 230, 0.12) 1px, transparent 1px);
   background-size: 34px 34px;
   pointer-events: none;
+}
+/* 顶部橙→青渐变光条：深底上的视觉锚点 */
+.vx-game-modal::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 3px;
+  background: linear-gradient(90deg, #ff7a45, #ffd479 45%, #35e0d0);
+  opacity: 0.9;
 }
 .vx-game-modal > * {
   position: relative;
