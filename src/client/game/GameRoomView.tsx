@@ -56,8 +56,8 @@ export function GameCreateDialog({
   };
 
   return (
-    <div className="vx-modal-backdrop" onClick={onCancel}>
-      <div className="vx-modal vx-game-modal" onClick={(event) => event.stopPropagation()}>
+    <div className="vx-modal-backdrop">
+      <div className="vx-modal vx-game-modal">
         <h2>🎮 创建开黑圈</h2>
         <p className="vx-modal-sub">5v5 内战房：一个房间码拉满两队，队内语音自动隔离</p>
 
@@ -139,8 +139,8 @@ export function GameJoinDialog({
   const [gameId, setGameId] = useState("");
   const [muted, setMuted] = useState(false);
   return (
-    <div className="vx-modal-backdrop" onClick={onCancel}>
-      <div className="vx-modal vx-game-modal" onClick={(event) => event.stopPropagation()}>
+    <div className="vx-modal-backdrop">
+      <div className="vx-modal vx-game-modal">
         <h2>🎮 加入开黑圈</h2>
         <p className="vx-modal-sub">房间 {code} · 进房后请先认领你的边（进攻 / 防守）</p>
         <label className="vx-field">
