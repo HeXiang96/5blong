@@ -1144,9 +1144,8 @@ async function handleGameAdminInner(request, env) {
     `<tr><td><code>${row.code}</code></td><td>${row.note ?? ""}</td><td>${row.uses_left}</td>
       <td>${cnTime(row.expires_at)}</td><td>${row.revoked ? "已吊销" : row.uses_left <= 0 ? "已用完" : "有效"}</td>
       <td>${canRevoke ? `<form method="post" style="display:inline"><input type="hidden" name="action" value="revoke_code"/>
-        <input type="hidden" name="code" value="${row.code}"/><button type="submit">吊销</button></form>` : ""}</td></tr>`;
+        <input type="hidden" name="code" value="${row.code}"/><button class="g-revoke" type="submit">吊销</button></form>` : ""}</td></tr>`;
   const codeRows = valid.map((row) => codeRow(row, true)).join("");
-  const deadRows = dead.map((row) => codeRow(row, false)).join("");
   const staffRows = staff
     .map(
       (row) => `<tr><td>${row.name}</td><td>${row.scope}</td><td>${cnTime(row.expires_at)}</td>
@@ -1160,8 +1159,8 @@ async function handleGameAdminInner(request, env) {
   const totalCodes = codes.length;
   const totalActivated = (audit.filter((row) => row.action === "activate").length) || 0;
   const rowsHead = (rows, visible = 5) => rows.slice(0, visible).join("");
-  const CODE_HEAD = "<tr><th>码</th><th>备注</th><th>剩余次数</th><th>到期</th><th>状态</th><th></th></tr>";
-  const STAFF_HEAD = "<tr><th>名字</th><th>权限</th><th>到期</th><th>状态</th><th></th></tr>";
+  const CODE_HEAD = "<tr><th>码</th><th>备注</th><th>剩余次数</th><th>到期</th><th>状态</th><th>操作</th></tr>";
+  const STAFF_HEAD = "<tr><th>名字</th><th>权限</th><th>到期</th><th>状态</th><th>操作</th></tr>";
   const AUDIT_HEAD = "<tr><th>时间</th><th>操作者</th><th>动作</th><th>详情</th></tr>";
   const rowsRest = (rows, visible, head) => {
     const rest = rows.slice(visible);
@@ -1224,11 +1223,11 @@ async function handleGameAdminInner(request, env) {
       <button type="submit" class="vx-btn-small btn-accent">生成</button>
     </form>
     <div class="sec-title">创建码 · 有效（${valid.length}）</div>
-    ${valid.length ? `<table>${"<tr><th>码</th><th>备注</th><th>剩余次数</th><th>到期</th><th>状态</th><th></th></tr>"}${rowsHead(valid.map((row) => codeRow(row, true)))}</table>${rowsRest(valid.map((row) => codeRow(row, true)), 5, CODE_HEAD)}` : '<div class="empty-box"><div class="empty-emoji">🎟️</div>还没有有效码<br><span class="empty-sub">在上面生成一条，发给要开黑的群友</span></div>'}
+    ${valid.length ? `<table>${"<tr><th>码</th><th>备注</th><th>剩余次数</th><th>到期</th><th>状态</th><th>操作</th></tr>"}${rowsHead(valid.map((row) => codeRow(row, true)))}</table>${rowsRest(valid.map((row) => codeRow(row, true)), 5, CODE_HEAD)}` : '<div class="empty-box"><div class="empty-emoji">🎟️</div>还没有有效码<br><span class="empty-sub">在上面生成一条，发给要开黑的群友</span></div>'}
     <div class="sec-title">创建码 · 已用完（${usedUp.length}）</div>
-    ${usedUp.length ? `<table>${"<tr><th>码</th><th>备注</th><th>剩余次数</th><th>到期</th><th>状态</th><th></th></tr>"}${rowsHead(usedUp.map((row) => codeRow(row, false)))}</table>${rowsRest(usedUp.map((row) => codeRow(row, false)), 5, CODE_HEAD)}` : '<span class="kv">暂无</span>'}
+    ${usedUp.length ? `<table>${"<tr><th>码</th><th>备注</th><th>剩余次数</th><th>到期</th><th>状态</th><th>操作</th></tr>"}${rowsHead(usedUp.map((row) => codeRow(row, true)))}</table>${rowsRest(usedUp.map((row) => codeRow(row, true)), 5, CODE_HEAD)}` : '<span class="kv">暂无</span>'}
     <div class="sec-title">创建码 · 已吊销 / 已过期（${revoked.length}）</div>
-    ${revoked.length ? `<table>${"<tr><th>码</th><th>备注</th><th>剩余次数</th><th>到期</th><th>状态</th><th></th></tr>"}${rowsHead(revoked.map((row) => codeRow(row, false)))}</table>${rowsRest(revoked.map((row) => codeRow(row, false)), 5, CODE_HEAD)}` : '<span class="kv">暂无</span>'}
+    ${revoked.length ? `<table>${"<tr><th>码</th><th>备注</th><th>剩余次数</th><th>到期</th><th>状态</th><th>操作</th></tr>"}${rowsHead(revoked.map((row) => codeRow(row, false)))}</table>${rowsRest(revoked.map((row) => codeRow(row, false)), 5, CODE_HEAD)}` : '<span class="kv">暂无</span>'}
     ${who.role === "main" ? `<div class="sec-title">新增员工（仅主令牌）</div>
       <form method="post" class="g-form"><input type="hidden" name="action" value="new_staff"/>
         <label>名字 <input name="name" placeholder="运营-小王" size="12"/></label>
