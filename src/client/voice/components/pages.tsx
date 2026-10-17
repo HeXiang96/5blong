@@ -253,10 +253,27 @@ export function LandingView({
           </button>
         </div>
 
-        {/* 开黑圈（5v5 自定义内战房）：独立子系统的入口 */}
-        <button type="button" className="vx-link-btn vx-tease-btn" onClick={() => setTeaseOpen(true)}>
-          🎮 开黑圈 · 5v5 内战房
-        </button>
+        {/*
+          开黑圈入口：与语音房**明确分区**（业主反馈"三个按钮没用过软件的会搞混"）。
+          文案直接说清"打游戏的用这个"，创建/加入两个动作直接摆出来，不用再进一层。
+        */}
+        <div className="vx-game-entry">
+          <div className="vx-game-entry-text">
+            <strong>🎮 开黑圈 · 5v5 分队内战房</strong>
+            <span>要分进攻/防守两队、队内语音互相隔离的内战用这个；平时连麦聊天，上面的「语音房」就够了</span>
+            <button type="button" className="vx-link-btn vx-game-entry-what" onClick={() => setTeaseOpen(true)}>
+              这是什么？
+            </button>
+          </div>
+          <div className="vx-game-entry-actions">
+            <button type="button" className="vx-btn vx-btn-small vx-btn-primary" onClick={onCreateGame}>
+              创建开黑圈
+            </button>
+            <button type="button" className="vx-btn vx-btn-small vx-btn-ghost" onClick={onJoinGame}>
+              加入开黑圈
+            </button>
+          </div>
+        </div>
 
         {teaseOpen ? (
           <div className="vx-modal-backdrop" onClick={() => setTeaseOpen(false)}>
@@ -272,25 +289,8 @@ export function LandingView({
                 创建需要创建码（找房主要）；加入直接输入 4 位房间码。
               </p>
               <div className="vx-modal-actions">
-                <button
-                  type="button"
-                  className="vx-btn vx-btn-ghost"
-                  onClick={() => {
-                    setTeaseOpen(false);
-                    onJoinGame();
-                  }}
-                >
-                  加入开黑圈
-                </button>
-                <button
-                  type="button"
-                  className="vx-btn vx-btn-primary"
-                  onClick={() => {
-                    setTeaseOpen(false);
-                    onCreateGame();
-                  }}
-                >
-                  创建开黑圈
+                <button type="button" className="vx-btn vx-btn-primary" onClick={() => setTeaseOpen(false)}>
+                  知道了
                 </button>
               </div>
             </div>
