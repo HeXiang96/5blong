@@ -78,6 +78,10 @@ export class GameMesh {
   private memberStats = new Map<string, { joined: number; speak: number }>();
   private analysers = new Map<string, { node: AnalyserNode; buffer: Float32Array; timer: number }>();
   private micDeviceId = "";
+  /** 静音流：待分队"听全房"时发布它——对方听不到待分队，但待分队能听到对方。 */
+  private silentStream: MediaStream | null = null;
+  /** 哪些 peer 是"待分队→队伍"的单向连接（只收不听）。 */
+  private silentCalls = new Set<string>();
   private outputDeviceId = "";
   private unlocked = false;
   private hosting = false;
@@ -401,6 +405,14 @@ export class GameMesh {
 
   // ------------------------------------------------------------ 媒体：分组
 
+  private getSilentStream(): MediaStream | null {
+    if (this.silentStream) return this.silentStream;
+    if (!this.audioCtx) return null;
+    const dest = this.audioCtx.createMediaStreamDestination();
+    this.silentStream = dest.stream;
+    return this.silentStream;
+  }
+
   /**
    * 按"同队才连"重建音频连接：
    *   目标集 = 与我同 group 的成员（未分队/进攻/防守各成一组）。
@@ -412,9 +424,16 @@ export class GameMesh {
     const me = this.members.get(this.myId);
     if (!me) return;
     const desired = new Set<string>();
+    const unassigned = me.team === "unassigned";
     for (const member of this.members.values()) {
       if (member.id === this.myId) continue;
-      if (member.team === me.team) desired.add(member.id);
+      if (unassigned) {
+        // 待分队：听全房（两队 + 待分队自身），但对队伍只发静音（他们听不到我）
+        desired.add(member.id);
+      } else if (member.team === me.team) {
+        // 队伍：只连同队（听不到对面，也听不到待分队）
+        desired.add(member.id);
+      }
     }
     // 挂断不再需要的人
     for (const [peerId, call] of this.calls) {
@@ -428,9 +447,39 @@ export class GameMesh {
         this.dropAudio(peerId);
       }
     }
-    // 发起新连接（id 小的一方主动，避免双方同时 call）
+    // 发起新连接：待分队→队伍 必须由待分队发起（队伍永远不会主动连待分队）
     for (const peerId of desired) {
+      const peerMember = this.members.get(peerId);
+      const peerIsTeam = !!(peerMember && peerMember.team !== "unassigned");
+      if (unassigned && peerIsTeam && this.calls.has(peerId) && !this.silentCalls.has(peerId)) {
+        // 刚从队伍切回待分队：旧连接还在用"真实麦克风"，队友会听到我——必须立刻换成静音通道
+        const stale = this.calls.get(peerId)!;
+        try {
+          stale.close();
+        } catch {
+          /* noop */
+        }
+        this.calls.delete(peerId);
+        this.dropAudio(peerId);
+      }
       if (this.calls.has(peerId)) continue;
+      if (unassigned && peerIsTeam) {
+        // 只收不听：发静音流，收对方的声音
+        const silent = this.getSilentStream();
+        if (!silent) continue;
+        try {
+          const call = this.peer!.call(peerId, silent);
+          if (!call) continue;
+          this.calls.set(peerId, call);
+          this.silentCalls.add(peerId);
+          call.on("stream", (stream) => this.attachAudio(peerId, stream));
+          call.on("close", () => this.forgetCall(peerId));
+          call.on("error", () => this.forgetCall(peerId));
+        } catch {
+          /* 单个呼叫失败不影响其他人 */
+        }
+        continue;
+      }
       if (this.myId >= peerId) continue;
       try {
         const call = this.peer!.call(peerId, this.publishedStream ?? this.localStream);
@@ -447,7 +496,15 @@ export class GameMesh {
 
   private forgetCall(peerId: string): void {
     this.calls.delete(peerId);
+    this.silentCalls.delete(peerId);
     this.dropAudio(peerId);
+    /*
+     * 队友换队时会挂断我的连接（他不再和我同组），而我这边什么都不做就会"没声音"。
+     * 稍等一拍重新对账：如果我现在是待分队，会以"只收不听"的静音通道重新连上他。
+     */
+    window.setTimeout(() => {
+      if (!this.destroyed && this.joined) this.reconcileAudio();
+    }, 300);
   }
 
   private touchMember(id: string): void {
