@@ -1089,7 +1089,7 @@ async function handleGameAdmin(request, env) {
       await env.DB.prepare("INSERT INTO game_audit (at, actor, action, detail) VALUES (?, ?, ?, ?)")
         .bind(now, who.name, "new_code", `${code} uses=${uses} days=${days}`)
         .run();
-      flash.push(`新创建码：<code>${code}</code>（可用 ${uses} 次 / ${days} 天有效，只显示这一次）`);
+      flash.push(`<div class="g-newcode"><span class="g-newcode-label">🎉 新创建码（只显示这一次，先复制保存）</span><div class="g-newcode-row"><code class="g-newcode-code">${code}</code><button type="button" class="g-copy" data-code="${code}">复制</button></div><span class="g-newcode-meta">可用 ${uses} 次 · ${days} 天有效 · 已记入操作日志</span></div>`);
     }
     if (action === "revoke_code") {
       const code = String(form.get("code") ?? "");
@@ -1160,7 +1160,17 @@ async function handleGameAdmin(request, env) {
   };
 
   const html = `
-    ${flash.map((line) => `<p class="g-flash">${line}</p>`).join("")}
+    ${flash.map((line) => (line.includes("g-newcode") ? line : `<p class="g-flash">${line}</p>`)).join("")}
+    <script>
+      document.addEventListener("click", function (event) {
+        var btn = event.target.closest ? event.target.closest(".g-copy") : null;
+        if (!btn) return;
+        navigator.clipboard.writeText(btn.dataset.code).then(function () {
+          btn.textContent = "已复制";
+          setTimeout(function () { btn.textContent = "复制"; }, 1500);
+        });
+      });
+    </script>
     <p class="page-sub">创建码由你或运营发放；群友激活后 30 天内可以创建开黑圈。吊销立即生效。</p>
     <div class="stats">
       <div class="stat"><span class="ico ico-live">🎟️</span><span class="big">${valid.length}</span><span class="label">有效创建码</span></div>
