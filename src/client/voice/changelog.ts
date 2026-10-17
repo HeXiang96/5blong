@@ -20,6 +20,14 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.6.3",
+    date: "2026-10-17",
+    lines: [
+      "修复：开黑圈各端名单不一致",
+      "修复：换队/进出房间后不刷新",
+    ],
+  },
+  {
     version: "1.6.2",
     date: "2026-10-17",
     lines: [
