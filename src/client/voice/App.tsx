@@ -163,6 +163,7 @@ export function App() {
       {gameCreateOpen ? (
         <GameCreateDialog
           busy={gameBusy}
+          error={game.error}
           onCancel={() => setGameCreateOpen(false)}
           onCreate={(opts) => {
             setGameBusy(true);
