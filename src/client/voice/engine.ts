@@ -3136,12 +3136,31 @@ export class VoiceMesh {
     this.outgoingStream = dest.stream;
   }
 
-  /** 麦克风音量/增强（0..MIC_VOLUME_MAX），通话中拖动立即生效。 */
+  /**
+   * 麦克风音量/增强（0..MIC_VOLUME_MAX），通话中拖动立即生效。
+   *
+   * ⚠️ 增益与浏览器 AGC（自动增益）打架的坑（2026-10-17 业主找人实测
+   * "调到 200% 声音没增强"）：AGC 开着时，浏览器会自动把采集电平压回
+   * 目标值——手动增益 ×2，AGC 就把输入增益 ÷2，净效果≈零。
+   * 对策：音量 >100% 时自动挂起 AGC，回到 ≤100% 再恢复。
+   */
+  private agcSuspendedForBoost = false;
+
   setMicVolume(value: number): void {
     const gain = this.micGainNode;
     if (!gain || !this.ctx) return;
     const clamped = Math.min(MIC_VOLUME_MAX, Math.max(0, value));
     gain.gain.setTargetAtTime(clamped, this.ctx.currentTime, 0.01);
+    const track = this.localStream?.getAudioTracks()[0];
+    const wantBoost = clamped > 1.0;
+    if (track && typeof track.applyConstraints === "function" && wantBoost !== this.agcSuspendedForBoost) {
+      this.agcSuspendedForBoost = wantBoost;
+      void track
+        .applyConstraints({ advanced: [{ autoGainControl: !wantBoost }] })
+        .catch(() => {
+          /* 个别设备不支持运行时改约束：保持现状，增益仍有部分效果 */
+        });
+    }
   }
 
   /**
