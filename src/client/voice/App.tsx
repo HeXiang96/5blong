@@ -25,6 +25,10 @@ export function App() {
   const [gameJoinCode, setGameJoinCode] = useState<string | null>(() => gameCodeFromUrl());
   const [gameJoinOpen, setGameJoinOpen] = useState<boolean>(() => !!gameCodeFromUrl());
   const [gameBusy, setGameBusy] = useState(false);
+  // 建房成功（进入开黑圈视图）才关创建弹窗；失败留在弹窗里看错误原因
+  useEffect(() => {
+    if (game.room) setGameCreateOpen(false);
+  }, [game.room]);
 
   /*
    * 打开页面就预热 AI 降噪（RNNoise）的 wasm/worklet 资源：
@@ -167,10 +171,8 @@ export function App() {
           onCancel={() => setGameCreateOpen(false)}
           onCreate={(opts) => {
             setGameBusy(true);
-            void game.createRoom(opts).finally(() => {
-              setGameBusy(false);
-              setGameCreateOpen(false);
-            });
+            // 失败时弹窗保持打开显示错误；成功（game.room 就绪）由下面的 effect 关闭
+            void game.createRoom(opts).finally(() => setGameBusy(false));
           }}
         />
       ) : null}
