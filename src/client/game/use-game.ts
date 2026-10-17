@@ -73,6 +73,26 @@ export async function activateEntitlement(code: string): Promise<GameEntitlement
   return value;
 }
 
+/** 建房前校验本机令牌：码被吊销/次数用尽 → 清掉本地权限并返回 false。 */
+export async function verifyEntitlement(): Promise<boolean> {
+  const value = loadEntitlement();
+  if (!value) return false;
+  if (value.token.startsWith("trial:")) return true;
+  try {
+    const response = await fetch("/game/verify", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token: value.token }),
+    });
+    if (response.ok) return true;
+    writeJson(ENTITLE_KEY, null);
+    return false;
+  } catch {
+    // 网络异常时宁可放行（避免网络抖动把正常房主挡在门外）
+    return true;
+  }
+}
+
 export function tutorialSeen(): boolean {
   return readJson<boolean>(TUTORIAL_KEY, false) === true;
 }
@@ -135,6 +155,10 @@ export function useGame() {
       const gameId = normalizeGameId(opts.gameId);
       if (!gameId) {
         setError("请填写你的游戏 ID");
+        return;
+      }
+      if (!(await verifyEntitlement())) {
+        setError("你的创建码已被吊销或次数用尽，请重新激活");
         return;
       }
       const mesh = ensureMesh();

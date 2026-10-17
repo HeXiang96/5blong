@@ -28,10 +28,13 @@ export function GameCreateDialog({
   onCancel,
   onCreate,
   busy,
+  error,
 }: {
   onCancel: () => void;
   onCreate: (opts: { gameId: string; title: string; map: string; muted: boolean }) => void;
   busy: boolean;
+  /** 建房失败的显示位置就在弹窗里（以前错误只在状态里、界面没提示）。 */
+  error: string | null;
 }) {
   const [title, setTitle] = useState("无畏契约");
   const [map, setMap] = useState("");
@@ -41,6 +44,13 @@ export function GameCreateDialog({
   const [code, setCode] = useState("");
   const [activating, setActivating] = useState(false);
   const [codeError, setCodeError] = useState<string | null>(null);
+  /*
+   * 创建码被吊销/用尽时：建房被拒 → 错误显示的同时本地权限已被清除，
+   * 这里同步刷新状态，让"输入创建码"的激活框重新出现，直接填新码就行。
+   */
+  useEffect(() => {
+    if (error) setEntitlement(loadEntitlement());
+  }, [error]);
 
   const activate = async () => {
     setCodeError(null);
@@ -91,6 +101,8 @@ export function GameCreateDialog({
           <input type="checkbox" checked={muted} onChange={(event) => setMuted(event.target.checked)} />
           <span>先静音进房</span>
         </label>
+
+        {error ? <p className="vx-game-error">{error}</p> : null}
 
         {!entitlement ? (
           <div className="vx-game-entitle">

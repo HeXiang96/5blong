@@ -66,6 +66,10 @@ export default {
     if (url.pathname === "/game/entitle") {
       return handleGameEntitle(request, env);
     }
+    // /game/verify → 建房前校验令牌（码被吊销/次数用尽 → 拒绝）
+    if (url.pathname === "/game/verify") {
+      return handleGameVerify(request, env);
+    }
     // /game-admin → 开黑圈运营页（员工令牌 scope=game，看不到反馈与房间遥测）
     if (url.pathname === "/game-admin") {
       return handleGameAdmin(request, env);
@@ -995,13 +999,39 @@ async function handleGameEntitle(request, env) {
   }
   await env.DB.prepare("UPDATE game_codes SET uses_left = uses_left - 1 WHERE code = ?").bind(code).run();
   const expiresAt = now + 30 * GAME_DAY;
-  const token = await hmacHex(secret, `game:${expiresAt}:${code}`);
+  const sig = await hmacHex(secret, `game:${expiresAt}:${code}`);
+  const token = `${expiresAt}.${code}.${sig}`;
   await env.DB.prepare(
     "INSERT INTO game_audit (at, actor, action, detail) VALUES (?, ?, ?, ?)",
   )
     .bind(now, code, "activate", `expiresAt=${expiresAt}`)
     .run();
   return json({ token, expiresAt });
+}
+
+/** POST /game/verify { token } → { ok } | 403（吊销/次数用尽/过期/签名不符） */
+async function handleGameVerify(request, env) {
+  if (request.method !== "POST") return json({ error: "method" }, 405);
+  const secret = entitlementSecret(env);
+  if (!secret) return json({ ok: true, note: "服务未配置" });
+  let payload;
+  try {
+    payload = await request.json();
+  } catch {
+    return json({ error: "bad json" }, 400);
+  }
+  const parts = String(payload?.token ?? "").split(".");
+  if (parts.length !== 3) return json({ error: "invalid" }, 403);
+  const [expiresAt, code, sig] = parts;
+  const expect = await hmacHex(secret, `game:${expiresAt}:${code}`);
+  if (sig !== expect || Number(expiresAt) < Date.now()) return json({ error: "invalid" }, 403);
+  const row = await env.DB.prepare("SELECT uses_left, expires_at, revoked FROM game_codes WHERE code = ?")
+    .bind(code)
+    .first();
+  if (!row || row.revoked || row.uses_left <= 0 || row.expires_at < Date.now()) {
+    return json({ error: "revoked" }, 403);
+  }
+  return json({ ok: true });
 }
 
 /** 校验员工令牌；返回 { role, name } 或 null。主令牌返回 role=main。 */
