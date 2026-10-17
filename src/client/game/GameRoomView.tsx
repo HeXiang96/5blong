@@ -60,6 +60,10 @@ export function GameCreateDialog({
       <div className="vx-modal vx-game-modal">
         <h2>🎮 创建开黑圈</h2>
         <p className="vx-modal-sub">5v5 内战房：一个房间码拉满两队，队内语音自动隔离</p>
+        <div className="vx-game-teams-preview">
+          <span className="tp-attack">🟠 进攻方 × 5</span>
+          <span className="tp-defend">🔵 防守方 × 5</span>
+        </div>
 
         <label className="vx-field">
           <span className="vx-field-label">你的游戏 ID（必填，和游戏里一致）</span>
