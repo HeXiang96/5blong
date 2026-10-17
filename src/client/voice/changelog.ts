@@ -20,6 +20,16 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.6.2",
+    date: "2026-10-17",
+    lines: [
+      "修复：客户端创建码激活（跨域）",
+      "新增：音频设备选择（麦克风/扬声器）",
+      "新增：本局小结（比分/在场/发言）",
+      "成员卡可直接调对方音量",
+    ],
+  },
+  {
     version: "1.6.1",
     date: "2026-10-17",
     lines: [

@@ -8,7 +8,7 @@
  */
 
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
-import { Crown, Mic, MicOff, Sparkles, Users, Volume2 } from "lucide-react";
+import { Crown, Mic, MicOff, Settings2, Sparkles, Users, Volume2 } from "lucide-react";
 
 import {
   GAME_ENABLED_LIMIT,
@@ -245,6 +245,68 @@ export function GameTutorial({ onClose }: { onClose: () => void }) {
   );
 }
 
+// ---------------------------------------------------------------- 小结卡片
+
+export function GameSummaryCard({
+  summary,
+  onClose,
+}: {
+  summary: {
+    code: string;
+    title: string;
+    map: string;
+    scores: { attack: number; defend: number };
+    durationMs: number;
+    rows: { gameId: string; team: Team; presentMs: number; speakMs: number }[];
+  };
+  onClose: () => void;
+}) {
+  const minutes = Math.max(1, Math.round(summary.durationMs / 60000));
+  const fmt = (ms: number) => (ms >= 60000 ? `${Math.round(ms / 60000)} 分` : `${Math.round(ms / 1000)} 秒`);
+  const groups: { team: Team; label: string; cls: string }[] = [
+    { team: "attack", label: "🟠 进攻方", cls: "vx-game-attack" },
+    { team: "unassigned", label: "🐷 待分队", cls: "" },
+    { team: "defend", label: "🔵 防守方", cls: "vx-game-defend" },
+  ];
+  return (
+    <div className="vx-modal-backdrop">
+      <div className="vx-modal vx-game-modal vx-game-summary">
+        <h2>🏁 本局小结</h2>
+        <p className="vx-modal-sub">
+          {summary.title || "自定义内战"}
+          {summary.map ? ` · ${summary.map}` : ""} · 房间 {summary.code} · 时长 {minutes} 分钟
+        </p>
+        <div className="vx-game-summary-score">
+          <span className="vx-game-attack">进攻 {summary.scores.attack}</span>
+          <span>:</span>
+          <span className="vx-game-defend">{summary.scores.defend} 防守</span>
+        </div>
+        {groups.map((group) => {
+          const rows = summary.rows.filter((row) => row.team === group.team);
+          if (!rows.length) return null;
+          return (
+            <div key={group.team} className="vx-game-summary-group">
+              <div className={`vx-game-summary-title ${group.cls}`}>{group.label}</div>
+              {rows.map((row) => (
+                <div key={row.gameId} className="vx-game-summary-row">
+                  <span>{row.gameId}</span>
+                  <span>在场 {fmt(row.presentMs)}</span>
+                  <span>发言 {fmt(row.speakMs)}</span>
+                </div>
+              ))}
+            </div>
+          );
+        })}
+        <div className="vx-modal-actions">
+          <button type="button" className="vx-btn vx-btn-primary" onClick={onClose}>
+            知道了
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------- 房间视图
 
 export function GameRoomView({
@@ -271,6 +333,11 @@ export function GameRoomView({
   onToggleNs,
   peerVolumes,
   onSetPeerVolume,
+  devices,
+  micDevice,
+  onSetMicDevice,
+  outputDevice,
+  onSetOutputDevice,
 }: {
   room: GameRoomInfo;
   members: GameMember[];
@@ -298,10 +365,16 @@ export function GameRoomView({
   /** 对某游戏 ID 的接收音量（0~2）。 */
   peerVolumes: Record<string, number>;
   onSetPeerVolume: (gameId: string, volume: number) => void;
+  devices: { inputs: { id: string; label: string }[]; outputs: { id: string; label: string }[] };
+  micDevice: string;
+  onSetMicDevice: (id: string) => void;
+  outputDevice: string;
+  onSetOutputDevice: (id: string) => void;
 }) {
   const [manageId, setManageId] = useState<string | null>(null);
   /** 点成员卡弹出的"对方音量"弹层（按成员 id）。 */
   const [volId, setVolId] = useState<string | null>(null);
+  const [audioOpen, setAudioOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const [showTutorial, setShowTutorial] = useState(() => !tutorialSeen());
 
@@ -554,6 +627,43 @@ export function GameRoomView({
               onChange={(event) => onSetMicBoost(Number(event.target.value))}
               title="你的声音太小？拉高麦克风增强（对方实时听到）"
             />
+          </span>
+          <span className="vx-game-audio">
+            <button
+              type="button"
+              className={`vx-game-mini${audioOpen ? " vx-game-mini-on" : ""}`}
+              onClick={() => setAudioOpen((v) => !v)}
+              title="选择麦克风与扬声器"
+            >
+              <Settings2 size={13} /> 音频设备
+            </button>
+            {audioOpen ? (
+              <span className="vx-game-audiopanel" onClick={(event) => event.stopPropagation()}>
+                <label>
+                  麦克风
+                  <select value={micDevice} onChange={(event) => onSetMicDevice(event.target.value)}>
+                    <option value="">系统默认</option>
+                    {devices.inputs.map((d) => (
+                      <option key={d.id} value={d.id}>
+                        {d.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  扬声器
+                  <select value={outputDevice} onChange={(event) => onSetOutputDevice(event.target.value)}>
+                    <option value="">系统默认</option>
+                    {devices.outputs.map((d) => (
+                      <option key={d.id} value={d.id}>
+                        {d.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <span className="vx-game-audiopanel-hint">切换立即生效，本机记忆</span>
+              </span>
+            ) : null}
           </span>
           <button
             type="button"

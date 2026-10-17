@@ -36,6 +36,8 @@ const TUTORIAL_KEY = "5blong:v1:gameTutorialSeen";
 const MIC_BOOST_KEY = "5blong:v1:gameMicBoost";
 const NS_KEY = "5blong:v1:gameNs";
 const PEER_VOL_KEY = "5blong:v1:gamePeerVolumes";
+const MIC_DEV_KEY = "5blong:v1:gameMicDevice";
+const OUT_DEV_KEY = "5blong:v1:gameOutputDevice";
 const ENTITLE_KEY = "5blong:v1:gameEntitle";
 
 export interface GameEntitlement {
@@ -145,6 +147,31 @@ export function savePeerVolumes(map: Record<string, number>): void {
   writeJson(PEER_VOL_KEY, map);
 }
 
+export function loadMicDevice(): string {
+  return readJson<string>(MIC_DEV_KEY, "") ?? "";
+}
+
+export function saveMicDevice(id: string): void {
+  writeJson(MIC_DEV_KEY, id);
+}
+
+export function loadOutputDevice(): string {
+  return readJson<string>(OUT_DEV_KEY, "") ?? "";
+}
+
+export function saveOutputDevice(id: string): void {
+  writeJson(OUT_DEV_KEY, id);
+}
+
+export interface GameSummary {
+  code: string;
+  title: string;
+  map: string;
+  scores: GameScores;
+  durationMs: number;
+  rows: { gameId: string; team: Team; presentMs: number; speakMs: number }[];
+}
+
 export function tutorialSeen(): boolean {
   return readJson<boolean>(TUTORIAL_KEY, false) === true;
 }
@@ -163,6 +190,13 @@ export function useGame() {
   const [room, setRoom] = useState<GameRoomInfo | null>(null);
   const [muted, setMutedState] = useState(false);
   const [kicked, setKicked] = useState(false);
+  const [summary, setSummary] = useState<GameSummary | null>(null);
+  const [devices, setDevices] = useState<{ inputs: { id: string; label: string }[]; outputs: { id: string; label: string }[] }>({
+    inputs: [],
+    outputs: [],
+  });
+  const [micDevice, setMicDeviceState] = useState(() => loadMicDevice());
+  const [outputDevice, setOutputDeviceState] = useState(() => loadOutputDevice());
 
   const ensureMesh = useCallback(() => {
     if (!meshRef.current) {
@@ -241,6 +275,13 @@ export function useGame() {
   );
 
   const leaveRoom = useCallback(() => {
+    // 先取小结（destroy 之后就没了），再退出
+    try {
+      const data = meshRef.current?.getSummary();
+      if (data && data.rows.length > 0) setSummary(data);
+    } catch {
+      /* 统计失败不影响退出 */
+    }
     meshRef.current?.leave();
     meshRef.current = null;
     setRoom(null);
@@ -314,6 +355,30 @@ export function useGame() {
     leaveRoom();
   }, [leaveRoom]);
 
+  /** 枚举音频设备（进房后调用；此时已有麦克风权限，标签可读）。 */
+  const refreshDevices = useCallback(async () => {
+    const mesh = meshRef.current;
+    if (!mesh) return;
+    try {
+      const list = await mesh.listAudioDevices();
+      setDevices(list);
+    } catch {
+      /* 设备枚举失败就不显示下拉 */
+    }
+  }, []);
+
+  const setMicDevice = useCallback((id: string) => {
+    setMicDeviceState(id);
+    saveMicDevice(id);
+    void meshRef.current?.setMicDevice(id);
+  }, []);
+
+  const setOutputDevice = useCallback((id: string) => {
+    setOutputDeviceState(id);
+    saveOutputDevice(id);
+    void meshRef.current?.setOutputDevice(id);
+  }, []);
+
   useEffect(() => () => meshRef.current?.destroy(), []);
 
   return {
@@ -348,5 +413,13 @@ export function useGame() {
     toggleNs,
     peerVolumes,
     setPeerVolume,
+    summary,
+    clearSummary: () => setSummary(null),
+    devices,
+    refreshDevices,
+    micDevice,
+    setMicDevice,
+    outputDevice,
+    setOutputDevice,
   };
 }
