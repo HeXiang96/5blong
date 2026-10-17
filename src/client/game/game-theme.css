@@ -494,3 +494,50 @@ html[data-daypart="night"] .vx-game-root {
     min-height: 160px;
   }
 }
+
+/* 游戏内的弹窗（教程/后续弹层）是 .vx-game-root 的后代，会继承浅色文字——
+   米色弹窗底 + 浅字 = 看不清（业主实测）。统一改成电竞深面板 + 浅字。 */
+.vx-game-root .vx-modal {
+  background: var(--g-panel-strong);
+  color: var(--g-text);
+  border: 1px solid var(--g-line);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
+}
+.vx-game-root .vx-modal h2 {
+  color: var(--g-text);
+}
+.vx-game-root .vx-modal .vx-modal-sub {
+  color: var(--g-dim);
+}
+.vx-game-root .vx-modal .vx-modal-body,
+.vx-game-root .vx-modal .vx-modal-hint {
+  color: var(--g-dim);
+}
+.vx-game-root .vx-modal .vx-field-label {
+  color: var(--g-dim);
+}
+.vx-game-root .vx-modal .vx-input {
+  color: var(--g-text);
+  background: rgba(255, 255, 255, 0.06);
+  border-color: var(--g-line);
+}
+.vx-game-root .vx-modal .vx-game-check {
+  color: var(--g-text);
+}
+.vx-game-root .vx-modal .vx-game-steps strong {
+  color: var(--g-text);
+}
+.vx-game-root .vx-modal .vx-game-steps p {
+  color: var(--g-dim);
+}
+.vx-game-root .vx-modal .vx-btn-ghost {
+  color: var(--g-text);
+  border-color: var(--g-line);
+  background: rgba(255, 255, 255, 0.06);
+}
+.vx-game-root .vx-modal .vx-game-entitle {
+  border-color: var(--g-line);
+}
+.vx-game-root .vx-modal .vx-game-error {
+  color: #ff9b9b;
+}
