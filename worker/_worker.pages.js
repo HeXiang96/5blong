@@ -1150,6 +1150,15 @@ async function handleGameAdmin(request, env) {
 
   const totalCodes = codes.length;
   const totalActivated = (audit.filter((row) => row.action === "activate").length) || 0;
+  const rowsBlock = (rows, visible = 5) => {
+    const head = visible > 0 ? rows.slice(0, visible).join("") : "";
+    const rest = rows.slice(visible);
+    const restBlock = rest.length
+      ? `<details><summary>展开其余 ${rest.length} 条</summary><table>${rest.join("")}</table></details>`
+      : "";
+    return head + restBlock;
+  };
+
   const html = `
     ${flash.map((line) => `<p class="g-flash">${line}</p>`).join("")}
     <p class="page-sub">创建码由你或运营发放；群友激活后 30 天内可以创建开黑圈。吊销立即生效。</p>
@@ -1167,17 +1176,17 @@ async function handleGameAdmin(request, env) {
       <button type="submit" class="vx-btn-small btn-accent">生成</button>
     </form>
     <div class="sec-title">创建码 · 有效（${valid.length}）</div>
-    ${valid.length ? `<table>${"<tr><th>码</th><th>备注</th><th>剩余次数</th><th>到期</th><th>状态</th><th></th></tr>"}${valid.map((row) => codeRow(row, true)).join("")}</table>` : '<div class="empty-box"><div class="empty-emoji">🎟️</div>还没有有效码<br><span class="empty-sub">在上面生成一条，发给要开黑的群友</span></div>'}
+    ${valid.length ? `<table>${"<tr><th>码</th><th>备注</th><th>剩余次数</th><th>到期</th><th>状态</th><th></th></tr>"}${rowsBlock(valid.map((row) => codeRow(row, true)))}</table>` : '<div class="empty-box"><div class="empty-emoji">🎟️</div>还没有有效码<br><span class="empty-sub">在上面生成一条，发给要开黑的群友</span></div>'}
     <div class="sec-title">创建码 · 已吊销 / 已用完（${dead.length}）</div>
-    ${dead.length ? `<table>${"<tr><th>码</th><th>备注</th><th>剩余次数</th><th>到期</th><th>状态</th><th></th></tr>"}${dead.map((row) => codeRow(row, false)).join("")}</table>` : '<span class="kv">暂无</span>'}
+    ${dead.length ? `<table>${"<tr><th>码</th><th>备注</th><th>剩余次数</th><th>到期</th><th>状态</th><th></th></tr>"}${rowsBlock(dead.map((row) => codeRow(row, false)))}</table>` : '<span class="kv">暂无</span>'}
     ${who.role === "main" ? `<div class="sec-title">新增员工（仅主令牌）</div>
       <form method="post" class="g-form"><input type="hidden" name="action" value="new_staff"/>
         <label>名字 <input name="name" placeholder="运营-小王" size="12"/></label>
         <button type="submit" class="vx-btn-small btn-accent">生成员工令牌</button></form>
       <div class="sec-title">员工（${staff.length}）</div>
-      ${staff.length ? `<table><tr><th>名字</th><th>权限</th><th>到期</th><th>状态</th><th></th></tr>${staffRows}</table>` : '<span class="kv">还没有员工</span>'}` : ""}
+      ${staff.length ? `<table><tr><th>名字</th><th>权限</th><th>到期</th><th>状态</th><th></th></tr>${rowsBlock(staffRows)}</table>` : '<span class="kv">还没有员工</span>'}` : ""}
     <div class="sec-title">操作日志（${audit.length}）</div>
-    ${audit.length ? `<table><tr><th>时间</th><th>操作者</th><th>动作</th><th>详情</th></tr>${auditRows}</table>` : '<span class="kv">暂无</span>'}
+    ${audit.length ? `<table><tr><th>时间</th><th>操作者</th><th>动作</th><th>详情</th></tr>${rowsBlock(auditRows)}</table>` : '<span class="kv">暂无</span>'}
   `;
   return adminPage(`开黑圈运营 · ${who.name}`, html);
 }
