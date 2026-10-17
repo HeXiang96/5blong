@@ -102,7 +102,7 @@ export function GameCreateDialog({
           <span>先静音进房</span>
         </label>
 
-        {error ? <p className="vx-game-error">{error}</p> : null}
+        {error ? <div className="vx-game-error-bar">{error}</div> : null}
 
         {!entitlement ? (
           <div className="vx-game-entitle">

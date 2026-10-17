@@ -806,3 +806,15 @@ html[data-daypart="night"] .vx-game-root {
 .vx-game-mic-on {
   color: rgba(233, 244, 255, 0.7);
 }
+
+/* 弹窗内错误横幅：顶部、醒目（失败必须立刻看到，业主要求） */
+.vx-game-modal .vx-game-error-bar {
+  margin: 0 0 12px;
+  padding: 9px 12px;
+  border-radius: 10px;
+  background: rgba(255, 90, 90, 0.16);
+  border: 1px solid rgba(255, 110, 110, 0.45);
+  color: #ffb3b3;
+  font-size: 13px;
+  line-height: 1.5;
+}
