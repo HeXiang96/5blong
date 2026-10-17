@@ -135,6 +135,37 @@ export function PenFrame({ width: _width = 0 }: { width?: number }) {
           d="M0 238 C250 216 530 236 770 226 C880 221 950 226 1000 222 L1000 300 L0 300 Z"
         />
       </svg>
+
+      {/*
+        场景主题装饰层（雪原 / 万圣夜）。
+        始终渲染、由 CSS 按 html[data-scene] 显隐——主题切换只需改一个
+        html 属性，不用给场景/猪逐个传 prop。
+      */}
+      <div className="vx-scene-decor vx-scene-decor-snow">
+        <span className="vx-snowfall">
+          {Array.from({ length: 20 }).map((_, index) => (
+            <i key={index} style={{ "--i": index } as CSSProperties} />
+          ))}
+        </span>
+        <span className="vx-snowdrift vx-snowdrift-1" />
+        <span className="vx-snowdrift vx-snowdrift-2" />
+        <span className="vx-snowman">
+          <i className="vx-snowman-head" />
+          <i className="vx-snowman-body" />
+          <i className="vx-snowman-eye" />
+        </span>
+      </div>
+      <div className="vx-scene-decor vx-scene-decor-halloween">
+        <span className="vx-pumpkin vx-pumpkin-1">
+          <i className="vx-pumpkin-face" />
+        </span>
+        <span className="vx-pumpkin vx-pumpkin-2">
+          <i className="vx-pumpkin-face" />
+        </span>
+        <span className="vx-bat vx-bat-1" />
+        <span className="vx-bat vx-bat-2" />
+        <span className="vx-halloween-fog" />
+      </div>
     </div>
   );
 }
@@ -1141,6 +1172,13 @@ export function PigActor({
                   <i className="vx-pig-em-cup vx-pig-em-r" />
                 </span>
               ) : null}
+
+              {/*
+                主题装扮（雪原红毛线帽 / 万圣夜小女巫帽）：常驻渲染，
+                由 CSS 按 html[data-scene] 显隐，不额外传 prop。
+              */}
+              <span className="vx-pig-beanie" aria-hidden="true" />
+              <span className="vx-pig-witch" aria-hidden="true" />
 
               {sleeping && !watchingActive ? (
                 <span className="vx-pig-zzz" aria-hidden="true">

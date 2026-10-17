@@ -1,0 +1,492 @@
+/*
+ * 场景主题（房主可切换，全房同步）：雪原 / 万圣夜。
+ *
+ * 分层：
+ *  1) 天空与远山调色——每个主题**按四个时段**（清晨/白天/傍晚/夜晚）各一套配色，
+ *     与 pen-scene.css 的时段光照体系并存（白天雪原是冷白、傍晚是蓝紫晚霞、夜里是深蓝雪夜）；
+ *     选择器刻意带 [data-daypart]，与既有规则优先级打平，靠本文件后加载取胜；
+ *  2) 地面装饰——.vx-scene-decor-* 常驻 DOM，按 data-scene 显隐；
+ *  3) 猪的装扮——.vx-pig-scarf / .vx-pig-witch 同理（纯 CSS 覆盖层，不动 WebP 素材）。
+ *
+ * 主题是纯视觉：不影响任何音频/连接逻辑。
+ */
+
+.vx-scene-decor {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  display: none;
+}
+
+/* ================================================================ 雪原 */
+
+html[data-scene="snow"] .vx-scene-decor-snow {
+  display: block;
+}
+
+/* 天空：四个时段各一套（清晨淡紫蓝 → 白天明亮冷蓝 → 傍晚蓝紫晚霞 → 深蓝雪夜） */
+html[data-scene="snow"] .vx-pen-frame[data-daypart="morning"] .vx-pen-frame-sky {
+  background: linear-gradient(180deg, #e9e2f0 0%, #dfe9f5 46%, #f2f4f1 100%);
+}
+html[data-scene="snow"] .vx-pen-frame[data-daypart="day"] .vx-pen-frame-sky {
+  background: linear-gradient(180deg, #cfe2f3 0%, #dbe9f6 46%, #e8f1f9 100%);
+}
+html[data-scene="snow"] .vx-pen-frame[data-daypart="dusk"] .vx-pen-frame-sky {
+  background: linear-gradient(180deg, #c8c4e2 0%, #e2c8c3 46%, #efddd0 100%);
+}
+html[data-scene="snow"] .vx-pen-frame[data-daypart="night"] .vx-pen-frame-sky {
+  background: linear-gradient(180deg, #16202f 0%, #1e2b40 48%, #243349 100%);
+}
+
+/* 雪坡配色跟时段：白天冷白、傍晚带一点暖紫、夜里转为暗蓝灰 */
+html[data-scene="snow"] .vx-pen-frame[data-daypart="morning"] .vx-hill-far {
+  fill: #e3e6f0;
+}
+html[data-scene="snow"] .vx-pen-frame[data-daypart="morning"] .vx-hill-mid {
+  fill: #eaedf5;
+}
+html[data-scene="snow"] .vx-pen-frame[data-daypart="morning"] .vx-hill-ground {
+  fill: #f3f3f7;
+}
+html[data-scene="snow"] .vx-pen-frame[data-daypart="day"] .vx-hill-far {
+  fill: #dfe9f4;
+}
+html[data-scene="snow"] .vx-pen-frame[data-daypart="day"] .vx-hill-mid {
+  fill: #e8f0f8;
+}
+html[data-scene="snow"] .vx-pen-frame[data-daypart="day"] .vx-hill-ground {
+  fill: #f4f8fc;
+}
+html[data-scene="snow"] .vx-pen-frame[data-daypart="dusk"] .vx-hill-far {
+  fill: #dcd9e6;
+}
+html[data-scene="snow"] .vx-pen-frame[data-daypart="dusk"] .vx-hill-mid {
+  fill: #e6e0e8;
+}
+html[data-scene="snow"] .vx-pen-frame[data-daypart="dusk"] .vx-hill-ground {
+  fill: #f1e9ea;
+}
+html[data-scene="snow"] .vx-pen-frame[data-daypart="night"] .vx-hill-far {
+  fill: #2b3a50;
+}
+html[data-scene="snow"] .vx-pen-frame[data-daypart="night"] .vx-hill-mid {
+  fill: #33455e;
+}
+html[data-scene="snow"] .vx-pen-frame[data-daypart="night"] .vx-hill-ground {
+  fill: #3b5069;
+}
+
+/* 太阳换成冷白冬日太阳（原来还是暖黄的，跟雪原不搭） */
+html[data-scene="snow"] .vx-sun {
+  background: radial-gradient(circle at 34% 32%, #ffffff, #eaf3fc 62%, #d3e2f2);
+  box-shadow: 0 0 36px rgba(226, 238, 250, 0.85);
+}
+
+/* 地面雪被：底部渐白，压住原本的暖草色 */
+.vx-scene-decor-snow::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 46%;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0) 0%, rgba(247, 251, 255, 0.85) 42%, #f7fbff 100%);
+}
+/* 黄昏/夜里雪地也跟着变暗，不刺眼 */
+html[data-scene="snow"] .vx-pen-frame[data-daypart="dusk"] .vx-scene-decor-snow::before {
+  background: linear-gradient(180deg, rgba(214, 206, 226, 0) 0%, rgba(240, 232, 238, 0.8) 42%, #efe8ee 100%);
+}
+html[data-scene="snow"] .vx-pen-frame[data-daypart="night"] .vx-scene-decor-snow::before {
+  background: linear-gradient(180deg, rgba(24, 32, 44, 0) 0%, rgba(58, 74, 96, 0.55) 45%, #3a4a60 100%);
+}
+
+/* 飘雪 */
+.vx-snowfall {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+.vx-snowfall i {
+  position: absolute;
+  top: -5%;
+  left: calc(1% + var(--i) * 5%);
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #ffffff;
+  opacity: 0.85;
+  box-shadow: 0 0 4px rgba(255, 255, 255, 0.7);
+  animation: vx-snow-fall linear infinite;
+  animation-duration: calc(8s + var(--i) * 0.9s);
+  animation-delay: calc(var(--i) * -0.8s);
+}
+.vx-snowfall i:nth-child(3n) {
+  width: 3px;
+  height: 3px;
+  opacity: 0.6;
+}
+.vx-snowfall i:nth-child(4n) {
+  width: 7px;
+  height: 7px;
+  opacity: 0.5;
+}
+@keyframes vx-snow-fall {
+  0% {
+    transform: translate3d(0, 0, 0);
+  }
+  50% {
+    transform: translate3d(14px, 55vh, 0);
+  }
+  100% {
+    transform: translate3d(-8px, 112vh, 0);
+  }
+}
+
+/* 雪堆（坡脚两团） */
+.vx-snowdrift {
+  position: absolute;
+  bottom: 6%;
+  border-radius: 50% 50% 0 0 / 100% 100% 0 0;
+  background: linear-gradient(180deg, #ffffff, #e5eefa);
+  box-shadow: inset 0 3px 0 rgba(255, 255, 255, 0.9);
+}
+.vx-snowdrift-1 {
+  left: 6%;
+  width: 17%;
+  height: 6.5%;
+}
+.vx-snowdrift-2 {
+  right: 10%;
+  width: 13%;
+  height: 5%;
+}
+
+/* 雪人（右侧坡上，避开底部工具条） */
+.vx-snowman {
+  position: absolute;
+  right: 14%;
+  bottom: 12%;
+  width: 44px;
+  height: 62px;
+}
+.vx-snowman-body,
+.vx-snowman-head {
+  position: absolute;
+  border-radius: 50%;
+  background: radial-gradient(circle at 34% 28%, #ffffff, #e2ecf7 70%);
+  box-shadow: inset -3px -4px 6px rgba(160, 180, 205, 0.5);
+}
+.vx-snowman-body {
+  bottom: 0;
+  left: 4px;
+  width: 36px;
+  height: 36px;
+}
+.vx-snowman-head {
+  top: 0;
+  left: 11px;
+  width: 22px;
+  height: 22px;
+}
+.vx-snowman-eye {
+  position: absolute;
+  top: 8px;
+  left: 17px;
+  width: 3.5px;
+  height: 3.5px;
+  border-radius: 50%;
+  background: #4a3524;
+  box-shadow: 7px 0 0 #4a3524;
+}
+
+/* 猪的雪原装扮：红毛线帽 + 白绒球。
+   （原方案是红围巾，但铭牌正好压住胸口——围巾永远被挡成一块红补丁，改戴帽子。）
+   视觉坐标（同女巫帽，见万圣夜段落注释）：头顶在视觉右侧 x≈75%、y≈10%（站立）/ 25%（趴卧）。 */
+.vx-pig-beanie {
+  display: none;
+  position: absolute;
+  left: 62%;
+  top: 1%;
+  width: 24%;
+  height: 15%;
+  border-radius: 50% 50% 42% 42%;
+  background: linear-gradient(180deg, #ef5b4d, #cf3a2f);
+  box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.3), 0 1px 3px rgba(60, 24, 16, 0.35);
+  transform: rotate(-4deg);
+}
+.vx-pig-beanie::after {
+  /* 白绒球 */
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: -58%;
+  width: 55%;
+  height: 70%;
+  transform: translateX(-50%);
+  border-radius: 50%;
+  background: radial-gradient(circle at 38% 32%, #ffffff, #e6eef7 72%);
+  box-shadow: 0 1px 2px rgba(40, 30, 20, 0.25);
+}
+html[data-scene="snow"] .vx-pig-beanie {
+  display: block;
+}
+/* 走路：头更低一点 */
+html[data-scene="snow"] .vx-pig-walking .vx-pig-beanie {
+  top: 6%;
+}
+/* 趴卧（睡觉 / 看投影）：头顶更低 */
+html[data-scene="snow"] .vx-pig-sleeping .vx-pig-beanie,
+html[data-scene="snow"] .vx-pig-watching .vx-pig-beanie {
+  top: 16%;
+  left: 63%;
+}
+
+/* ================================================================ 万圣夜 */
+
+html[data-scene="halloween"] .vx-scene-decor-halloween {
+  display: block;
+}
+
+/* 天空：四个时段各一套（灰紫晨雾 → 阴沉紫 → 橙紫晚霞 → 深夜紫） */
+html[data-scene="halloween"] .vx-pen-frame[data-daypart="morning"] .vx-pen-frame-sky {
+  background: linear-gradient(180deg, #3d2b52 0%, #4d3966 48%, #5c4677 100%);
+}
+html[data-scene="halloween"] .vx-pen-frame[data-daypart="day"] .vx-pen-frame-sky {
+  background: linear-gradient(180deg, #4a3563 0%, #573f73 48%, #644a82 100%);
+}
+html[data-scene="halloween"] .vx-pen-frame[data-daypart="dusk"] .vx-pen-frame-sky {
+  background: linear-gradient(180deg, #5e2c4e 0%, #8a4436 52%, #a35a3a 100%);
+}
+html[data-scene="halloween"] .vx-pen-frame[data-daypart="night"] .vx-pen-frame-sky {
+  background: linear-gradient(180deg, #1e1230 0%, #2b1a44 42%, #3a2350 100%);
+}
+
+html[data-scene="halloween"] .vx-pen-frame[data-daypart="morning"] .vx-hill-far {
+  fill: #35244a;
+}
+html[data-scene="halloween"] .vx-pen-frame[data-daypart="morning"] .vx-hill-mid {
+  fill: #3f2c56;
+}
+html[data-scene="halloween"] .vx-pen-frame[data-daypart="morning"] .vx-hill-ground {
+  fill: #4a3663;
+}
+html[data-scene="halloween"] .vx-pen-frame[data-daypart="day"] .vx-hill-far {
+  fill: #3a2850;
+}
+html[data-scene="halloween"] .vx-pen-frame[data-daypart="day"] .vx-hill-mid {
+  fill: #44305e;
+}
+html[data-scene="halloween"] .vx-pen-frame[data-daypart="day"] .vx-hill-ground {
+  fill: #4f3a6c;
+}
+html[data-scene="halloween"] .vx-pen-frame[data-daypart="dusk"] .vx-hill-far {
+  fill: #4a2542;
+}
+html[data-scene="halloween"] .vx-pen-frame[data-daypart="dusk"] .vx-hill-mid {
+  fill: #5a2f4a;
+}
+html[data-scene="halloween"] .vx-pen-frame[data-daypart="dusk"] .vx-hill-ground {
+  fill: #6a3a52;
+}
+html[data-scene="halloween"] .vx-pen-frame[data-daypart="night"] .vx-hill-far {
+  fill: #2c1c40;
+}
+html[data-scene="halloween"] .vx-pen-frame[data-daypart="night"] .vx-hill-mid {
+  fill: #362350;
+}
+html[data-scene="halloween"] .vx-pen-frame[data-daypart="night"] .vx-hill-ground {
+  fill: #412a5e;
+}
+
+/* 太阳藏起来；月亮换成南瓜橙（四个时段都挂着，营造"永夜"感） */
+html[data-scene="halloween"] .vx-sun {
+  display: none;
+}
+html[data-scene="halloween"] .vx-moon {
+  background: radial-gradient(circle at 34% 32%, #ffd08a, #f59a3c 68%, #e07f22);
+  box-shadow: 0 0 26px rgba(245, 158, 60, 0.55);
+  opacity: 1;
+}
+
+/* 场景文字对比度：深紫场景上面，浅色主题的深色字会糊成一团 → 强制奶油白 */
+html[data-scene="halloween"] .vx-empty p {
+  color: #f8efff;
+  text-shadow: 0 1px 3px rgba(20, 8, 30, 0.6);
+}
+html[data-scene="halloween"] .vx-empty span:not(.vx-empty-pigs) {
+  color: rgba(248, 239, 255, 0.8);
+  text-shadow: 0 1px 2px rgba(20, 8, 30, 0.6);
+}
+
+/* 地面紫色雾气 */
+.vx-halloween-fog {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 34%;
+  background: radial-gradient(120% 100% at 50% 100%, rgba(94, 56, 140, 0.5), rgba(30, 18, 48, 0) 70%);
+}
+
+/* 南瓜灯 ×2（坡脚左右各一，避开底部工具条） */
+.vx-pumpkin {
+  position: absolute;
+  bottom: 11%;
+  width: 46px;
+  height: 38px;
+  border-radius: 50% / 46%;
+  background:
+    radial-gradient(circle at 50% 42%, #ffb347 0%, #f08a24 58%, #d6741c 100%);
+  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.35), inset 0 2px 0 rgba(255, 255, 255, 0.25);
+}
+.vx-pumpkin::before {
+  content: "";
+  position: absolute;
+  left: 40%;
+  top: -7px;
+  width: 22%;
+  height: 9px;
+  border-radius: 3px;
+  background: #4c6b2f;
+}
+.vx-pumpkin-1 {
+  left: 8%;
+}
+.vx-pumpkin-2 {
+  right: 30%;
+  bottom: 10%;
+  transform: scale(0.82);
+}
+/* 表情：三角眼 + 锯齿嘴，用 clip-path 拼 */
+.vx-pumpkin-face {
+  position: absolute;
+  inset: 22% 16% 18%;
+  background:
+    radial-gradient(circle at 26% 34%, #ffd24a 0 5px, transparent 5.5px),
+    radial-gradient(circle at 74% 34%, #ffd24a 0 5px, transparent 5.5px);
+  filter: drop-shadow(0 0 6px rgba(255, 190, 80, 0.85));
+}
+.vx-pumpkin-face::after {
+  content: "";
+  position: absolute;
+  left: 22%;
+  right: 22%;
+  bottom: 6%;
+  height: 22%;
+  background: #ffd24a;
+  clip-path: polygon(0 0, 14% 100%, 30% 0, 46% 100%, 62% 0, 78% 100%, 94% 0, 100% 62%, 50% 100%, 0 62%);
+  filter: drop-shadow(0 0 5px rgba(255, 190, 80, 0.8));
+}
+
+/* 蝙蝠：黑剪影太暗，加深色描边 + 暖色微光让它从紫天上"浮"出来 */
+.vx-bat {
+  position: absolute;
+  width: 26px;
+  height: 12px;
+  background: #140b20;
+  clip-path: polygon(0 0, 26% 42%, 50% 12%, 74% 42%, 100% 0, 84% 78%, 62% 58%, 50% 100%, 38% 58%, 16% 78%);
+  filter: drop-shadow(0 0 3px rgba(255, 176, 110, 0.9)) drop-shadow(0 1px 2px rgba(0, 0, 0, 0.5));
+  animation: vx-bat-fly 9s ease-in-out infinite;
+  opacity: 0.95;
+}
+.vx-bat-1 {
+  left: 18%;
+  top: 16%;
+}
+.vx-bat-2 {
+  right: 22%;
+  top: 22%;
+  transform: scale(0.7);
+  animation-delay: -3.4s;
+  animation-duration: 11s;
+}
+@keyframes vx-bat-fly {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) rotate(-4deg);
+  }
+  25% {
+    transform: translate3d(18vw, -4vh, 0) rotate(6deg);
+  }
+  50% {
+    transform: translate3d(32vw, 2vh, 0) rotate(-3deg);
+  }
+  75% {
+    transform: translate3d(12vw, -2vh, 0) rotate(5deg);
+  }
+}
+
+/* 猪的万圣夜装扮：小女巫帽。
+   视觉坐标（同围巾注释）：头顶在视觉右侧 x≈75–80%、y≈10%（站立/趴卧接近）。
+   帽檐中心 ≈ (76%, 12%)，帽身向上延伸。 */
+.vx-pig-witch {
+  display: none;
+  position: absolute;
+  left: 63%;
+  top: -10%;
+  width: 26%;
+  height: 24%;
+  transform: rotate(-5deg);
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.45));
+}
+.vx-pig-witch::before {
+  /* 帽身（尖帽）+ 橙色帽带 */
+  content: "";
+  position: absolute;
+  left: 20%;
+  top: 0;
+  width: 60%;
+  height: 86%;
+  background: linear-gradient(180deg, #241631 0 68%, #f08a24 68% 82%, #241631 82%);
+  clip-path: polygon(50% 0, 100% 100%, 0 100%);
+}
+.vx-pig-witch::after {
+  /* 帽檐 */
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: 2%;
+  width: 100%;
+  height: 24%;
+  border-radius: 50%;
+  background: #241631;
+}
+html[data-scene="halloween"] .vx-pig-witch {
+  display: block;
+}
+/* 走路：头更低一点 */
+html[data-scene="halloween"] .vx-pig-walking .vx-pig-witch {
+  top: -6%;
+}
+/* 趴卧（睡觉 / 看投影）：微调 */
+html[data-scene="halloween"] .vx-pig-sleeping .vx-pig-witch,
+html[data-scene="halloween"] .vx-pig-watching .vx-pig-witch {
+  top: 1%;
+  left: 64%;
+}
+
+/* 万圣夜：深紫场景上，浅色主题的深色文字几乎不可读 —— 首页英雄区与说明文字强制奶油白。
+   （房间内的空状态文字已在上面单独处理。） */
+html[data-scene="halloween"] .vx-hero h1,
+html[data-scene="halloween"] .vx-hero p {
+  color: #f8efff;
+  text-shadow: 0 2px 6px rgba(20, 8, 30, 0.55);
+}
+html[data-scene="halloween"] .vx-hero p {
+  color: rgba(248, 239, 255, 0.85);
+}
+html[data-scene="halloween"] .vx-download-note,
+html[data-scene="halloween"] .vx-facts li,
+html[data-scene="halloween"] .vx-facts span {
+  color: rgba(248, 239, 255, 0.8);
+}
+html[data-scene="halloween"] .vx-tease-btn,
+html[data-scene="halloween"] .vx-download-link {
+  color: #ffe9c9;
+}
+
+/* 万圣夜：白色云朵太跳，压暗成暗紫灰烟云 */
+html[data-scene="halloween"] .vx-cloud {
+  opacity: 0.35;
+  filter: brightness(0.55) saturate(0.5) sepia(0.35) hue-rotate(230deg);
+}

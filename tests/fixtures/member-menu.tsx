@@ -95,6 +95,7 @@ function Fixture() {
     onKick: (...args) => record("kick", ...args), onForceMute: (...args) => record("force-mute", ...args),
     onToggleLock: () => record("lock"), onInteract: (...args) => record("interact", ...args),
     topic: "", onSetTopic: (text) => record("topic", text),
+    sceneTheme: "", onSetSceneTheme: (id) => record("scene-theme", id),
     /*
      * ?tv=1：电视亮起（演示状态，无真实流 → 雪花待机）。
      * 目检掉落/聚集/散场动画与放大灯箱（sharer=guest，本机是观众视角）。

@@ -214,6 +214,8 @@ export function App() {
         onInteract={voice.interact}
         topic={voice.topic}
         onSetTopic={voice.setRoomTopic}
+        sceneTheme={voice.sceneTheme}
+        onSetSceneTheme={voice.setRoomSceneTheme}
         screenShare={voice.screenShare}
         shareStream={voice.shareStream}
         sharePc={voice.sharePc}

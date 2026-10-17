@@ -32,6 +32,7 @@ import {
 } from "./screen-share";
 import type { ScreenViewPreference } from "./protocol";
 import { loadLastRoom, saveLastRoom, type LastRoom, type SessionSummary } from "./session-stats";
+import { sceneOverride, type SceneThemeId } from "./scene-theme";
 
 /**
  * 提示条停留多久（毫秒）。
@@ -92,6 +93,8 @@ export function useVoice() {
   const [ended, setEnded] = useState<{ reason: EndReason; detail?: string } | null>(null);
   /** 房主铭牌公告（房主本地编辑 / 访客收广播都会更新）。 */
   const [topic, setTopicState] = useState("");
+  /** 场景主题（"" = 默认，只有时段光照）。 */
+  const [sceneTheme, setSceneThemeState] = useState<SceneThemeId | "">("");
   /** 房间结束后的"今晚小结"（null = 没有可展示的）。 */
   const [lastSummary, setLastSummary] = useState<SessionSummary | null>(null);
   const [chatOpen, setChatOpen] = useState(false);
@@ -263,6 +266,7 @@ export function useVoice() {
       ended: (reason, detail) => setEnded({ reason, detail }),
       ready: setInvite,
       topic: (text) => setTopicState(text),
+      theme: (id) => setSceneThemeState(id),
       pen: (event) => {
         const now = Date.now();
         setPenEvents((prev) => [
@@ -1307,6 +1311,23 @@ export function useVoice() {
     engineRef.current?.setTopic(text);
   }, []);
 
+  /** 房主切换场景主题（乐观更新本地，引擎广播给全房）。 */
+  const setRoomSceneTheme = useCallback((id: SceneThemeId | "") => {
+    setSceneThemeState(id);
+    engineRef.current?.setSceneTheme(id);
+  }, []);
+
+  /**
+   * 主题落到 <html data-scene>：CSS 按它切换整套氛围（调色 + 地面装饰 + 猪的装扮）。
+   * 开发/验收可用 ?scene=snow 强制预览（纯视觉覆盖）。
+   */
+  useEffect(() => {
+    // 房主/房内主题优先；?scene= 只是"没有会话主题时的调试默认值"。
+    const value = sceneTheme || sceneOverride(window.location.search);
+    if (value) document.documentElement.dataset.scene = value;
+    else delete document.documentElement.dataset.scene;
+  }, [sceneTheme]);
+
   /** 关掉"今晚小结"卡片：清状态、清 URL，回到干净的首页。 */
   const dismissEnded = useCallback(() => {
     setEnded(null);
@@ -1341,6 +1362,8 @@ export function useVoice() {
     dismissEnded,
     topic,
     setRoomTopic,
+    sceneTheme,
+    setRoomSceneTheme,
     lastRoom,
     chatOpen,
     unread,
