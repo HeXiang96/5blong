@@ -380,7 +380,9 @@ export function GameRoomView({
                 {isMine ? <span className="vx-game-lane-here">你在这里</span> : null}
               </header>
               <div className="vx-game-lane-list">
-                {group.members.length === 0 ? <p className="vx-game-lane-empty">空</p> : null}
+                {group.members.length === 0 && group.team === "unassigned" ? (
+                  <p className="vx-game-lane-empty">都认领了，这里空了</p>
+                ) : null}
                 {group.members.map((member) => (
                   <article key={member.id} className={`vx-game-card${member.local ? " vx-game-card-me" : ""}`}>
                     <span className="vx-game-avatar" aria-hidden="true">
@@ -437,6 +439,15 @@ export function GameRoomView({
                     ) : null}
                   </article>
                 ))}
+                {/* 空位占位：把版面撑起来（业主嫌三栏太空），也直观看到还差几个人 */}
+                {group.team !== "unassigned"
+                  ? Array.from({ length: Math.max(0, (unlocked ? 8 : 5) - group.members.length) }).map((_, index) => (
+                      <div key={`slot-${index}`} className="vx-game-slot" aria-hidden="true">
+                        <span className="vx-game-slot-ring" />
+                        <span>虚位以待</span>
+                      </div>
+                    ))
+                  : null}
               </div>
               {group.team !== "unassigned" && !isMine ? (
                 <button type="button" className="vx-game-claim" onClick={() => onClaim(group.team)}>
