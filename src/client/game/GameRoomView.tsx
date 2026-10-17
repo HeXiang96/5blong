@@ -97,7 +97,7 @@ export function GameCreateDialog({
             <p className="vx-modal-hint">创建开黑圈需要创建码（向房主索要）</p>
             <div className="vx-game-row">
               <input className="vx-input" value={code} placeholder="BLONG-XXXX" onChange={(event) => setCode(event.target.value)} />
-              <button type="button" className="vx-btn vx-btn-ghost" disabled={activating || !code.trim()} onClick={() => void activate()}>
+              <button type="button" className="vx-btn vx-btn-ghost" style={{ minWidth: 74 }} disabled={activating || !code.trim()} onClick={() => void activate()}>
                 {activating ? "校验中…" : "激活"}
               </button>
             </div>

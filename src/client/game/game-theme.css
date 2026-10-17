@@ -649,3 +649,53 @@ html[data-daypart="night"] .vx-game-root {
   background: rgba(53, 224, 208, 0.1);
   border: 1px solid rgba(53, 224, 208, 0.4);
 }
+
+/* ------------------------------------------------------------
+   弹窗内表单重排：语音房的 .vx-field 是"标签在左 + 输入在右"的行式布局，
+   在电竞面板里显得错乱（悬空的分隔线/挤成竖排的按钮）。
+   这里统一改成"标签在上 + 输入整行"的堆叠布局。 */
+.vx-game-modal .vx-field {
+  display: flex !important;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  margin: 0 0 14px;
+}
+.vx-game-modal .vx-field-label {
+  white-space: normal;
+  line-height: 1.4;
+}
+.vx-game-modal .vx-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.07);
+  font-size: 14px;
+}
+.vx-game-modal .vx-input:focus {
+  border-color: #35e0d0;
+  box-shadow: 0 0 0 3px rgba(53, 224, 208, 0.18);
+}
+/* 去掉语音房输入框下沿的"分隔线"样式残留 */
+.vx-game-modal .vx-field .vx-input,
+.vx-game-modal label .vx-input {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.16);
+}
+.vx-game-modal .vx-btn {
+  white-space: nowrap;
+  border-radius: 10px;
+}
+.vx-game-modal .vx-modal-actions {
+  gap: 10px;
+  margin-top: 6px;
+}
+/* 创建码区块内：输入与激活按钮同行，按钮不再被挤竖排 */
+.vx-game-modal .vx-game-entitle .vx-game-row,
+.vx-game-modal .vx-game-row {
+  align-items: center;
+}
+.vx-game-modal .vx-game-row .vx-field {
+  margin-bottom: 0;
+}
