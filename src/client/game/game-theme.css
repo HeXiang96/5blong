@@ -10,17 +10,17 @@
  */
 
 .vx-game-root {
-  --g-bg-top: #121821;
-  --g-bg-bottom: #0a0f16;
-  --g-grid: rgba(90, 200, 220, 0.16);
-  --g-line: rgba(255, 255, 255, 0.1);
-  --g-text: #e9f4ff;
-  --g-dim: rgba(233, 244, 255, 0.62);
-  --g-panel: rgba(14, 21, 30, 0.82);
-  --g-panel-strong: rgba(10, 16, 24, 0.94);
-  --g-attack: #ff7a45;
-  --g-defend: #35e0d0;
-  --g-pending: #9aa7b8;
+  --g-bg-top: #101827;
+  --g-bg-bottom: #070b13;
+  --g-grid: rgba(90, 200, 220, 0.1);
+  --g-line: rgba(160, 200, 240, 0.14);
+  --g-text: #edf4ff;
+  --g-dim: rgba(205, 226, 255, 0.6);
+  --g-panel: rgba(13, 20, 33, 0.78);
+  --g-panel-strong: rgba(10, 16, 27, 0.95);
+  --g-attack: #ff8a5c;
+  --g-defend: #4be3d2;
+  --g-pending: #93a2b8;
 
   position: fixed;
   inset: 0;
@@ -32,8 +32,10 @@
   color: var(--g-text);
   font-size: 14px;
   overflow: hidden;
+  /* 层次：顶光(进攻橙晕) + 底光(防守青晕) + 底色渐变，黑而不闷 */
   background:
-    radial-gradient(120% 70% at 50% -10%, rgba(90, 200, 220, 0.16), transparent 62%),
+    radial-gradient(70% 46% at 78% -6%, rgba(255, 122, 69, 0.14), transparent 62%),
+    radial-gradient(70% 46% at 16% 108%, rgba(53, 224, 208, 0.13), transparent 62%),
     linear-gradient(180deg, var(--g-bg-top), var(--g-bg-bottom));
 }
 
@@ -95,11 +97,23 @@ html[data-daypart="night"] .vx-game-root {
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
-  padding: 9px 14px;
+  padding: 10px 14px 12px;
   border-radius: 14px;
   background: var(--g-panel);
   border: 1px solid var(--g-line);
   box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
+}
+/* 顶栏底边的队色渐变线：整个界面的队色线索 */
+.vx-game-head::after {
+  content: "";
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: 0;
+  height: 2px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, var(--g-attack), rgba(255, 138, 92, 0.15) 38%, rgba(75, 227, 210, 0.15) 62%, var(--g-defend));
+  opacity: 0.85;
 }
 .vx-game-badge {
   padding: 3px 10px;
@@ -147,18 +161,23 @@ html[data-daypart="night"] .vx-game-root {
   z-index: 1;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   flex-wrap: wrap;
-  padding: 6px 14px;
+  padding: 8px 16px;
   border-radius: 999px;
-  background: var(--g-panel);
+  background: var(--g-panel-strong);
   border: 1px solid var(--g-line);
   font-family: ui-monospace, Consolas, monospace;
+  box-shadow: 0 8px 26px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
 .vx-game-score-side {
-  font-size: 17px;
+  font-size: 21px;
   font-weight: 700;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.05em;
+  text-shadow: 0 0 18px rgba(255, 138, 92, 0.35);
+}
+.vx-game-score-side.vx-game-defend {
+  text-shadow: 0 0 18px rgba(75, 227, 210, 0.35);
 }
 .vx-game-attack {
   color: var(--g-attack);
@@ -208,17 +227,13 @@ html[data-daypart="night"] .vx-game-root {
   background: var(--g-panel-strong);
   border: 1px solid var(--g-line);
   overflow: hidden;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.32);
 }
 .vx-game-lane-attack {
-  border-top: 3px solid var(--g-attack);
-  box-shadow: 0 0 24px rgba(255, 122, 69, 0.12);
+  box-shadow: 0 0 30px rgba(255, 122, 69, 0.13), 0 14px 34px rgba(0, 0, 0, 0.32);
 }
 .vx-game-lane-defend {
-  border-top: 3px solid var(--g-defend);
-  box-shadow: 0 0 24px rgba(53, 224, 208, 0.12);
-}
-.vx-game-lane-unassigned {
-  border-top: 3px solid var(--g-pending);
+  box-shadow: 0 0 30px rgba(53, 224, 208, 0.13), 0 14px 34px rgba(0, 0, 0, 0.32);
 }
 .vx-game-lane-mine {
   outline: 1px solid rgba(255, 255, 255, 0.28);
@@ -228,9 +243,21 @@ html[data-daypart="night"] .vx-game-root {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 9px 12px;
+  padding: 10px 12px;
   border-bottom: 1px solid var(--g-line);
   font-size: 13px;
+}
+.vx-game-lane-attack .vx-game-lane-head {
+  background: linear-gradient(90deg, rgba(255, 138, 92, 0.28), rgba(255, 138, 92, 0.04));
+}
+.vx-game-lane-defend .vx-game-lane-head {
+  background: linear-gradient(90deg, rgba(75, 227, 210, 0.26), rgba(75, 227, 210, 0.04));
+}
+.vx-game-lane-attack .vx-game-lane-name {
+  color: #ffb08a;
+}
+.vx-game-lane-defend .vx-game-lane-name {
+  color: #7feadb;
 }
 .vx-game-lane-name {
   font-weight: 700;
@@ -268,10 +295,22 @@ html[data-daypart="night"] .vx-game-root {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 7px 9px;
+  padding: 7px 9px 7px 12px;
   border-radius: 10px;
   background: rgba(255, 255, 255, 0.05);
   border: 1px solid transparent;
+}
+.vx-game-lane-attack .vx-game-card {
+  border-left: 3px solid rgba(255, 138, 92, 0.55);
+}
+.vx-game-lane-defend .vx-game-card {
+  border-left: 3px solid rgba(75, 227, 210, 0.55);
+}
+.vx-game-lane-unassigned .vx-game-card {
+  border-left: 3px solid rgba(147, 162, 184, 0.45);
+}
+.vx-game-card:hover {
+  background: rgba(255, 255, 255, 0.09);
 }
 .vx-game-card-me {
   border-color: rgba(255, 255, 255, 0.3);
@@ -717,4 +756,23 @@ html[data-daypart="night"] .vx-game-root {
 .vx-game-modal .vx-field .vx-input::after {
   border-bottom: none !important;
   box-shadow: none !important;
+}
+
+/* 空位占位卡：虚线圆环 + 虚位以待 */
+.vx-game-slot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 9px 7px 12px;
+  border-radius: 10px;
+  border: 1px dashed rgba(160, 200, 240, 0.2);
+  color: rgba(205, 226, 255, 0.35);
+  font-size: 12px;
+}
+.vx-game-slot-ring {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 1.5px dashed rgba(160, 200, 240, 0.3);
+  flex: 0 0 auto;
 }
