@@ -10,9 +10,21 @@ import { FeedbackDialog } from "./components/FeedbackDialog";
 import { OnboardingDialog } from "./components/OnboardingDialog";
 import { SettingsView } from "./components/SettingsView";
 import { Banner } from "./components/ui";
+import { GameCreateDialog, GameJoinDialog, GameRoomView, gameCodeFromUrl, gameInviteUrl } from "../game/GameRoomView";
+import { useGame } from "../game/use-game";
 
 export function App() {
   const voice = useVoice();
+  /*
+   * 开黑圈是**独立子系统**：引擎、状态、界面都不复用语音房
+   * （语音房的连接拓扑/共享/猪圈互动对开黑圈都不适用）。
+   * 这里只做入口与切换，两个系统互不干扰。
+   */
+  const game = useGame();
+  const [gameCreateOpen, setGameCreateOpen] = useState(false);
+  const [gameJoinCode, setGameJoinCode] = useState<string | null>(() => gameCodeFromUrl());
+  const [gameJoinOpen, setGameJoinOpen] = useState<boolean>(() => !!gameCodeFromUrl());
+  const [gameBusy, setGameBusy] = useState(false);
 
   /*
    * 打开页面就预热 AI 降噪（RNNoise）的 wasm/worklet 资源：
@@ -145,6 +157,73 @@ export function App() {
     );
   }
 
+  // ---------------------------------------------------------------- 开黑圈
+  const gameDialogs = (
+    <>
+      {gameCreateOpen ? (
+        <GameCreateDialog
+          busy={gameBusy}
+          onCancel={() => setGameCreateOpen(false)}
+          onCreate={(opts) => {
+            setGameBusy(true);
+            void game.createRoom(opts).finally(() => {
+              setGameBusy(false);
+              setGameCreateOpen(false);
+            });
+          }}
+        />
+      ) : null}
+      {gameJoinOpen && gameJoinCode ? (
+        <GameJoinDialog
+          code={gameJoinCode}
+          busy={gameBusy}
+          error={game.error}
+          onCancel={() => {
+            setGameJoinOpen(false);
+            setGameJoinCode(null);
+            const url = new URL(window.location.href);
+            url.searchParams.delete("g");
+            window.history.replaceState(null, "", url.toString());
+          }}
+          onJoin={(opts) => {
+            setGameBusy(true);
+            void game
+              .joinRoom({ code: gameJoinCode, gameId: opts.gameId, muted: opts.muted })
+              .finally(() => setGameBusy(false));
+          }}
+        />
+      ) : null}
+    </>
+  );
+
+  if (game.room) {
+    return (
+      <>
+        <GameRoomView
+          room={game.room}
+          members={game.members}
+          scores={game.scores}
+          unlocked={game.unlocked}
+          muted={game.muted}
+          isHost={game.isHost}
+          myTeam={game.myTeam}
+          error={game.error}
+          onToggleMute={game.toggleMuted}
+          onClaim={game.setMyTeam}
+          onAssign={game.hostAssign}
+          onKick={game.kick}
+          onScore={game.score}
+          onResetScores={game.resetScores}
+          onToggleCap={game.toggleTeamCap}
+          onCopyInvite={() => {
+            if (game.room) void navigator.clipboard?.writeText(gameInviteUrl(game.room.code));
+          }}
+          onLeave={game.closeRoom}
+        />
+      </>
+    );
+  }
+
   if (voice.view === "confirm" && voice.pending) {
     return (
       <ConfirmView
@@ -259,6 +338,7 @@ export function App() {
       ) : null}
       <FeedbackDialog open={feedback.open} errorText={feedback.errorText} onClose={closeFeedback} />
       <OnboardingDialog open={onboardingOpen} onClose={closeOnboarding} />
+      {gameDialogs}
       <LandingView
         identity={voice.identity}
         onIdentityChange={voice.setIdentity}
@@ -274,6 +354,14 @@ export function App() {
         onCancelJoin={voice.cancelJoin}
         onDismissError={() => voice.setJoinError(null)}
         lastRoom={voice.lastRoom}
+        onCreateGame={() => setGameCreateOpen(true)}
+        onJoinGame={() => {
+          const code = window.prompt("输入开黑圈房间码（4 位数字）") ?? "";
+          if (/^[0-9]{4}$/.test(code.trim())) {
+            setGameJoinCode(code.trim());
+            setGameJoinOpen(true);
+          }
+        }}
       />
       {voice.lastSummary ? (
         <SessionSummaryCard summary={voice.lastSummary} onClose={voice.dismissEnded} />
