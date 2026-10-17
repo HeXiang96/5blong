@@ -20,6 +20,16 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.5.7",
+    date: "2026-10-17",
+    lines: [
+      "新主题：雪原、万圣夜",
+      "房主切换，全房同步",
+      "早中晚夜四套配色",
+      "小猪戴上帽子了",
+    ],
+  },
+  {
     version: "1.5.6",
     date: "2026-10-16",
     lines: [
