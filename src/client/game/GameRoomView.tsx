@@ -571,7 +571,10 @@ export function GameRoomView({
 
 /** 邀请链接（开黑圈专用 ?g= 参数，与语音房的 ?r=/?i= 区分）。 */
 export function gameInviteUrl(code: string): string {
-  const url = new URL(window.location.href);
+  // 桌面端页面在本地协议（tauri.localhost）下，直接复制会得到别人打不开的地址
+  const host = window.location.hostname;
+  const desktop = host === "tauri.localhost" || host.endsWith(".tauri.localhost");
+  const url = new URL(desktop ? "https://5blong.pages.dev/" : window.location.href);
   url.search = "";
   url.hash = "";
   url.searchParams.set("g", code);

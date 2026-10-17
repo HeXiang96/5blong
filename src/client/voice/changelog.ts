@@ -20,6 +20,15 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.6.1",
+    date: "2026-10-17",
+    lines: [
+      "修复：客户端里创建码激活不了",
+      "修复：客户端复制的邀请链接打不开",
+      "错误提示改成看得懂的话",
+    ],
+  },
+  {
     version: "1.6.0",
     date: "2026-10-17",
     lines: [
