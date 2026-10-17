@@ -73,6 +73,12 @@ export class GameMesh {
   private nsNode: RnnoiseWorkletNode | null = null;
   private micBoost = 1;
   private nsOn = true;
+  /** 小结统计：开房时间、每人（在场 ms / 发言 ms）。 */
+  private startedAt = 0;
+  private memberStats = new Map<string, { joined: number; speak: number }>();
+  private analysers = new Map<string, { node: AnalyserNode; buffer: Float32Array; timer: number }>();
+  private micDeviceId = "";
+  private outputDeviceId = "";
   private unlocked = false;
   private hosting = false;
   private joined = false;
@@ -126,6 +132,8 @@ export class GameMesh {
           local: true,
         });
         this.joined = true;
+        this.startedAt = Date.now();
+        this.touchMember(id);
         this.events.ready({ code, hostId: id, roomKey: this.roomKey, title: this.title, map: this.map });
         this.events.status("connected");
         this.emitRoster();
@@ -217,6 +225,8 @@ export class GameMesh {
     }
     this.scores = message.scores;
     this.joined = true;
+    if (!this.startedAt) this.startedAt = Date.now();
+    this.touchMember(this.myId);
     this.events.status("connected");
     this.emitRoster();
     this.reconcileAudio();
@@ -346,6 +356,8 @@ export class GameMesh {
       }
     }
     this.calls.clear();
+    for (const entry of this.analysers.values()) window.clearInterval(entry.timer);
+    this.analysers.clear();
     for (const audio of this.audios.values()) {
       audio.srcObject = null;
       audio.remove();
@@ -424,8 +436,13 @@ export class GameMesh {
     this.dropAudio(peerId);
   }
 
+  private touchMember(id: string): void {
+    if (!this.memberStats.has(id)) this.memberStats.set(id, { joined: Date.now(), speak: 0 });
+  }
+
   private attachAudio(peerId: string, stream: MediaStream): void {
     if (this.destroyed) return;
+    this.touchMember(peerId);
     let audio = this.audios.get(peerId);
     if (!audio) {
       audio = document.createElement("audio");
@@ -436,6 +453,32 @@ export class GameMesh {
     }
     audio.srcObject = stream;
     audio.volume = this.volumeOfPeer(peerId);
+    if (this.outputDeviceId) {
+      const el = audio as HTMLAudioElement & { setSinkId?: (id: string) => Promise<void> };
+      if (typeof el.setSinkId === "function") void el.setSinkId(this.outputDeviceId).catch(() => undefined);
+    }
+    if (this.audioCtx && !this.analysers.has(peerId)) {
+      try {
+        const src = this.audioCtx.createMediaStreamSource(stream);
+        const node = this.audioCtx.createAnalyser();
+        node.fftSize = 512;
+        src.connect(node);
+        const buffer = new Float32Array(node.fftSize);
+        const timer = window.setInterval(() => {
+          node.getFloatTimeDomainData(buffer);
+          let sum = 0;
+          for (const v of buffer) sum += v * v;
+          const rms = Math.sqrt(sum / buffer.length);
+          if (rms > 0.02) {
+            const stat = this.memberStats.get(peerId);
+            if (stat) stat.speak += 200;
+          }
+        }, 200);
+        this.analysers.set(peerId, { node, buffer, timer });
+      } catch {
+        /* 统计失败不影响通话 */
+      }
+    }
     void audio.play().catch(() => {
       /* 自动播放被拦：等用户下一次交互由 UI 再调 play */
     });
@@ -599,6 +642,34 @@ export class GameMesh {
     this.events.roster([...this.members.values()], this.scores, this.unlocked);
   }
 
+  /** 房间小结：比分、时长、每人在场与发言时长（房主/访客都能在离开时拿到）。 */
+  getSummary(): {
+    code: string;
+    title: string;
+    map: string;
+    scores: GameScores;
+    durationMs: number;
+    rows: { gameId: string; team: Team; presentMs: number; speakMs: number }[];
+  } {
+    const now = Date.now();
+    return {
+      code: this.code,
+      title: this.title,
+      map: this.map,
+      scores: { ...this.scores },
+      durationMs: this.startedAt ? now - this.startedAt : 0,
+      rows: [...this.members.values()].map((member) => {
+        const stat = this.memberStats.get(member.id);
+        return {
+          gameId: member.gameId,
+          team: member.team,
+          presentMs: stat ? Math.max(0, now - stat.joined) : 0,
+          speakMs: stat?.speak ?? 0,
+        };
+      }),
+    };
+  }
+
   private send(conn: DataConnection, payload: GuestToHost | HostToGuest): void {
     try {
       if (conn.open) conn.send(payload);
@@ -700,6 +771,7 @@ export class GameMesh {
         noiseSuppression: true,
         autoGainControl: true,
         channelCount: 1,
+        ...(this.micDeviceId ? { deviceId: { exact: this.micDeviceId } } : {}),
       },
       video: false,
     });
@@ -776,6 +848,64 @@ export class GameMesh {
       this.micGainNode.gain.setTargetAtTime(clamped, this.audioCtx.currentTime, 0.01);
     }
     await this.applyAgcForBoost(clamped > 1);
+  }
+
+  /** 枚举可用音频设备（需要已获得过麦克风权限，标签才可见）。 */
+  async listAudioDevices(): Promise<{
+    inputs: { id: string; label: string }[];
+    outputs: { id: string; label: string }[];
+  }> {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const inputs = devices
+      .filter((d) => d.kind === "audioinput")
+      .map((d, i) => ({ id: d.deviceId, label: d.label || `麦克风 ${i + 1}` }));
+    const outputs = devices
+      .filter((d) => d.kind === "audiooutput")
+      .map((d, i) => ({ id: d.deviceId, label: d.label || `扬声器 ${i + 1}` }));
+    return { inputs, outputs };
+  }
+
+  /** 切麦克风：重开采集 → 重建发送链 → 替换所有已建立连接上的音轨。 */
+  async setMicDevice(deviceId: string): Promise<void> {
+    this.micDeviceId = deviceId;
+    const old = this.localStream;
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+        channelCount: 1,
+        ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
+      },
+      video: false,
+    });
+    for (const track of stream.getAudioTracks()) track.enabled = !this.localMuted;
+    this.localStream = stream;
+    await this.buildOutgoing();
+    const track = this.publishedStream?.getAudioTracks()[0];
+    if (track) {
+      for (const call of this.calls.values()) {
+        const pc = (call as unknown as { peerConnection?: RTCPeerConnection }).peerConnection;
+        const sender = pc?.getSenders().find((s) => s.track?.kind === "audio");
+        if (sender) void sender.replaceTrack(track).catch(() => undefined);
+      }
+    }
+    if (old) for (const t of old.getTracks()) t.stop();
+  }
+
+  /** 切输出设备（扬声器）：对每个远端音频元素 setSinkId。 */
+  async setOutputDevice(deviceId: string): Promise<void> {
+    this.outputDeviceId = deviceId;
+    for (const audio of this.audios.values()) {
+      const el = audio as HTMLAudioElement & { setSinkId?: (id: string) => Promise<void> };
+      if (typeof el.setSinkId === "function") {
+        try {
+          await el.setSinkId(deviceId);
+        } catch {
+          /* 浏览器不支持或设备已拔出 */
+        }
+      }
+    }
   }
 
   /** 开关 RNNoise 强降噪（重建发送链）。 */

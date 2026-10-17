@@ -62,6 +62,20 @@ export default {
       return proxyPeerJs(url, request, env);
     }
 
+    // /game/* 是给桌面客户端跨域调用的：必须先应答 CORS 预检，
+    // 否则 WebView2 直接判网络错误（症状："网络异常，请稍后重试"）。
+    if (url.pathname.startsWith("/game/") && request.method === "OPTIONS") {
+      return new Response(null, {
+        status: 204,
+        headers: {
+          "Access-Control-Allow-Origin": "*",
+          "Access-Control-Allow-Methods": "POST, OPTIONS",
+          "Access-Control-Allow-Headers": "content-type",
+          "Access-Control-Max-Age": "86400",
+        },
+      });
+    }
+
     // /game/entitle → 开黑圈创建码校验（换 30 天签名令牌）
     if (url.pathname === "/game/entitle") {
       return handleGameEntitle(request, env);
@@ -1136,10 +1150,13 @@ async function handleGameAdminInner(request, env) {
     : [];
   const audit = (await env.DB.prepare("SELECT * FROM game_audit ORDER BY at DESC LIMIT 30").all()).results ?? [];
 
-  // 三种状态分开：有效（可继续激活）/ 已用完（次数耗尽但没吊销）/ 已吊销或过期
-  const valid = codes.filter((row) => !row.revoked && row.uses_left > 0 && row.expires_at >= Date.now());
-  const usedUp = codes.filter((row) => !row.revoked && row.uses_left <= 0 && row.expires_at >= Date.now());
-  const revoked = codes.filter((row) => row.revoked || row.expires_at < Date.now());
+  /*
+   * 业主口径（重要）：**已用完 ≠ 吊销**。
+   * 次数用尽的码仍然"有效"——已激活的设备还能继续建房，只是不能再激活新设备；
+   * 因此它留在"有效"区（状态显示"已用完"），并且**随时可以吊销**（吊销会让已激活令牌失效）。
+   */
+  const valid = codes.filter((row) => !row.revoked && row.expires_at >= Date.now());
+  const gone = codes.filter((row) => row.revoked || row.expires_at < Date.now());
   const codeRow = (row, canRevoke) =>
     `<tr><td><code>${row.code}</code></td><td>${row.note ?? ""}</td><td>${row.uses_left}</td>
       <td>${cnTime(row.expires_at)}</td><td>${row.revoked ? "已吊销" : row.uses_left <= 0 ? "已用完" : "有效"}</td>
@@ -1224,10 +1241,8 @@ async function handleGameAdminInner(request, env) {
     </form>
     <div class="sec-title">创建码 · 有效（${valid.length}）</div>
     ${valid.length ? `<table>${"<tr><th>码</th><th>备注</th><th>剩余次数</th><th>到期</th><th>状态</th><th>操作</th></tr>"}${rowsHead(valid.map((row) => codeRow(row, true)))}</table>${rowsRest(valid.map((row) => codeRow(row, true)), 5, CODE_HEAD)}` : '<div class="empty-box"><div class="empty-emoji">🎟️</div>还没有有效码<br><span class="empty-sub">在上面生成一条，发给要开黑的群友</span></div>'}
-    <div class="sec-title">创建码 · 已用完（${usedUp.length}）</div>
-    ${usedUp.length ? `<table>${"<tr><th>码</th><th>备注</th><th>剩余次数</th><th>到期</th><th>状态</th><th>操作</th></tr>"}${rowsHead(usedUp.map((row) => codeRow(row, true)))}</table>${rowsRest(usedUp.map((row) => codeRow(row, true)), 5, CODE_HEAD)}` : '<span class="kv">暂无</span>'}
-    <div class="sec-title">创建码 · 已吊销 / 已过期（${revoked.length}）</div>
-    ${revoked.length ? `<table>${"<tr><th>码</th><th>备注</th><th>剩余次数</th><th>到期</th><th>状态</th><th>操作</th></tr>"}${rowsHead(revoked.map((row) => codeRow(row, false)))}</table>${rowsRest(revoked.map((row) => codeRow(row, false)), 5, CODE_HEAD)}` : '<span class="kv">暂无</span>'}
+    <div class="sec-title">创建码 · 已吊销 / 已过期（${gone.length}）</div>
+    ${gone.length ? `<table>${"<tr><th>码</th><th>备注</th><th>剩余次数</th><th>到期</th><th>状态</th><th>操作</th></tr>"}${rowsHead(gone.map((row) => codeRow(row, false)))}</table>${rowsRest(gone.map((row) => codeRow(row, false)), 5, CODE_HEAD)}` : '<span class="kv">暂无</span>'}
     ${who.role === "main" ? `<div class="sec-title">新增员工（仅主令牌）</div>
       <form method="post" class="g-form"><input type="hidden" name="action" value="new_staff"/>
         <label>名字 <input name="name" placeholder="运营-小王" size="12"/></label>

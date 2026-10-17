@@ -10,7 +10,7 @@ import { FeedbackDialog } from "./components/FeedbackDialog";
 import { OnboardingDialog } from "./components/OnboardingDialog";
 import { SettingsView } from "./components/SettingsView";
 import { Banner } from "./components/ui";
-import { GameCreateDialog, GameJoinDialog, GameRoomView, gameCodeFromUrl, gameInviteUrl } from "../game/GameRoomView";
+import { GameCreateDialog, GameJoinDialog, GameRoomView, GameSummaryCard, gameCodeFromUrl, gameInviteUrl } from "../game/GameRoomView";
 import { useGame } from "../game/use-game";
 
 export function App() {
@@ -199,6 +199,14 @@ export function App() {
     </>
   );
 
+  useEffect(() => {
+    if (game.room) void game.refreshDevices();
+  }, [game.room, game.refreshDevices]);
+
+  if (game.summary) {
+    return <GameSummaryCard summary={game.summary} onClose={game.clearSummary} />;
+  }
+
   if (game.room) {
     return (
       <>
@@ -228,6 +236,11 @@ export function App() {
           onToggleNs={game.toggleNs}
           peerVolumes={game.peerVolumes}
           onSetPeerVolume={game.setPeerVolume}
+          devices={game.devices}
+          micDevice={game.micDevice}
+          onSetMicDevice={game.setMicDevice}
+          outputDevice={game.outputDevice}
+          onSetOutputDevice={game.setOutputDevice}
         />
       </>
     );
