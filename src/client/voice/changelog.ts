@@ -20,6 +20,16 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.6.0",
+    date: "2026-10-17",
+    lines: [
+      "新玩法：开黑圈（5v5 分队内战房）",
+      "两队互不通话，待分队听全房",
+      "麦克风增强修好了（真生效）",
+      "每人音量可单独调",
+    ],
+  },
+  {
     version: "1.5.7",
     date: "2026-10-17",
     lines: [
