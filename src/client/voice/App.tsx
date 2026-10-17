@@ -173,7 +173,7 @@ export function App() {
           }}
         />
       ) : null}
-      {gameJoinOpen && gameJoinCode ? (
+      {gameJoinOpen ? (
         <GameJoinDialog
           code={gameJoinCode}
           busy={gameBusy}
