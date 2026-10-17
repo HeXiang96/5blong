@@ -204,6 +204,20 @@ export class GameMesh {
           window.clearTimeout(timer);
           this.timers.delete(timer);
           settle(null);
+        } else if (message?.t === "groster") {
+          /*
+           * 名册广播：访客必须持续应用（此前只处理了 welcome/kick，
+           * 导致"每个人看到的名单各不相同"——2026-10-17 业主三端实测暴露）。
+           */
+          const me = message.members.find((member) => member.id === this.myId);
+          this.members.clear();
+          for (const member of message.members) {
+            this.members.set(member.id, { ...member, local: member.id === this.myId });
+          }
+          this.scores = message.scores;
+          this.events.roster([...this.members.values()], this.scores, this.unlocked);
+          if (me) this.localMuted = me.muted;
+          this.reconcileAudio();
         } else if (message?.t === "gkick") {
           settle("你已被房主移出开黑圈");
           this.events.kicked();
