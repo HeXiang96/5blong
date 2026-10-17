@@ -541,3 +541,108 @@ html[data-daypart="night"] .vx-game-root {
 .vx-game-root .vx-modal .vx-game-error {
   color: #ff9b9b;
 }
+
+/* ================================================================
+   创建/加入弹窗：电竞深色面板（首页米色主题下也保持开黑圈的视觉语言）
+   ================================================================ */
+.vx-game-modal {
+  position: relative;
+  overflow: hidden;
+  background:
+    radial-gradient(120% 80% at 85% -10%, rgba(53, 224, 208, 0.14), transparent 55%),
+    radial-gradient(120% 80% at 10% 110%, rgba(255, 122, 69, 0.12), transparent 55%),
+    linear-gradient(180deg, #131b26, #0a0f16);
+  color: var(--g-text, #e9f4ff);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 30px 70px rgba(0, 0, 0, 0.55);
+}
+.vx-game-modal::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(to right, rgba(90, 200, 220, 0.08) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(90, 200, 220, 0.08) 1px, transparent 1px);
+  background-size: 34px 34px;
+  pointer-events: none;
+}
+.vx-game-modal > * {
+  position: relative;
+}
+.vx-game-modal h2 {
+  color: #ffffff;
+  letter-spacing: 0.02em;
+}
+.vx-game-modal .vx-modal-sub {
+  color: rgba(233, 244, 255, 0.66);
+}
+.vx-game-modal .vx-modal-body,
+.vx-game-modal .vx-modal-hint {
+  color: rgba(233, 244, 255, 0.66);
+}
+.vx-game-modal .vx-field-label {
+  color: rgba(233, 244, 255, 0.62);
+  font-size: 12.5px;
+}
+.vx-game-modal .vx-input {
+  color: #e9f4ff;
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+}
+.vx-game-modal .vx-input::placeholder {
+  color: rgba(233, 244, 255, 0.35);
+}
+.vx-game-modal .vx-input:focus {
+  border-color: var(--g-defend, #35e0d0);
+  outline: none;
+}
+.vx-game-modal .vx-game-check {
+  color: rgba(233, 244, 255, 0.85);
+}
+.vx-game-modal .vx-game-entitle {
+  border: 1px dashed rgba(90, 200, 220, 0.4);
+  background: rgba(53, 224, 208, 0.06);
+}
+.vx-game-modal .vx-game-entitle .vx-modal-hint {
+  color: rgba(233, 244, 255, 0.55);
+}
+.vx-game-modal .vx-game-error {
+  color: #ff9b9b;
+}
+.vx-game-modal .vx-btn-primary {
+  background: linear-gradient(120deg, #ff8a52, #ff6a3d);
+  border: none;
+  color: #fff;
+}
+.vx-game-modal .vx-btn-primary:disabled {
+  opacity: 0.45;
+}
+.vx-game-modal .vx-btn-ghost {
+  color: rgba(233, 244, 255, 0.85);
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+}
+/* 队伍预览条：让"创建完会长什么样"一眼可见 */
+.vx-game-teams-preview {
+  display: flex;
+  gap: 8px;
+  margin: 2px 0 4px;
+}
+.vx-game-teams-preview span {
+  flex: 1;
+  text-align: center;
+  padding: 7px 4px;
+  border-radius: 10px;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.vx-game-teams-preview .tp-attack {
+  color: var(--g-attack, #ff7a45);
+  background: rgba(255, 122, 69, 0.12);
+  border: 1px solid rgba(255, 122, 69, 0.4);
+}
+.vx-game-teams-preview .tp-defend {
+  color: var(--g-defend, #35e0d0);
+  background: rgba(53, 224, 208, 0.1);
+  border: 1px solid rgba(53, 224, 208, 0.4);
+}
