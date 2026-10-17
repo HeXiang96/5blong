@@ -1149,6 +1149,23 @@ async function handleGameAdmin(request, env) {
     .join("");
 
   const html = `
+    <style>
+      .g-form { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 8px 0 16px; }
+      .g-form label { font-size: 13px; color: #6b532c; }
+      .g-form input { border: 1px solid #d8cba8; border-radius: 8px; padding: 6px 9px; background: #fffdf7; }
+      .g-form button { border: none; border-radius: 999px; padding: 7px 16px; background: #a4762c; color: #fff; cursor: pointer; }
+      table { width: 100%; border-collapse: separate; border-spacing: 0 6px; }
+      th { text-align: left; font-size: 12px; color: #8a744a; padding: 2px 10px; }
+      td { background: #fffdf7; padding: 9px 10px; font-size: 13px; border-top: 0.5px solid #eadfca; border-bottom: 0.5px solid #eadfca; }
+      tr td:first-child { border-left: 0.5px solid #eadfca; border-radius: 8px 0 0 8px; }
+      tr td:last-child { border-right: 0.5px solid #eadfca; border-radius: 0 8px 8px 0; }
+      td code { background: #f3e8cf; border-radius: 6px; padding: 2px 7px; color: #6b532c; }
+      .g-badge { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 12px; }
+      .g-ok { background: #eaf3de; color: #3b6d11; }
+      .g-dead { background: #f1efe8; color: #8a744a; }
+      .g-revoke { background: none; border: 1px solid #d8b98a; color: #a4762c; border-radius: 8px; padding: 4px 10px; cursor: pointer; }
+      .g-flash { background: #faeeda; border: 0.5px solid #d8b98a; color: #6b532c; padding: 10px 14px; border-radius: 10px; }
+    </style>
     ${flash.map((line) => `<p class="g-flash">${line}</p>`).join("")}
     <h2>生成创建码</h2>
     <form method="post" class="g-form">
@@ -1170,21 +1187,7 @@ async function handleGameAdmin(request, env) {
     <h2>操作日志</h2>
     <table><tr><th>时间</th><th>操作者</th><th>动作</th><th>详情</th></tr>${auditRows || "<tr><td colspan='4'>暂无</td></tr>"}</table>
   `;
-  return adminPage(`开黑圈运营 · ${who.name}`, `<style>${GAME_ADMIN_CSS}</style>` + html);
+  return adminPage(`开黑圈运营 · ${who.name}`, html);
 }
 
-/* 开黑圈运营页样式：深色电竞风（与游戏内一致） */
-const GAME_ADMIN_CSS = `
-  body { background: #0c1220; color: #edf4ff; font-family: "Segoe UI", "Microsoft YaHei", sans-serif; margin: 0; padding: 24px; }
-  h1, h2 { color: #edf4ff; }
-  h2 { border-left: 3px solid #4be3d2; padding-left: 10px; font-size: 16px; }
-  table { width: 100%; border-collapse: collapse; margin: 10px 0 24px; background: rgba(255,255,255,.03); border-radius: 10px; overflow: hidden; }
-  th, td { padding: 9px 12px; text-align: left; border-bottom: 1px solid rgba(160,200,240,.12); font-size: 13px; }
-  th { color: rgba(205,226,255,.6); font-weight: 500; }
-  code { color: #ffd479; font-family: Consolas, monospace; }
-  button { background: rgba(255,255,255,.08); color: #edf4ff; border: 1px solid rgba(255,255,255,.2); border-radius: 8px; padding: 5px 12px; cursor: pointer; }
-  button:hover { background: rgba(255,255,255,.16); }
-  input { background: rgba(255,255,255,.07); color: #edf4ff; border: 1px solid rgba(255,255,255,.18); border-radius: 8px; padding: 6px 9px; }
-  .g-form { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; background: rgba(255,255,255,.04); padding: 12px; border-radius: 10px; }
-  .g-flash { background: rgba(255,122,69,.14); border: 1px solid rgba(255,138,92,.45); color: #ffc7a3; padding: 10px 14px; border-radius: 10px; }
-`;
+
