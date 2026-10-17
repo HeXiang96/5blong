@@ -3307,3 +3307,45 @@ button.vx-topic {
   background: color-mix(in srgb, currentColor 16%, transparent);
   font-weight: 600;
 }
+
+/* 首页开黑圈入口：与语音房明确分区的条状卡片 */
+.vx-game-entry {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 10px auto 0;
+  padding: 10px 14px;
+  border-radius: 14px;
+  border: 1px dashed color-mix(in srgb, currentColor 30%, transparent);
+  background: color-mix(in srgb, currentColor 5%, transparent);
+  max-width: 520px;
+  width: 100%;
+}
+.vx-game-entry-text {
+  flex: 1;
+  min-width: 220px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  text-align: left;
+}
+.vx-game-entry-text strong {
+  font-size: 13.5px;
+}
+.vx-game-entry-text span {
+  font-size: 12px;
+  opacity: 0.75;
+  line-height: 1.5;
+}
+.vx-game-entry-what {
+  font-size: 12px;
+  align-self: flex-start;
+  padding: 0;
+  opacity: 0.7;
+}
+.vx-game-entry-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
