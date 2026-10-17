@@ -1157,10 +1157,13 @@ async function handleGameAdminInner(request, env) {
   const totalCodes = codes.length;
   const totalActivated = (audit.filter((row) => row.action === "activate").length) || 0;
   const rowsHead = (rows, visible = 5) => rows.slice(0, visible).join("");
-  const rowsRest = (rows, visible = 5) => {
+  const CODE_HEAD = "<tr><th>码</th><th>备注</th><th>剩余次数</th><th>到期</th><th>状态</th><th></th></tr>";
+  const STAFF_HEAD = "<tr><th>名字</th><th>权限</th><th>到期</th><th>状态</th><th></th></tr>";
+  const AUDIT_HEAD = "<tr><th>时间</th><th>操作者</th><th>动作</th><th>详情</th></tr>";
+  const rowsRest = (rows, visible, head) => {
     const rest = rows.slice(visible);
     return rest.length
-      ? `<details><summary>展开其余 ${rest.length} 条</summary><table>${rest.join("")}</table></details>`
+      ? `<details><summary>展开其余 ${rest.length} 条</summary><table>${head}${rest.join("")}</table></details>`
       : "";
   };
 
@@ -1213,17 +1216,17 @@ async function handleGameAdminInner(request, env) {
       <button type="submit" class="vx-btn-small btn-accent">生成</button>
     </form>
     <div class="sec-title">创建码 · 有效（${valid.length}）</div>
-    ${valid.length ? `<table>${"<tr><th>码</th><th>备注</th><th>剩余次数</th><th>到期</th><th>状态</th><th></th></tr>"}${rowsHead(valid.map((row) => codeRow(row, true)))}</table>${rowsRest(valid.map((row) => codeRow(row, true)))}` : '<div class="empty-box"><div class="empty-emoji">🎟️</div>还没有有效码<br><span class="empty-sub">在上面生成一条，发给要开黑的群友</span></div>'}
+    ${valid.length ? `<table>${"<tr><th>码</th><th>备注</th><th>剩余次数</th><th>到期</th><th>状态</th><th></th></tr>"}${rowsHead(valid.map((row) => codeRow(row, true)))}</table>${rowsRest(valid.map((row) => codeRow(row, true)), 5, CODE_HEAD)}` : '<div class="empty-box"><div class="empty-emoji">🎟️</div>还没有有效码<br><span class="empty-sub">在上面生成一条，发给要开黑的群友</span></div>'}
     <div class="sec-title">创建码 · 已吊销 / 已用完（${dead.length}）</div>
-    ${dead.length ? `<table>${"<tr><th>码</th><th>备注</th><th>剩余次数</th><th>到期</th><th>状态</th><th></th></tr>"}${rowsHead(dead.map((row) => codeRow(row, false)))}</table>${rowsRest(dead.map((row) => codeRow(row, false)))}` : '<span class="kv">暂无</span>'}
+    ${dead.length ? `<table>${"<tr><th>码</th><th>备注</th><th>剩余次数</th><th>到期</th><th>状态</th><th></th></tr>"}${rowsHead(dead.map((row) => codeRow(row, false)))}</table>${rowsRest(dead.map((row) => codeRow(row, false)), 5, CODE_HEAD)}` : '<span class="kv">暂无</span>'}
     ${who.role === "main" ? `<div class="sec-title">新增员工（仅主令牌）</div>
       <form method="post" class="g-form"><input type="hidden" name="action" value="new_staff"/>
         <label>名字 <input name="name" placeholder="运营-小王" size="12"/></label>
         <button type="submit" class="vx-btn-small btn-accent">生成员工令牌</button></form>
       <div class="sec-title">员工（${staff.length}）</div>
-      ${staff.length ? `<table><tr><th>名字</th><th>权限</th><th>到期</th><th>状态</th><th></th></tr>${rowsHead(staffRows)}</table>${rowsRest(staffRows)}` : '<span class="kv">还没有员工</span>'}` : ""}
+      ${staff.length ? `<table><tr><th>名字</th><th>权限</th><th>到期</th><th>状态</th><th></th></tr>${rowsHead(staffRows)}</table>${rowsRest(staffRows, 5, STAFF_HEAD)}` : '<span class="kv">还没有员工</span>'}` : ""}
     <div class="sec-title">操作日志（${audit.length}）</div>
-    ${audit.length ? `<table><tr><th>时间</th><th>操作者</th><th>动作</th><th>详情</th></tr>${rowsHead(auditRows)}</table>${rowsRest(auditRows)}` : '<span class="kv">暂无</span>'}
+    ${audit.length ? `<table><tr><th>时间</th><th>操作者</th><th>动作</th><th>详情</th></tr>${rowsHead(auditRows)}</table>${rowsRest(auditRows, 5, AUDIT_HEAD)}` : '<span class="kv">暂无</span>'}
   `;
   return adminPage(`开黑圈运营 · ${who.name}`, html);
 }
