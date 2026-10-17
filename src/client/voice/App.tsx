@@ -188,7 +188,7 @@ export function App() {
           onJoin={(opts) => {
             setGameBusy(true);
             void game
-              .joinRoom({ code: gameJoinCode, gameId: opts.gameId, muted: opts.muted })
+              .joinRoom({ code: opts.code, gameId: opts.gameId, muted: opts.muted })
               .finally(() => setGameBusy(false));
           }}
         />
@@ -356,11 +356,8 @@ export function App() {
         lastRoom={voice.lastRoom}
         onCreateGame={() => setGameCreateOpen(true)}
         onJoinGame={() => {
-          const code = window.prompt("输入开黑圈房间码（4 位数字）") ?? "";
-          if (/^[0-9]{4}$/.test(code.trim())) {
-            setGameJoinCode(code.trim());
-            setGameJoinOpen(true);
-          }
+          setGameJoinCode(null);
+          setGameJoinOpen(true);
         }}
       />
       {voice.lastSummary ? (

@@ -134,19 +134,37 @@ export function GameJoinDialog({
   busy,
   error,
 }: {
-  code: string;
+  /** 已知的房间码（链接带 ?g= 时）；null = 让用户在弹窗里填。 */
+  code: string | null;
   onCancel: () => void;
-  onJoin: (opts: { gameId: string; muted: boolean }) => void;
+  onJoin: (opts: { code: string; gameId: string; muted: boolean }) => void;
   busy: boolean;
   error: string | null;
 }) {
+  const [roomCode, setRoomCode] = useState(code ?? "");
   const [gameId, setGameId] = useState("");
   const [muted, setMuted] = useState(false);
+  const ready = /^[0-9]{4}$/.test(roomCode.trim()) && gameId.trim().length > 0;
   return (
     <div className="vx-modal-backdrop">
       <div className="vx-modal vx-game-modal">
         <h2>🎮 加入开黑圈</h2>
-        <p className="vx-modal-sub">房间 {code} · 进房后请先认领你的边（进攻 / 防守）</p>
+        <p className="vx-modal-sub">
+          {code ? `房间 ${code} · ` : ""}进房后先当待分队，游戏里分好边再认领（进攻 / 防守）
+        </p>
+        {!code ? (
+          <label className="vx-field">
+            <span className="vx-field-label">开黑圈房间码（4 位数字）</span>
+            <input
+              className="vx-input"
+              value={roomCode}
+              inputMode="numeric"
+              maxLength={4}
+              placeholder="例如：8294"
+              onChange={(event) => setRoomCode(event.target.value.replace(/[^0-9]/g, "").slice(0, 4))}
+            />
+          </label>
+        ) : null}
         <label className="vx-field">
           <span className="vx-field-label">你的游戏 ID（必填，和游戏里一致）</span>
           <input
@@ -156,7 +174,7 @@ export function GameJoinDialog({
             placeholder="例如：夜里看江南#8294"
             onChange={(event) => setGameId(event.target.value)}
             onKeyDown={(event) => {
-              if (event.key === "Enter" && gameId.trim()) onJoin({ gameId, muted });
+              if (event.key === "Enter" && ready) onJoin({ code: roomCode.trim(), gameId, muted });
             }}
           />
         </label>
@@ -169,7 +187,7 @@ export function GameJoinDialog({
           <button type="button" className="vx-btn vx-btn-ghost" onClick={onCancel}>
             取消
           </button>
-          <button type="button" className="vx-btn vx-btn-primary" disabled={busy || !gameId.trim()} onClick={() => onJoin({ gameId, muted })}>
+          <button type="button" className="vx-btn vx-btn-primary" disabled={busy || !ready} onClick={() => onJoin({ code: roomCode.trim(), gameId, muted })}>
             {busy ? "加入中…" : "进圈"}
           </button>
         </div>
