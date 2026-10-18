@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "license": "MIT",
-  "description": "5blong：免注册的低延迟语音房（PeerJS 公共云信令 + WebRTC P2P）",
+  "description": "5blong：免注册的低延迟语音房（自建信令多线路 + WebRTC P2P）",
   "engines": {
     "node": ">=24.0.0 <27"
   },
@@ -17,7 +17,9 @@
     "typecheck": "tsc -b --pretty false",
     "test": "vitest run",
     "test:watch": "vitest",
-    "check": "npm run typecheck && npm test && npm run build:web:pages",
+    "check": "npm run typecheck && npm test && npm run build:web:pages && npm run docs:check",
+    "docs:sync": "node scripts/docs-sync.mjs",
+    "docs:check": "node scripts/check-docs.mjs",
     "deploy:pages": "node scripts/deploy-pages.mjs",
     "pages:env": "node scripts/deploy-pages.mjs --env-only",
     "publish:desktop": "node scripts/publish-desktop.mjs",
