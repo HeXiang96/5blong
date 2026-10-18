@@ -7,7 +7,9 @@
 //   2. git commit（消息：release: vX.Y.Z）；
 //   3. 打标签 app-vX.Y.Z；
 //   4. 推送 main 和标签 → GitHub Actions 自动出安装包并发布 Release，
-//      已安装的桌面端会在下次启动或点托盘「检查更新」时收到更新。
+//      已安装的桌面端会在下次启动或点托盘「检查更新」时收到更新；
+//   5. **推送后 ls-remote 双确认**：两条引用都必须在远端落地，否则自动补推一次、
+//      仍失败则报错退出（防止"标签推了、main 漏推"导致 GitHub 源码停在旧版）。
 //
 // CI 出包完成后（约 10 分钟），再跑一步把更新源发布到国内可直连的 Pages：
 //   npm run publish:desktop -- X.Y.Z
@@ -112,8 +114,70 @@ try {
 run("git add -A");
 run(`git commit -m "release: v${version}"`);
 run(`git tag app-v${version}`);
-run("git push origin main");
-run(`git push origin app-v${version}`);
+
+/*
+ * 推送 + 远端双确认（2026-10-16 事故根因：标签推成功但 main 漏推，GitHub 源码停在旧版）：
+ *   - 推送命令抛错（代理抖动）不立即中止，先核对远端是否其实已落地；
+ *   - 核对用 ls-remote 对比 sha；若远端已被 CI 的 AUTO-LOG 自动提交推进，用祖先关系判定；
+ *   - 任何一条未落地 → 自动补推一次 → 仍失败则明确报错并给出恢复步骤（exit 1）。
+ */
+const gitOut = (cmd) => execSync(cmd, { cwd: root, encoding: "utf8" }).trim();
+const localMain = gitOut("git rev-parse HEAD");
+const localTag = gitOut(`git rev-parse refs/tags/app-v${version}`);
+
+const pushOnce = (ref) => {
+  try {
+    run(`git push origin ${ref}`);
+    return true;
+  } catch {
+    console.error(`⚠ 推送 ${ref} 报错（网络/代理？），稍后统一核对远端状态`);
+    return false;
+  }
+};
+
+/** 远端是否已包含该提交：exact = 恰好一致；contains = 已被 CI 自动提交推进；no = 未落地 */
+const remoteState = (ref, want) => {
+  try {
+    const line = gitOut(`git ls-remote origin ${ref}`).split("\n")[0] ?? "";
+    const got = line.split(/\s+/)[0] || "";
+    if (got === want) return "exact";
+    if (!got) return "no";
+    execSync(`git fetch origin ${ref} --quiet`, { cwd: root, stdio: "ignore" });
+    execSync(`git merge-base --is-ancestor ${want} FETCH_HEAD`, { cwd: root, stdio: "ignore" });
+    return "contains";
+  } catch {
+    return "no";
+  }
+};
+
+const targets = [
+  { ref: "main", want: localMain, label: "main 分支" },
+  { ref: `app-v${version}`, want: localTag, label: `标签 app-v${version}` },
+];
+
+for (const t of targets) pushOnce(t.ref);
+
+const failed = [];
+for (const t of targets) {
+  let state = remoteState(t.ref, t.want);
+  if (state === "no") {
+    console.log(`✗ ${t.label} 远端未更新，自动补推…`);
+    pushOnce(t.ref);
+    state = remoteState(t.ref, t.want);
+  }
+  if (state === "no") failed.push(t);
+  else console.log(`✓ ${t.label} 远端确认 ${state === "exact" ? "一致" : "已包含"}（${t.want.slice(0, 7)}）`);
+}
+
+if (failed.length) {
+  console.error("\n✗ 发版不完整，以下引用未成功推送：");
+  for (const t of failed) console.error(`   - ${t.label}（本地 ${t.want.slice(0, 7)}）`);
+  console.error("\n请立即处理：① 确认代理在线；② git push origin main / git push origin app-vX 手动重试；");
+  console.error("③ 仍不行按 README「发版 SOP」恢复：fetch → rebase（AUTO-LOG 冲突以 CI 版为准）→ 推 main → 补推标签。");
+  process.exit(1);
+}
+
+console.log("");
 console.log(`\n已推送 app-v${version}，GitHub Actions 开始出包：`);
 console.log(`https://github.com/${repo()}/actions`);
 console.log(`\n出包成功后 CI 会自动把更新源发布到 Pages（需在仓库 Secrets 配置 CLOUDFLARE_API_TOKEN）。`);
