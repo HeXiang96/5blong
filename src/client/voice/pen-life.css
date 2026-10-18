@@ -390,8 +390,14 @@ html[data-theme="dark"] .vx-npc-badge {
 /* 头顶网络状态小圆点 */
 .vx-pig-net {
   position: absolute;
-  top: -8px;
-  right: 4px;
+  /*
+   * 网络状态点：原来在右上角（top:-8 / right:4），和"打瞌睡 z z"（top:-10 / right:2）
+   * 抢同一块像素，人多时猪头顶糊成一团。现在下移到脚边影子右上角——
+   * 那里天然空着，也更符合"信号来自地面那个连接"的直觉。
+   */
+  bottom: 3px;
+  right: 6px;
+  top: auto;
   z-index: 6;
   width: 12px;
   height: 12px;
@@ -435,7 +441,8 @@ html[data-theme="dark"] .vx-npc-badge {
 /* 互动气泡：戳（！）/ 打招呼（你好~）/ 投喂（爱心） */
 .vx-pig-bubble {
   position: absolute;
-  top: -26px;
+  /* 底边对齐猪头顶（等价于旧的 top:-26px），这样不同字号的泡切换时基线一致 */
+  bottom: calc(100% + 8px);
   left: 50%;
   z-index: 7;
   white-space: nowrap;
@@ -885,10 +892,11 @@ html[data-theme="dark"] .vx-npc-badge {
   color: #b0478a;
 }
 
-/* 情绪小气泡：常驻、不弹跳、比互动气泡更轻（不抢戏） */
+/* 情绪小气泡：与互动气泡**共用同一槽位**（top 都是 -26px），
+   两者在 JSX 里互斥（reaction 优先），切换时不会跳位置；样式更轻、不弹跳。 */
 .vx-pig-mood {
   position: absolute;
-  top: -22px;
+  bottom: calc(100% + 8px);
   left: 50%;
   z-index: 6;
   transform: translateX(-50%);
