@@ -9,7 +9,7 @@
   自动切 Cloudflare Realtime SFU 转发**，免费额度），全房同看一块大幕布，与语音链路物理隔离；  
   **可带系统声音**（观众点幕布开音量）。部分播放设备（7.1/虚拟声卡）会让浏览器拿不到系统  
   音频——桌面客户端内置 WASAPI 采集不受限；网页版会提示改用客户端或换成立体声设备。  
-  详见 [SCREENSHARE-PLAN.md](./SCREENSHARE-PLAN.md) 与 [SCREENSHARE-OPT-PLAN.md](./SCREENSHARE-OPT-PLAN.md)。
+  详见归档文档 [SCREENSHARE-PLAN.md](./docs/archive/SCREENSHARE-PLAN.md)（设计）与 [SCREENSHARE-OPT-PLAN.md](./docs/archive/SCREENSHARE-OPT-PLAN.md)（优化决策记录）。
 - 全程 0 成本：信令用免费公共 PeerJS 云，NAT 穿透用免费公共 STUN +  
   **Cloudflare Realtime TURN**（服务端 `/ice` 现签短期凭据，1000 GB/月免费额度），不需要任何付费服务。
 
@@ -22,7 +22,7 @@
 > 协商错峰消除信令风暴、被呼应答改用处理后的发送流。线上 4 人顺序加入实测  
 > 均在 5 秒内完成。
 >
-> 修复记录见 [KNOWN-ISSUES.md](./KNOWN-ISSUES.md) 顶部。
+> 修复记录见 [KNOWN-ISSUES.md](./docs/archive/KNOWN-ISSUES.md)（已归档）顶部。
 
 ---
 
@@ -31,8 +31,8 @@
 > **本节专为后续维护者（含 AI）而写**：交代"共享屏幕为什么卡、改了什么、怎么验证、别踩哪些坑"。  
 > 这一轮**只动共享链路，语音一行未碰**（语音零影响是硬约束）；四批次全部落地，  
 > `npm run check` 全绿（typecheck + 155 单测 + 构建）。  
-> 完整方案与逐条推理见 [SCREENSHARE-OPT-PLAN.md](./SCREENSHARE-OPT-PLAN.md)；  
-> 早期 v1~v3 草稿 [SCREENSHARE-PERF-PLAN.md](./SCREENSHARE-PERF-PLAN.md) 已被其取代（仅存档）。
+> 完整方案与逐条推理见 [SCREENSHARE-OPT-PLAN.md](./docs/archive/SCREENSHARE-OPT-PLAN.md)（已归档）；  
+> 早期 v1~v3 草稿 [SCREENSHARE-PERF-PLAN.md](./docs/archive/SCREENSHARE-PERF-PLAN.md) 已被其取代（仅存档）。
 
 ### 一句话根因
 
@@ -450,7 +450,7 @@ npm run feedback:admin list 20   # 终端查看最近反馈（url / list / rm �
 - **全端可用**：网页端同域 `/sfu`（Pages `_worker.js`）、桌面端直连  
   `5blong.pages.dev/sfu`，凭证只存在服务端环境变量，绝不进前端包
 - 调试入口（仅开发用）：`?tv=1`（不开采集目检全套动画）、`?tv=demo`（演示画面走真实 SFU 链路）
-- 设计与实现细节、**每次发版的完整流程**见 [SCREENSHARE-PLAN.md](./SCREENSHARE-PLAN.md)
+- 设计与实现细节、**每次发版的完整流程**见 [SCREENSHARE-PLAN.md](./docs/archive/SCREENSHARE-PLAN.md)（已归档，发版流程以本文「开发者命令」为准）
 
 ---
 

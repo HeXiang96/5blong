@@ -388,7 +388,7 @@ export function parseInteractEvent(input: unknown): InteractEvent | null {
 /**
  * 房间的屏幕共享状态（房主权威，一台电视，同时最多一个共享者）。
  *
- * 设计约束（见 SCREENSHARE-PLAN.md §H）：这是**房间状态上的一个可空字段**，
+ * 设计约束（见 docs/archive/SCREENSHARE-PLAN.md §H）：这是**房间状态上的一个可空字段**，
  * 成员表与语音链路完全不读也不写它——共享链路崩了只表现为"电视雪花"。
  */
 /** 观众端画质偏好：`auto` 自动 / `detail` 清晰优先 / `motion` 流畅优先。 */

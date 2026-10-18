@@ -2,7 +2,7 @@
 /**
  * 5blong 屏幕共享 · 本地 SFU 代理（开发/本地验证专用）。
  *
- * Cloudflare Realtime SFU 的 App Secret 只能放在可信后端（见 SCREENSHARE-PLAN.md §B）。
+ * Cloudflare Realtime SFU 的 App Secret 只能放在可信后端（见 docs/archive/SCREENSHARE-PLAN.md §B）。
  * 本地验证时用这个 ~100 行的 Node 代理扮演 Worker 的角色：
  *   前端 → /sfu/*（无密钥） → 这里补 Bearer 密钥 → rtc.live.cloudflare.com
  *   前端 → /ice    （无密钥） → 这里补 TURN key → 签发短期凭据

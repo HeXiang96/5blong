@@ -1,7 +1,7 @@
 /**
  * 屏幕共享 · SFU 客户端（Cloudflare Realtime SFU）。
  *
- * 设计铁律（SCREENSHARE-PLAN.md §H）：这里的所有 RTCPeerConnection **只连 SFU**，
+ * 设计铁律（docs/archive/SCREENSHARE-PLAN.md §H）：这里的所有 RTCPeerConnection **只连 SFU**，
  * 与语音的 PeerJS 媒体链路零共享——共享链路崩了只表现为"电视雪花"，
  * 绝不触碰语音状态。本文件也不 import 引擎（单向依赖：use-voice 粘合）。
  *
@@ -64,7 +64,7 @@ export interface ShareQualityPreset {
 }
 
 /**
- * 档位码率：**匹配链路**而不是"堆高"（SCREENSHARE-PERF-PLAN §P0-1）。
+ * 档位码率：**匹配链路**而不是"堆高"（docs/archive/SCREENSHARE-PERF-PLAN.md §P0-1）。
  *
  * 依据：B站 1080p60 实测只用 2.64 Mbps 就流畅——流畅靠的是编码效率与链路质量，
  * 不是把上限堆到 20 Mbps。上限远超链路可达带宽时，浏览器的拥塞控制反正会把
@@ -81,7 +81,7 @@ export const SHARE_QUALITY_PRESETS: Record<ShareQuality, ShareQualityPreset> = {
 };
 
 /**
- * 抖动缓冲目标（ms），按链路分级（SCREENSHARE-PERF-PLAN §P0-5）。
+ * 抖动缓冲目标（ms），按链路分级（docs/archive/SCREENSHARE-PERF-PLAN.md §P0-5）。
  *
  * 原先 P2P 与 SFU 一律 4000ms（规范上限），等于给"同城直连"也强加 4 秒排队，
  * 围炉看屏会对不上嘴。直连 RTT 通常 <50ms，600ms 足够吸收抖动；SFU 多为跨境
@@ -326,7 +326,7 @@ export function preferredRidFor(pref: ScreenViewPreference): "f" | "h" {
 }
 
 /**
- * P2P / SFU 传输方式的自动选择（SCREENSHARE-PERF-PLAN §P1-11）。
+ * P2P / SFU 传输方式的自动选择（docs/archive/SCREENSHARE-PERF-PLAN.md §P1-11）。
  *
  * P2P 的上行是"每路码率 × 观众数"：观众不多时直连最省事、画质最好（走本地运营商
  * 互联，延迟低）；观众多到一定程度家宽上行会被打爆，必须切 SFU 转发
@@ -384,7 +384,7 @@ export interface ScreenSenderOptions {
 /**
  * 把档位下发到发送端（码率 / 帧率上限 / 分辨率缩放）。返回是否全部落盘。
  *
- * 两个已核实的事实（SCREENSHARE-PERF-PLAN §P0-3）：
+ * 两个已核实的事实（docs/archive/SCREENSHARE-PERF-PLAN.md §P0-3）：
  * - `degradationPreference` 已废弃、Chrome 不支持，写在 `encodings[0]` 里是**空转**
  *   （原代码就是这么写的，等于什么都没设）；
  * - 真正决定"带宽不足时降什么"的是轨道上的 `contentHint`（见 `publishScreen`），
@@ -925,7 +925,7 @@ export function screenLinkStrained(
 }
 
 /**
- * 给一条画面发送链路挂上"自适应降档"（SCREENSHARE-PERF-PLAN §P0-4 / §P2-14）。
+ * 给一条画面发送链路挂上"自适应降档"（docs/archive/SCREENSHARE-PERF-PLAN.md §P0-4 / §P2-14）。
  *
  * 两条依据：
  * - `outbound-rtp.qualityLimitationReason`（发送端自述）：`bandwidth` 链路不够、
@@ -1064,7 +1064,7 @@ export interface ScreenHealOptions {
 }
 
 /**
- * 给画面连接挂"抖动自愈"（SCREENSHARE-PERF-PLAN §P2-13）。
+ * 给画面连接挂"抖动自愈"（docs/archive/SCREENSHARE-PERF-PLAN.md §P2-13）。
  *
  * 原实现把 `disconnected` 直接当断线（雪花/永久冻结），可短暂抖一下 ICE
  * 就能自己恢复。这里：`disconnected` 等 2.5s 仍不通 → `restartIce()`；
@@ -1527,7 +1527,7 @@ export interface PublishScreenOptions {
   /** 画质档位（默认超清 1080p）。 */
   quality?: ShareQuality;
   /**
-   * 带宽不足时的降级方向（SCREENSHARE-PERF-PLAN §P0-3）：
+   * 带宽不足时的降级方向（docs/archive/SCREENSHARE-PERF-PLAN.md §P0-3）：
    * - `"detail"`（默认）：保清晰，宁可掉帧也不糊——屏幕共享多为 UI/文字/视频，
    *   糊了就没法看，"卡一点"还能忍；
    * - `"motion"`：保帧率，宁可降清晰（看高速游戏时更顺）。
