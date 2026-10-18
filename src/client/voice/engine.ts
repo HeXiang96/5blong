@@ -7,6 +7,7 @@ import rnnoiseWasmUrl from "@sapphi-red/web-noise-suppressor/rnnoise.wasm?url";
 import rnnoiseSimdWasmUrl from "@sapphi-red/web-noise-suppressor/rnnoise_simd.wasm?url";
 
 import {
+  GROUP_INTERACT_COOLDOWN_MS,
   HEARTBEAT_MS,
   HEARTBEAT_TIMEOUT_MS,
   HOST_SILENCE_TIMEOUT_MS,
@@ -18,6 +19,7 @@ import {
   guestPeerId,
   hostPeerId,
   hostPeerIdForCode,
+  isGroupInteractKind,
   isRoomCode,
   isValidPeerId,
   makeRoomCode,
@@ -343,6 +345,11 @@ export class VoiceMesh {
   private penActorX = new Map<string, number>();
   /** 各猪最近上报的纵深（0=最远 1=最近），仅本机视图用。 */
   private penActorLane = new Map<string, number>();
+  /**
+   * 全房动作（蹦迪/烟花）上一次成功分发的时刻，房主权威限流。
+   * 这类动作全房同时看到，不限流就会被刷屏；30 秒一次足够"暖场"用。
+   */
+  private lastGroupInteractAt = 0;
   /**
    * 等待 welcome 的超时定时器。
    * 必须在收到 welcome 时清掉：否则进房成功 8 秒后它照样触发，
@@ -1705,9 +1712,11 @@ export class VoiceMesh {
     }
   }
 
-  /** 对某位成员发起小猪互动（戳一戳 / 打招呼 / 投喂）。 */
+  /** 对某位成员发起小猪互动（戳一戳 / 打招呼 / 投喂），或对全场发起全房动作。 */
   interactWith(to: string, kind: InteractKind): void {
-    if (!this.me || to === this.myId || !this.members.has(to)) return;
+    if (!this.me) return;
+    // 全房动作："*" 不是成员，单独放行（房主侧还会校验种类 + 30 秒冷却）
+    if (to !== "*" && (to === this.myId || !this.members.has(to))) return;
     if (this.hosting) {
       this.handleInteract(this.myId, to, kind);
       return;
@@ -1718,11 +1727,31 @@ export class VoiceMesh {
   /** 房主统一处理互动：校验、广播，投喂时还在目标猪面前投一颗菜。 */
   private handleInteract(from: string, to: string, kind: InteractKind): void {
     if (!this.hosting) return;
-    if (!this.members.has(to) || !this.members.has(from)) return;
+    if (!this.members.has(from)) return;
+
+    /*
+     * 全房动作（蹦迪/烟花）：目标是 "*"。房主权威限流 30 秒——这类动作全房
+     * 同时可见，不限制会被连点刷屏。冷却期内静默丢弃（不给发起人报错，
+     * 避免再引入一类"操作失败"的提示噪音）。
+     */
+    if (to === "*") {
+      if (!isGroupInteractKind(kind)) return;
+      const now = Date.now();
+      if (now - this.lastGroupInteractAt < GROUP_INTERACT_COOLDOWN_MS) return;
+      this.lastGroupInteractAt = now;
+      const groupEvent: InteractEvent = { from, to: "*", kind, ts: now };
+      this.events.interact(groupEvent);
+      this.broadcastHost({ t: "interact", event: groupEvent });
+      return;
+    }
+
+    if (!this.members.has(to)) return;
     const event: InteractEvent = { from, to, kind, ts: Date.now() };
     this.events.interact(event);
     this.broadcastHost({ t: "interact", event });
     if (kind === "feed") this.feedPig(to);
+    // 请客：一人触发、全场受益——给每一头在场的猪都丢一颗菜
+    if (kind === "treat") for (const id of this.members.keys()) this.feedPig(id);
   }
 
   /** 投喂：在目标猪面前投一颗菜，并安排它走过去吃掉。 */

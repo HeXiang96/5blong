@@ -11,6 +11,7 @@ import {
 import { createPortal } from "react-dom";
 import {
   Ban,
+  Candy,
   Carrot,
   ChevronRight,
   ChevronUp,
@@ -24,6 +25,9 @@ import {
   Copy as CopyIcon,
   ArrowUpFromLine,
   Laugh,
+  Moon,
+  Music,
+  Snowflake,
   Lock,
   LockOpen,
   MessageSquare,
@@ -47,12 +51,20 @@ import {
 import type { ChatMessage, EngineStatus, MediaLinkState, Member } from "../engine";
 import type { Notice } from "../use-voice";
 import type { InteractEvent, InteractKind, Invite } from "../protocol";
+import { GROUP_INTERACT_COOLDOWN_MS } from "../protocol";
+
+/** 多久没被互动就算"发呆"（头顶冒 z z）。 */
+const IDLE_MOOD_MS = 180_000;
 import { SCENE_THEMES, type SceneThemeId } from "../scene-theme";
 import type { LucideIcon } from "lucide-react";
 import { MonitorUp } from "lucide-react";
 import { SHARE_QUALITY_PRESETS, autoTransportFor } from "../screen-share";
 
-/** 可对其他成员做的小猪互动，按顺序展示成一排按钮。 */
+/**
+ * 可对其他成员做的小猪互动，按顺序展示成一排按钮。
+ * 「打招呼」按场景主题换皮：雪原＝扔雪球、万圣夜＝丢南瓜（同一位置同一动作，
+ * 只改标签与图标，零新增 UI 成本）。
+ */
 const INTERACT_ACTIONS: ReadonlyArray<{ kind: InteractKind; label: string; Icon: LucideIcon }> = [
   { kind: "poke", label: "戳一戳", Icon: MousePointer2 },
   { kind: "wave", label: "打招呼", Icon: Hand },
@@ -63,6 +75,9 @@ const INTERACT_ACTIONS: ReadonlyArray<{ kind: InteractKind; label: string; Icon:
   { kind: "boo", label: "吓一跳", Icon: Ghost },
   { kind: "cheer", label: "撒个花", Icon: PartyPopper },
   { kind: "hoist", label: "吊起来", Icon: ArrowUpFromLine },
+  // 2026-10-18：「请客」一人触发全场受益；「哄睡」是这套玩具里唯一"静"的动作
+  { kind: "treat", label: "请客", Icon: Candy },
+  { kind: "lull", label: "哄睡", Icon: Moon },
 ];
 import { Banner, Spinner, Toggle } from "./ui";
 import { ViewportPopover } from "./ViewportPopover";
@@ -405,6 +420,72 @@ export function RoomView({
     return map;
   }, [interactions]);
 
+  /**
+   * 每头猪最近一次被互动的时刻。
+   * 不能直接用 interactions（3.2 秒就过期了）——这里单独记，供"发呆 3 分钟"
+   * 的情绪气泡判断；全房动作（to="*"）不算"有人在理它"。
+   */
+  const lastInteractAtRef = useRef(new Map<string, number>());
+  useEffect(() => {
+    for (const item of interactions) {
+      const { to, ts } = item.event;
+      if (to === "*") continue;
+      if (ts > (lastInteractAtRef.current.get(to) ?? 0)) lastInteractAtRef.current.set(to, ts);
+    }
+  }, [interactions]);
+
+  /**
+   * 情绪/状态用的慢时钟：5 秒一跳。动作时钟是 400ms（仅在有事发生时跑），
+   * 发呆判定不需要那个精度，别让它常驻抢主线程。
+   */
+  const [idleTick, setIdleTick] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setIdleTick(Date.now()), 5000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  /** 情绪气泡：被投喂够多 → ♥；很久没人理 → z z（互动气泡优先，这里让位）。 */
+  const moodFor = useCallback(
+    (memberId: string, feedCount: number, joinAtMs: number, asleep: boolean): "love" | "zzz" | undefined => {
+      if (reactionByActor.has(memberId)) return undefined;
+      if (feedCount >= 3) return "love";
+      // 静音已经是"趴下睡觉"的姿势了，再叠一个 z z 气泡是重复表达
+      if (asleep) return undefined;
+      const last = Math.max(lastInteractAtRef.current.get(memberId) ?? 0, joinAtMs);
+      return idleTick - last > IDLE_MOOD_MS ? "zzz" : undefined;
+    },
+    [reactionByActor, idleTick],
+  );
+
+  /** 全房动作是否正在播（蹦迪 2.6s / 烟花 3.2s）：直接看事件窗口，不做额外状态。 */
+  const groupFx = useMemo(() => {
+    let party = false;
+    let fireworks = false;
+    for (const item of interactions) {
+      if (item.event.to !== "*") continue;
+      if (item.event.kind === "party") party = true;
+      if (item.event.kind === "fireworks") fireworks = true;
+    }
+    return { party, fireworks };
+  }, [interactions]);
+
+  /** 房主侧 30 秒冷却的本地镜像：判断有没有"最近一次全房动作"，用于按钮置灰。 */
+  const groupCooling = useMemo(() => {
+    const now = Date.now();
+    return interactions.some((item) => item.event.to === "*" && now - item.event.ts < GROUP_INTERACT_COOLDOWN_MS);
+  }, [interactions, idleTick]);
+
+  /** 场景换皮：雪原＝扔雪球，万圣夜＝丢南瓜（同位置同动作，只换标签与图标）。 */
+  const interactActions = useMemo(() => {
+    if (sceneTheme === "snow") {
+      return INTERACT_ACTIONS.map((a) => (a.kind === "wave" ? { ...a, label: "扔雪球", Icon: Snowflake } : a));
+    }
+    if (sceneTheme === "halloween") {
+      return INTERACT_ACTIONS.map((a) => (a.kind === "wave" ? { ...a, label: "丢南瓜", Icon: Ghost } : a));
+    }
+    return INTERACT_ACTIONS;
+  }, [sceneTheme]);
+
   /** 该猪此刻要吃的那棵菜在哪（横向 0~1 + 落地高度 px）；没有就返回 undefined。 */
   const eatTarget = useCallback(
     (actorId: string): { x: number; bottomPx: number } | undefined => {
@@ -458,7 +539,7 @@ export function RoomView({
       y: event.clientY,
       volume: audio.volume,
       muted: audio.muted,
-      feedCount: member.local ? 0 : feedCounts[member.personId] ?? 0,
+      feedCount: member.local ? 0 : feedCounts[member.id] ?? 0,
     });
   };
 
@@ -642,7 +723,7 @@ export function RoomView({
 
                 <div className="vx-menu-divider" />
                 <div className="vx-interact-row">
-                  {INTERACT_ACTIONS.map(({ kind, label, Icon }) => (
+                  {interactActions.map(({ kind, label, Icon }) => (
                     <button
                       key={kind}
                       type="button"
@@ -933,7 +1014,15 @@ export function RoomView({
         </button>
       ) : null}
 
-      <main className="vx-stage" ref={stageRef}>
+      <main className={`vx-stage${groupFx.party ? " vx-stage-party" : ""}`} ref={stageRef}>
+        {/* 全屏烟花：纯 CSS 粒子，事件过期即卸载，不留常驻动画 */}
+        {groupFx.fireworks ? (
+          <span className="vx-fireworks" aria-hidden="true">
+            {Array.from({ length: 7 }, (_, i) => (
+              <i key={i} style={{ ["--fw-i" as string]: String(i) }} />
+            ))}
+          </span>
+        ) : null}
         {/* 整页猪圈：木栏围住整个房间区域，猪在整片场地里走动 */}
         <PenFrame width={stageWidth} />
 
@@ -979,9 +1068,15 @@ export function RoomView({
               watching={tvLive}
               mediaState={member.local ? undefined : mediaStates[member.id]}
               reaction={reactionByActor.get(member.id)}
+              mood={moodFor(
+                member.id,
+                member.local ? 0 : feedCounts[member.id] ?? 0,
+                joinAt.get(member.id) ?? 0,
+                member.muted,
+              )}
               entryAt={joinAt.get(member.id)}
               followEnabled={!isHost}
-              feedCount={member.local ? 0 : feedCounts[member.personId] ?? 0}
+              feedCount={member.local ? 0 : feedCounts[member.id] ?? 0}
               onReportPosition={(x, lane) => onReportPenActor(member.id, x, lane)}
               badges={
                 <>
@@ -1309,6 +1404,33 @@ export function RoomView({
             {unread > 0 ? <span className="vx-badge">{unread > 99 ? "99+" : unread}</span> : null}
           </span>
           <span>聊天</span>
+        </button>
+
+        {/* 全房动作：所有人可发起，房主侧 30 秒冷却（本地 30 秒内也置灰，避免无效点击） */}
+        <button
+          type="button"
+          className={`vx-ctl${groupCooling ? " vx-ctl-disabled" : ""}`}
+          onClick={() => onInteract("*", "", "party")}
+          disabled={groupCooling}
+          title={groupCooling ? "刚刚热闹过，歇 30 秒" : "全场一起跳三下（30 秒一次）"}
+        >
+          <span className="vx-ctl-icon">
+            <Music size={20} />
+          </span>
+          <span>蹦迪</span>
+        </button>
+
+        <button
+          type="button"
+          className={`vx-ctl${groupCooling ? " vx-ctl-disabled" : ""}`}
+          onClick={() => onInteract("*", "", "fireworks")}
+          disabled={groupCooling}
+          title={groupCooling ? "刚刚热闹过，歇 30 秒" : "放一场全屏烟花（30 秒一次）"}
+        >
+          <span className="vx-ctl-icon">
+            <Sparkles size={20} />
+          </span>
+          <span>烟花</span>
         </button>
 
         <button type="button" className="vx-ctl vx-ctl-danger" onClick={onLeave}>

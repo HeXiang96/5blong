@@ -342,9 +342,11 @@ export function useVoice() {
         interactSeq.current += 1;
         const key = interactSeq.current;
         setInteractions((prev) => [...prev, { key, event }]);
+        // 哄睡是"长动作"（躺下打呼），比其他互动多留 1.2 秒，否则猪刚躺下就弹起来
+        const ttl = event.kind === "lull" ? INTERACT_TTL_MS + 1200 : INTERACT_TTL_MS;
         window.setTimeout(() => {
           setInteractions((prev) => prev.filter((item) => item.key !== key));
-        }, INTERACT_TTL_MS);
+        }, ttl);
       },
     });
   }, []);

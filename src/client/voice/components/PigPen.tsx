@@ -309,6 +309,12 @@ export interface PigActorProps {
   mediaState?: MediaLinkState;
   /** 最近一次冲着这头猪来的互动（戳/打招呼/投喂）。 */
   reaction?: InteractEvent;
+  /**
+   * 情绪状态（长驻小气泡，优先级低于 reaction）：
+   * - "love"：被投喂够多次（享受中的常驻小爱心）
+   * - "zzz"：很久没人理它（打瞌睡，区别于"静音趴下"）
+   */
+  mood?: "love" | "zzz";
   /** 该成员第一次出现在名册的时刻（本地毫秒）。入圈时播"天降吊猪"动画。 */
   entryAt?: number;
   /** 这头猪被投喂过的次数（本地视角）：喂得越多体型越大一点点。 */
@@ -348,6 +354,11 @@ const BUBBLE_TEXT: Record<InteractKind, string> = {
   boo: "！！",
   cheer: "耶~",
   hoist: "哇啊～",
+  // 2026-10-18 新增
+  treat: "谢谢招待！",
+  lull: "Zzz…",
+  party: "一起嗨！",
+  fireworks: "🎆 好看",
 };
 
 /**
@@ -363,6 +374,9 @@ const REACT_SRC: Partial<Record<InteractKind, string>> = {
   cheer: pigCheerUrl,
   hug: pigPatUrl,
   feed: pigCheerUrl,
+  // 请客借用"撒花"（同样是被投喂的开心）；哄睡直接用躺卧精灵
+  treat: pigCheerUrl,
+  lull: pigSleepUrl,
 };
 
 /** 互动时加在猪身上的动作 class，用全量移除保证连续触发也能重播。 */
@@ -393,6 +407,7 @@ export function PigActor({
   onReportPosition,
   mediaState,
   reaction,
+  mood,
   entryAt,
   feedCount = 0,
   followEnabled = false,
@@ -1207,6 +1222,12 @@ export function PigActor({
                   aria-hidden="true"
                 >
                   {BUBBLE_TEXT[reaction.kind]}
+                </span>
+              ) : mood ? (
+                /* 情绪小气泡：被投喂够多的常驻爱心 / 很久没人理的发呆 Zzz。
+                   与互动气泡互斥（reaction 优先），样式更轻、不弹跳。 */
+                <span className={`vx-pig-mood vx-pig-mood-${mood}`} aria-hidden="true">
+                  {mood === "love" ? "♥" : "z z"}
                 </span>
               ) : null}
 

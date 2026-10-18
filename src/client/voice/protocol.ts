@@ -354,8 +354,27 @@ export const INTERACT_KINDS = [
   // 后加的"吊起来"：把对方的猪用绳子吊到半空晃悠。新版本追加在末尾，
   // 旧版本解析时整条互动被安全忽略（不崩、只是看不到效果）。
   "hoist",
+  // 2026-10-18 追加：请客（给全房每人丢一颗菜）/ 哄睡（目标猪躺下打呼 3 秒）。
+  "treat",
+  "lull",
+  // 2026-10-18 追加的全房动作（to = "*"，房主侧 30 秒冷却）：
+  // 全员一起跳 / 全屏烟花。同样追加在末尾，旧客户端安全忽略。
+  "party",
+  "fireworks",
 ] as const;
 export type InteractKind = (typeof INTERACT_KINDS)[number];
+
+/** 全房动作：目标是整个房间（to = "*"），与点对点互动区分。 */
+export const GROUP_INTERACT_KINDS = ["party", "fireworks"] as const;
+export type GroupInteractKind = (typeof GROUP_INTERACT_KINDS)[number];
+export const isGroupInteractKind = (kind: InteractKind): kind is GroupInteractKind =>
+  (GROUP_INTERACT_KINDS as readonly string[]).includes(kind);
+
+/**
+ * 全房动作的最小间隔：房主侧权威限流，各端按钮置灰也用同一个值。
+ * 这类动作全房同时可见，不限流会被连点刷屏。
+ */
+export const GROUP_INTERACT_COOLDOWN_MS = 30_000;
 
 export interface InteractEvent {
   /** 发起互动的成员 id。 */
