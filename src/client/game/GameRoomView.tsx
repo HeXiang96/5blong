@@ -702,23 +702,11 @@ export function GameRoomView({
   );
 }
 
-/** 邀请链接（开黑圈专用 ?g= 参数，与语音房的 ?r=/?i= 区分）。 */
-export function gameInviteUrl(code: string): string {
-  // 桌面端页面在本地协议（tauri.localhost）下，直接复制会得到别人打不开的地址
-  const host = window.location.hostname;
-  const desktop = host === "tauri.localhost" || host.endsWith(".tauri.localhost");
-  const url = new URL(desktop ? "https://5blong.pages.dev/" : window.location.href);
-  url.search = "";
-  url.hash = "";
-  url.searchParams.set("g", code);
-  return url.toString();
-}
-
-/** 从 URL 里读开黑圈房间码（没有则 null）。 */
-export function gameCodeFromUrl(): string | null {
-  const value = new URLSearchParams(window.location.search).get("g");
-  return value && /^[0-9]{4}$/.test(value) ? value : null;
-}
+/**
+ * 邀请链接 / 房间码读取已移到 `game-links.ts`（零依赖纯函数）。
+ * 这里保留 re-export，兼容既有引用路径；新代码请直接从 game-links.ts 引。
+ */
+export { gameCodeFromUrl, gameInviteUrl } from "./game-links";
 
 /** 版本标识（放在页脚，便于验收时确认跑的是哪个包）。 */
 export function gameStyleVars(): CSSProperties {

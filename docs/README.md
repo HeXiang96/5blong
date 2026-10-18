@@ -33,3 +33,24 @@
    `> 快照日期：YYYY-MM-DD，过期以代码为准`。
 5. **校验**：`npm run docs:check` 会检查 AUTO-LOG 标记配对、本地链接有效性、
    archive 外是否残留"已修复/已被取代"字样；已挂进 `npm run check`。
+
+## 附录：素材重编码（landing-pig.gif → 动画 WebP）
+
+首页大图 `src/client/voice/assets/landing-pig.webp` 由 `landing-pig.gif` 转出
+（493KB → 383KB，30fps 原速、逐帧时长与总时长严格一致）。重编码用 Pillow：
+
+```python
+from PIL import Image
+gif = Image.open("src/client/voice/assets/landing-pig.gif")
+frames, durs = [], []
+for i in range(gif.n_frames):
+    gif.seek(i)
+    frames.append(gif.convert("RGBA"))
+    durs.append(gif.info.get("duration") or 30)
+frames[0].save("src/client/voice/assets/landing-pig.webp", "WEBP", save_all=True,
+               append_images=frames[1:], duration=durs, loop=0, quality=70, method=6)
+```
+
+注意：**不建议降帧率**（实测相邻帧平均差异 13.5/255，属快速动作动画，降帧会明显顿）；
+**无损 WebP 反而更大**（415KB）——GIF 只存变化区域，平涂动画在这个场景更省。
+GIF 源文件保留作再编码源，未被 import，不进构建产物。

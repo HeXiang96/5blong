@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 
 import { preloadRnnoise } from "./engine";
 import { shouldShowOnboarding } from "./onboarding";
@@ -10,25 +10,31 @@ import { FeedbackDialog } from "./components/FeedbackDialog";
 import { OnboardingDialog } from "./components/OnboardingDialog";
 import { SettingsView } from "./components/SettingsView";
 import { Banner } from "./components/ui";
-import { GameCreateDialog, GameJoinDialog, GameRoomView, GameSummaryCard, gameCodeFromUrl, gameInviteUrl } from "../game/GameRoomView";
-import { useGame } from "../game/use-game";
+import { gameCodeFromUrl } from "../game/game-links";
+/*
+ * 开黑圈整体懒加载（含 useGame 与 1088 行的 game-mesh）：不进首屏包，
+ * 只有点击入口或带 ?g= 打开时才下载。首屏 JS 从 568KB 降到预计 400KB 级。
+ */
+const GameEntry = lazy(() => import("../game/GameEntry").then((m) => ({ default: m.GameEntry })));
 
 export function App() {
   const voice = useVoice();
   /*
    * 开黑圈是**独立子系统**：引擎、状态、界面都不复用语音房
    * （语音房的连接拓扑/共享/猪圈互动对开黑圈都不适用）。
-   * 这里只做入口与切换，两个系统互不干扰。
+   * 它整体住在懒加载的 <GameEntry/> 里，App 只保留三个轻量状态：
+   * 是否挂载、该弹哪个窗、是否已接管整屏（接管时卸载首页，省掉猪圈动画的 CPU）。
    */
-  const game = useGame();
-  const [gameCreateOpen, setGameCreateOpen] = useState(false);
-  const [gameJoinCode, setGameJoinCode] = useState<string | null>(() => gameCodeFromUrl());
-  const [gameJoinOpen, setGameJoinOpen] = useState<boolean>(() => !!gameCodeFromUrl());
-  const [gameBusy, setGameBusy] = useState(false);
-  // 建房成功（进入开黑圈视图）才关创建弹窗；失败留在弹窗里看错误原因
-  useEffect(() => {
-    if (game.room) setGameCreateOpen(false);
-  }, [game.room]);
+  const [gameMounted, setGameMounted] = useState<boolean>(() => !!gameCodeFromUrl());
+  const [gamePrompt, setGamePrompt] = useState<"create" | "join" | null>(() =>
+    gameCodeFromUrl() ? "join" : null,
+  );
+  const [gameActive, setGameActive] = useState(false);
+  const openGame = useCallback((prompt: "create" | "join") => {
+    setGameMounted(true);
+    setGamePrompt(prompt);
+  }, []);
+  const closeGamePrompt = useCallback(() => setGamePrompt(null), []);
 
   /*
    * 打开页面就预热 AI 降噪（RNNoise）的 wasm/worklet 资源：
@@ -162,90 +168,15 @@ export function App() {
   }
 
   // ---------------------------------------------------------------- 开黑圈
-  const gameDialogs = (
-    <>
-      {gameCreateOpen ? (
-        <GameCreateDialog
-          busy={gameBusy}
-          error={game.error}
-          onCancel={() => setGameCreateOpen(false)}
-          onCreate={(opts) => {
-            setGameBusy(true);
-            // 失败时弹窗保持打开显示错误；成功（game.room 就绪）由下面的 effect 关闭
-            void game.createRoom(opts).finally(() => setGameBusy(false));
-          }}
-        />
-      ) : null}
-      {gameJoinOpen ? (
-        <GameJoinDialog
-          code={gameJoinCode}
-          busy={gameBusy}
-          error={game.error}
-          onCancel={() => {
-            setGameJoinOpen(false);
-            setGameJoinCode(null);
-            const url = new URL(window.location.href);
-            url.searchParams.delete("g");
-            window.history.replaceState(null, "", url.toString());
-          }}
-          onJoin={(opts) => {
-            setGameBusy(true);
-            void game
-              .joinRoom({ code: opts.code, gameId: opts.gameId, muted: opts.muted })
-              .finally(() => setGameBusy(false));
-          }}
-        />
-      ) : null}
-    </>
-  );
-
-  useEffect(() => {
-    if (game.room) void game.refreshDevices();
-  }, [game.room, game.refreshDevices]);
-
-  if (game.summary) {
-    return <GameSummaryCard summary={game.summary} onClose={game.clearSummary} />;
-  }
-
-  if (game.room) {
-    return (
-      <>
-        <GameRoomView
-          room={game.room}
-          members={game.members}
-          scores={game.scores}
-          unlocked={game.unlocked}
-          muted={game.muted}
-          isHost={game.isHost}
-          myTeam={game.myTeam}
-          error={game.error}
-          onToggleMute={game.toggleMuted}
-          onClaim={game.setMyTeam}
-          onAssign={game.hostAssign}
-          onKick={game.kick}
-          onScore={game.score}
-          onResetScores={game.resetScores}
-          onToggleCap={game.toggleTeamCap}
-          onCopyInvite={() => {
-            if (game.room) void navigator.clipboard?.writeText(gameInviteUrl(game.room.code));
-          }}
-          onLeave={game.closeRoom}
-          micBoost={game.micBoost}
-          onSetMicBoost={game.setMicBoost}
-          nsOn={game.nsOn}
-          onToggleNs={game.toggleNs}
-          peerVolumes={game.peerVolumes}
-          onSetPeerVolume={game.setPeerVolume}
-          devices={game.devices}
-          micDevice={game.micDevice}
-          onSetMicDevice={game.setMicDevice}
-          outputDevice={game.outputDevice}
-          onSetOutputDevice={game.setOutputDevice}
-          speaking={game.speaking}
-        />
-      </>
-    );
-  }
+  /*
+   * 懒加载图层：挂载后常驻（进出房间不重建引擎）；gameActive（房间/结算接管整屏）
+   * 时首页整体卸载，避免猪圈那几十个常驻动画在开黑的两三个小时里背后空转。
+   */
+  const gameLayer = gameMounted ? (
+    <Suspense fallback={null}>
+      <GameEntry prompt={gamePrompt} onPromptConsumed={closeGamePrompt} onActiveChange={setGameActive} />
+    </Suspense>
+  ) : null;
 
   if (voice.view === "confirm" && voice.pending) {
     return (
@@ -352,50 +283,56 @@ export function App() {
 
   return (
     <>
-      {voice.notice ? (
-        <div className="vx-toast-layer">
-          <Banner kind={voice.notice.kind} onClose={() => voice.setNotice(null)}>
-            {voice.notice.text}
-          </Banner>
-        </div>
-      ) : null}
-      <FeedbackDialog open={feedback.open} errorText={feedback.errorText} onClose={closeFeedback} />
-      <OnboardingDialog open={onboardingOpen} onClose={closeOnboarding} />
-      {gameDialogs}
-      <LandingView
-        identity={voice.identity}
-        onIdentityChange={voice.setIdentity}
-        onCreate={() => void voice.createRoom()}
-        onJoin={voice.submitJoinInput}
-        onSettings={voice.openSettings}
-        onCopyId={() => {
-          void voice.copyText(voice.identity.personId, "个人 ID 已复制");
-        }}
-        joining={joinInFlight}
-        retrying={voice.status === "reconnecting"}
-        error={voice.joinError}
-        onCancelJoin={voice.cancelJoin}
-        onDismissError={() => voice.setJoinError(null)}
-        lastRoom={voice.lastRoom}
-        onCreateGame={() => setGameCreateOpen(true)}
-        onJoinGame={() => {
-          setGameJoinCode(null);
-          setGameJoinOpen(true);
-        }}
-      />
-      {voice.lastSummary ? (
-        <SessionSummaryCard summary={voice.lastSummary} onClose={voice.dismissEnded} />
-      ) : voice.ended ? (
-        <div className="vx-overlay">
-          <div className="vx-overlay-card">
-            <p>
-              {voice.ended.reason === "host-left"
-                ? "房主已离开，房间已结束"
-                : voice.ended.detail ?? "连接已结束"}
-            </p>
-          </div>
-        </div>
-      ) : null}
+      {/*
+       * gameActive（开黑圈房间/结算接管整屏）时整块卸载：猪圈常驻动画不再空转。
+       * 条件分支占一个固定子槽位，gameLayer 的挂载位置因此保持稳定——React 不会
+       * 因为首页卸载而重建 GameEntry（否则游戏引擎会被销毁重连）。
+       */}
+      {gameActive ? null : (
+        <>
+          {voice.notice ? (
+            <div className="vx-toast-layer">
+              <Banner kind={voice.notice.kind} onClose={() => voice.setNotice(null)}>
+                {voice.notice.text}
+              </Banner>
+            </div>
+          ) : null}
+          <FeedbackDialog open={feedback.open} errorText={feedback.errorText} onClose={closeFeedback} />
+          <OnboardingDialog open={onboardingOpen} onClose={closeOnboarding} />
+          <LandingView
+            identity={voice.identity}
+            onIdentityChange={voice.setIdentity}
+            onCreate={() => void voice.createRoom()}
+            onJoin={voice.submitJoinInput}
+            onSettings={voice.openSettings}
+            onCopyId={() => {
+              void voice.copyText(voice.identity.personId, "个人 ID 已复制");
+            }}
+            joining={joinInFlight}
+            retrying={voice.status === "reconnecting"}
+            error={voice.joinError}
+            onCancelJoin={voice.cancelJoin}
+            onDismissError={() => voice.setJoinError(null)}
+            lastRoom={voice.lastRoom}
+            onCreateGame={() => openGame("create")}
+            onJoinGame={() => openGame("join")}
+          />
+          {voice.lastSummary ? (
+            <SessionSummaryCard summary={voice.lastSummary} onClose={voice.dismissEnded} />
+          ) : voice.ended ? (
+            <div className="vx-overlay">
+              <div className="vx-overlay-card">
+                <p>
+                  {voice.ended.reason === "host-left"
+                    ? "房主已离开，房间已结束"
+                    : voice.ended.detail ?? "连接已结束"}
+                </p>
+              </div>
+            </div>
+          ) : null}
+        </>
+      )}
+      {gameLayer}
     </>
   );
 }

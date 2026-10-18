@@ -11,7 +11,12 @@ import { Avatar, Spinner, Toggle } from "./ui";
 import { PenFrame } from "./PigPen";
 import { HealthCheck } from "./HealthCheck";
 import type { VoiceSettings } from "../settings";
-import landingPigUrl from "../assets/landing-pig.gif?url";
+/*
+ * 首页大图：动画 WebP（原 GIF 493KB → 383KB，省 22%，30fps 原速、时长逐帧一致）。
+ * 源文件 landing-pig.gif 保留在 assets/ 作再编码源（未被 import，不进构建产物）。
+ * 重编码命令见 docs/README.md「素材重编码」。
+ */
+import landingPigUrl from "../assets/landing-pig.webp?url";
 
 /** 由 ID 稳定推导一个颜色：同一个房间码每次都显示同一种颜色，便于口头对号。 */
 export function colorForId(id: string): string {
