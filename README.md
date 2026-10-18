@@ -30,7 +30,7 @@
 
 > **本节专为后续维护者（含 AI）而写**：交代"共享屏幕为什么卡、改了什么、怎么验证、别踩哪些坑"。  
 > 这一轮**只动共享链路，语音一行未碰**（语音零影响是硬约束）；四批次全部落地，  
-> `npm run check` 全绿（typecheck + 155 单测 + 构建）。  
+> `npm run check` 全绿（typecheck + <!-- AUTO:TESTS -->235<!-- /AUTO:TESTS --> 单测 + 构建）。  
 > 完整方案与逐条推理见 [SCREENSHARE-OPT-PLAN.md](./docs/archive/SCREENSHARE-OPT-PLAN.md)（已归档）；  
 > 早期 v1~v3 草稿 [SCREENSHARE-PERF-PLAN.md](./docs/archive/SCREENSHARE-PERF-PLAN.md) 已被其取代（仅存档）。
 
@@ -386,7 +386,6 @@ TURN key 与 SFU 的 appId/secret **是两套**，分别创建：
   前端"4 秒没有音频数据即判失败"，这类哑故障不再存在。
 - 开关保留（勾不勾由用户决定）；没勾 = 不共享声音。网页端拿不到系统声音时会**引导改用桌面客户端**。
 
-
 ### 3. 音量：把"拉到 200% 也没用"修好（1.5.0）
 
 | 问题                | 根因                                                                    | 现在                                                                      |
@@ -566,21 +565,11 @@ npm run feedback:admin list 20   # 终端查看最近反馈（url / list / rm �
 - 公告栏、帮助文字按本轮改动同步更新。
 
 ---
-
-### 近期提交（自动生成）
-
-- `eead29a` release: v1.5.0（10-15 22:42）
-- `0f24131` release: v1.4.8（10-15 21:01）
-- `007fd3e` release: v1.4.7（10-14 23:24）
-- `c1825a6` release: v1.4.6（10-14 22:53）
-- `1085e0b` Merge remote-tracking branch 'origin/main'（10-14 22:49）
-- `bdd83b4` release: v1.4.5（10-14 22:48）
-- `2e1115a` release: v1.4.4（10-14 22:24）
-<!-- AUTO-LOG:END -->
-
 <!-- AUTO-LOG:START -->
 ### 近期提交（自动生成）
 
+- `2b23221` docs: 五份过期计划/交接单归档至 docs/archive/，全部引用改指新路径，新增 docs/README.md 治理规则（10-18 10:14）
+- `bd1e58f` docs: README 补 1.6.5 章节（当天新增与修复清单、后台入口）（10-17 19:09）
 - `1266612` docs: 2026-10-17 开黑圈上线记录（版本/功能/修复/运维）（10-17 19:08）
 - `d8e1b0d` release: v1.6.5（10-17 18:26）
 - `0b94a4d` feat: 说话者高亮特效（声波+发光）；fix: 切队时全量重建连接（首次换队无声音）（10-17 18:25）
@@ -588,8 +577,6 @@ npm run feedback:admin list 20   # 终端查看最近反馈（url / list / rm �
 - `8802edb` fix: 换队/回待分队音频重建（静音单向通道 + 断线自动对账）（10-17 15:47）
 - `a6eeaa1` release: v1.6.3（10-17 15:16）
 - `3cbd980` fix: 访客未应用名册广播，导致各端名单不一致（双客户端实测已修复）（10-17 15:16）
-- `a989f78` release: v1.6.2（10-17 13:49）
-- `6cdc54a` feat: 音频设备选择 + 本局小结卡片 + 可见音量按钮；fix: CORS 预检（客户端激活）、已用完仍算有效且可吊销（10-17 13:49）
 <!-- AUTO-LOG:END -->
 
 ## 怎么用
@@ -685,7 +672,7 @@ A：早期链接里的地址是你电脑的地址（`localhost` 或局域网 `19
 
 A：**先分清"进不去房间"和"进去了画质差"——它们走两条独立链路，别混着治。**
 
-- **进不去**：走的是信令握手（PeerJS 公共云）＋ 数据通道的 ICE。同机 / 同网能进、  
+- **进不去**：走的是信令握手（自建信令服务，PeerJS 线协议兼容，多线路自动降级）＋ 数据通道的 ICE。同机 / 同网能进、  
   跨网进不去，说明**打洞失败且没有可用中继**。这正是 2026-10-14 定位到并修掉的问题：  
   当时唯一的 TURN 兜底（OpenRelay）已经关停（解析到 `192.0.2.1`）。现在改用服务端  
   `/ice` 签发的 Cloudflare Realtime TURN 短期凭据——**但前提是服务端配了  
@@ -723,10 +710,11 @@ A：不需要，**默认就是开的**，建好房间或进房那一刻就已经
 如果开关被自动拨回并弹出提示，说明当前浏览器无法加载降噪组件（WASM/AudioWorklet 不可用），  
 此时界面如实告知而不是假装已开启。
 
-
 ## 技术说明
 
-- 信令使用 **PeerJS 公共云**，媒体层是 **WebRTC P2P（全互联 mesh）**；
+- 信令是**自建服务**（Cloudflare Worker `5blong-signal` + Durable Object，PeerJS 线协议兼容；  
+  客户端优先走本站域名 `/peerjs` 中转、公共云兜底，见 `signal-routes.ts`），  
+  媒体层是 **WebRTC P2P（全互联 mesh）**；
 - 前端：React 19 + Vite + TypeScript；桌面端：**Tauri 2（Rust 壳 + 系统 WebView2）**，  
   安装包约 3.6 MB，与网页版共用同一份前端产物；
 - 网页通过 Cloudflare Pages（Wrangler）托管；桌面端由 **GitHub Actions 云出包**，  
@@ -741,7 +729,7 @@ npm install                 # 安装依赖
 npm run dev                 # 本地开发服务器（网页）
 npm run tauri dev           # 桌面端开发模式（自动起 dev 服务器 + Tauri 窗口）
 npm run typecheck           # 类型检查
-npm test                    # 单元测试（187 项）
+npm test                    # 单元测试（<!-- AUTO:TESTS -->235<!-- /AUTO:TESTS --> 项，由 docs:sync 注入）
 npm run build:web:pages     # 构建静态网页到 dist-web
 npm run tauri build         # 本地出桌面安装包（更新签名需要环境变量，一般直接用 CI）
 npm run deploy:pages        # 手动部署网页到 Cloudflare Pages（复用本机 wrangler 凭据）
@@ -805,27 +793,42 @@ npm run signal:setup        # 绑定 Pages → 信令 Worker（service binding S
 
 ## 目录
 
-- `src/client/voice/`：5blong 前端
+- `src/client/voice/`：语音房前端
   - `protocol.ts`：房间码 / 邀请解析 / 握手证明 / 准入裁决 / 线上消息校验（纯逻辑，可单测）
-  - `engine.ts`：mesh 引擎（准入握手、心跳、媒体连接、RNNoise 降噪链、说话检测、资源回收）
+  - `engine.ts`：mesh 引擎（准入握手、心跳、媒体连接、RNNoise 降噪链、说话检测、资源回收、房间遥测快照）
+  - `signal-routes.ts`：信令多线路（自有域名 `/peerjs` 中转优先、公共云兜底；DEV 直连）
   - `devices.ts`：麦克风采集、扬声器绑定、设备枚举、麦克风测试
-  - `ice.ts`：ICE 配置（STUN 兜底 + 拉取 /ice 的 Cloudflare TURN 短期凭据，带缓存与降级）
-  - `identity.ts` / `settings.ts` / `storage.ts`：本机身份与设置持久化
-  - `screen-share.ts`：屏幕共享链路（采集约束、码率/降级/自适应调谐器、H264 协商重排  
-    `preferH264Sdp`、抖动缓冲分级、simulcast 发布、ICE 自愈）
+  - `ice.ts`：ICE 配置（STUN + 拉取 `/ice` 的 Cloudflare TURN 短期凭据，带缓存与降级；桌面端用绝对地址）
+  - `identity.ts` / `settings.ts` / `storage.ts`：本机身份与设置持久化（含 `settingsVersion` 迁移）
+  - `screen-share.ts`：屏幕共享链路（采集约束、码率/降级/自适应调谐器、H264 协商重排
+    `preferH264Sdp`、硬编预检、抖动缓冲分级、simulcast 发布、ICE 自愈、传输自动选择）
+  - `feedback.ts` / `onboarding.ts`：应用内意见反馈 / 首次导览
+  - `changelog.ts` / `session-stats.ts`：版本更新日志 / 会话统计（今晚小结）
+  - `pen.ts` / `pen-registry.ts` / `pen-follow.ts`：猪圈"导演"纯逻辑（事件、时序、确定性槽位）
+  - `scene-theme.ts` / `pen-themes.css`：房间主题（雪原 / 万圣夜，四时段配色与装扮）
   - `use-voice.ts`：引擎与 React 之间的唯一桥接
-  - `App.tsx` / `components/` / `styles.css`：界面
+  - `App.tsx` / `components/` / 各 css：界面
   - `components/PenTV.tsx` / `pen-tv.css`：投影幕布与小猪围观的呈现 + 灯箱（含双向链路读数）
+  - `components/` 其余：`SettingsView`（设置）、`OnboardingDialog`（导览）、`FeedbackDialog`（反馈）、
+    `HealthCheck`（一键体检）、`UpdateOverlay`（更新弹层）、`ViewportPopover`（视口避让浮层）
+- `src/client/game/`：**开黑圈**（5v5 分队内战）独立子系统，与语音房完全隔离——
+  `game-mesh.ts`（独立引擎与 `g` 系列协议、分队连接拓扑）、`GameRoomView.tsx`（三栏编制板）、
+  `use-game.ts`、`game-theme.css`（电竞深色主题）、`game-types.ts`
 - `src/shared/blake3.ts`：BLAKE3（部署资源指纹用），由官方向量测试
+- `worker/`：Cloudflare 侧——`_worker.pages.js`（Pages 高级模式，路由 `/ice` `/sfu/*` `/feedback`
+  `/admin` `/rooms*` `/game*`）、`signal/`（自建信令 Worker + Durable Object `SignalHub`）、
+  `feedback-schema.sql`（D1 建表，幂等）
 - `src-tauri/`：桌面端 Tauri 壳（Rust）
-  - `src/lib.rs`：托盘常驻、单实例、点 × 隐藏驻留、WebView2 麦克风权限自动放行、  
-    启动静默检查更新 + 托盘「检查更新」
+  - `src/lib.rs`：托盘常驻、单实例、点 × 隐藏驻留、WebView2 麦克风权限自动放行、
+    启动静默检查更新 + 托盘「检查更新」、WASAPI 系统音采集
   - `tauri.conf.json`：窗口 / NSIS 打包 / 自动更新源（Pages 主源 + GitHub 备源）与公钥
-- `.github/workflows/release.yml`：云出包工作流（`app-v*` 标签触发，出安装包 + 签名更新包 + latest.json）
-- `tests/`：协议 / 握手 / 准入（`voice-protocol.test.ts`、`engine-join-handshake.test.ts`）、  
-  屏幕共享（`screen-share.test.ts`、`screen-share-tuning.test.ts`）、猪圈与小猪动画（`pen`）、  
-  说话检测（`voice-activity`）、定时器（`timers`）、`blake3.test.ts`（BLAKE3 5 项），当前合计 155 项
-- `scripts/`：`deploy-pages.mjs`（部署）、`publish-desktop.mjs`（桌面端更新源发布）、  
-  `pages-status.mjs`、`bump-version.mjs`（发版一键化）、`lib/blake3.mjs`
+- `.github/workflows/`：`release.yml`（云出包，`app-v*` 标签触发）、
+  `readme-log.yml`（自动更新 README 提交列表，`[skip ci]`）
+- `tests/`：协议 / 握手 / 准入、屏幕共享（含调谐器与硬编预检）、猪圈、说话检测、定时器、
+  ICE、反馈、会话统计、音量上限、blake3 等，当前合计 <!-- AUTO:TESTS -->235<!-- /AUTO:TESTS --> 项
+- `scripts/`：`deploy-pages.mjs`（部署）、`publish-desktop.mjs`（桌面端更新源发布）、
+  `pages-status.mjs`、`bump-version.mjs`（发版一键化）、`readme-log.mjs`（AUTO-LOG，含畸形自愈）、
+  `docs-sync.mjs` / `check-docs.mjs`（文档数字注入与校验）、`lib/blake3.mjs`
+- `docs/`：专题记录与历史档案（索引与治理规则见 `docs/README.md`）
 - `public/`：图标与第三方许可（`index.html` 引用的 `/favicon.png`、`/icon-256.png` 来自这里）
 - `dist-web/`：静态网页产物（桌面端与网页共用，构建时生成，不入库）
