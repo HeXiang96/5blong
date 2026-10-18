@@ -106,9 +106,6 @@ export default {
     if (url.pathname === "/rooms/export") {
       return handleRoomsExport(request, env);
     }
-    if (url.pathname === "/rooms/export") {
-      return handleRoomsExport(request, env);
-    }
 
     // 非 /sfu 请求 → 静态网页资源
     if (!/^\/sfu\/sessions?\//.test(url.pathname)) {

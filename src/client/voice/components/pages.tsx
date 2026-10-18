@@ -1,6 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Copy, Download, History, LogIn, Plus, Settings as SettingsIcon } from "lucide-react";
-import { getVersion } from "@tauri-apps/api/app";
 import { boardEntries } from "../changelog";
 import type { LastRoom, SessionSummary } from "../session-stats";
 
@@ -97,13 +96,23 @@ export function LandingView({
   const viewWidth = typeof window !== "undefined" ? window.innerWidth : 1000;
 
   // 桌面端显示当前版本号（网页版始终是最新部署，不显示）。
+  // 动态导入 @tauri-apps/api/app：它与 UpdateOverlay 共用该模块，
+  // 若这里静态导入会让那边的动态导入失效（构建警告 INEFFECTIVE_DYNAMIC_IMPORT），
+  // 且网页端根本用不到——按需加载才不白占首屏包。
   const [appVersion, setAppVersion] = useState<string | null>(null);
   const isDesktop = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
   useEffect(() => {
     if (!isDesktop) return;
-    getVersion()
-      .then(setAppVersion)
+    let disposed = false;
+    void import("@tauri-apps/api/app")
+      .then(({ getVersion }) => getVersion())
+      .then((v) => {
+        if (!disposed) setAppVersion(v);
+      })
       .catch(() => {});
+    return () => {
+      disposed = true;
+    };
   }, [isDesktop]);
 
   // 网页版首页的"下载客户端"：先读当前部署的更新清单拿到最新安装包地址，
