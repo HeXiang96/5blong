@@ -20,6 +20,7 @@
     "check": "npm run typecheck && npm test && npm run build:web:pages && npm run docs:check",
     "docs:sync": "node scripts/docs-sync.mjs",
     "docs:check": "node scripts/check-docs.mjs",
+    "rooms:stats": "node scripts/room-stats.mjs",
     "deploy:pages": "node scripts/deploy-pages.mjs",
     "pages:env": "node scripts/deploy-pages.mjs --env-only",
     "publish:desktop": "node scripts/publish-desktop.mjs",
