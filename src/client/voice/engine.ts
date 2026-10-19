@@ -170,6 +170,12 @@ const VOICE_HEAL_RETRY_MS = 6000;
 const VOICE_HEAL_MAX = 3;
 /** 非发起侧先等这么久，把首轮重拨让给 myId 较小的一侧，避免双方同时拨。 */
 const VOICE_HEAL_PEER_DELAY_MS = 2500;
+/**
+ * 建链超时：ICE 一直停在 checking（对端 NAT 不通、UDP 被墙、TURN 不可用）时，
+ * 浏览器可能要几十秒才报 failed，而"连接中"会一直卡着——实测线上就卡在这里。
+ * 超过这个时间还没连上，就当作失败，直接进入重拨。
+ */
+const VOICE_CONNECT_TIMEOUT_MS = 9000;
 
 export type EngineStatus =
   | "idle"
@@ -2946,6 +2952,32 @@ export class VoiceMesh {
         void classify();
       });
       void classify();
+
+      /*
+       * 建链看门狗：ICE 卡在 checking 不会有任何事件，光靠 classify 永远等不到。
+       * 超时还没连上就主动触发一次自愈（重拨）。
+       */
+      let healedByTimeout = false;
+      this.timers.after(VOICE_CONNECT_TIMEOUT_MS, () => {
+        if (this.destroyed || healedByTimeout) return;
+        if (this.calls.get(peerId) !== call) return;
+        const now = pc.connectionState;
+        const iceNow = pc.iceConnectionState;
+        const ok =
+          now === "connected" ||
+          iceNow === "connected" ||
+          iceNow === "completed";
+        if (ok) return;
+        healedByTimeout = true;
+        const secs = Math.round(VOICE_CONNECT_TIMEOUT_MS / 1000);
+        const name = this.members.get(peerId)?.name ?? peerId.slice(0, 6);
+        // 带上 gather 状态，日后从房间遥测能看出是"没收到候选"还是"候选都打不通"
+        this.pushRoomEvent(
+          "error",
+          `语音链路 ${secs} 秒未建立（gather=${pc.iceGatheringState}），重拨 · ${name}`,
+        );
+        this.scheduleVoiceHeal(peerId, call, 0);
+      });
     };
     attach();
   }
@@ -2960,7 +2992,15 @@ export class VoiceMesh {
       state = { attempts: 0, timer: 0 };
       this.voiceHeals.set(peerId, state);
     }
-    if (state.timer || state.attempts >= VOICE_HEAL_MAX) return;
+    if (state.timer) return;
+    if (state.attempts >= VOICE_HEAL_MAX) {
+      // 次数用尽：明确标成失败，界面才能提示"已断开 + 重新连接"
+      if (this.roomLinkState.get(peerId) !== "failed") {
+        this.roomLinkState.set(peerId, "failed");
+        this.events.mediaState(peerId, "failed");
+      }
+      return;
+    }
     const mine = state;
     mine.timer = this.timers.after(delay, () => {
       mine.timer = 0;
