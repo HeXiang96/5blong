@@ -261,8 +261,23 @@ export interface Invite {
  * 邀请链接：https://5blong.pages.dev/#c=<码>&h=<房主ID>&k=<密钥>
  * fragment 不参与 HTTP 请求，因此 roomKey 不会落到任何服务器日志里。
  */
+/**
+ * 邀请链接的落地地址。
+ *
+ * - 桌面端（tauri.localhost）：必须指向公开网址，本地协议地址别人打不开；
+ * - 网页端：**保持同源**——否则在预览分支（如 pig-preview.pages.dev）建房，
+ *   复制出的链接会把朋友带到正式站，跑的是另一份代码（旧版），
+ *   看起来就像"链接打开后功能不对/进不去"。
+ */
+export function inviteBaseUrl(): string {
+  if (typeof window === "undefined") return PUBLIC_WEB_BASE;
+  const host = window.location.hostname;
+  const desktop = host === "tauri.localhost" || host.endsWith(".tauri.localhost");
+  return desktop ? PUBLIC_WEB_BASE : window.location.origin;
+}
+
 export function buildInviteUrl(invite: Invite): string {
-  const url = new URL("/", PUBLIC_WEB_BASE);
+  const url = new URL("/", inviteBaseUrl());
   const params = new URLSearchParams({
     c: invite.code,
     h: invite.hostId,
