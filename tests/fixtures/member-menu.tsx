@@ -94,6 +94,7 @@ function Fixture() {
     interactions, feedCounts: params.get("fed") ? { "1000000002": Number(params.get("fed")) } : {}, onToggleDeaf: () => record("deaf"),
     onKick: (...args) => record("kick", ...args), onForceMute: (...args) => record("force-mute", ...args),
     onToggleLock: () => record("lock"), onInteract: (...args) => record("interact", ...args),
+    onRetryLink: (peerId: string) => record("retry-link", peerId),
     topic: "", onSetTopic: (text) => record("topic", text),
     sceneTheme: "", onSetSceneTheme: (id) => record("scene-theme", id),
     /*

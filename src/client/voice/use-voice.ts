@@ -1307,6 +1307,11 @@ export function useVoice() {
     // 之前是投喂瞬间就涨——猪还没动体型先变大，观感很怪。
   }, []);
 
+  /** 手动重连某个成员的语音链路（自动自愈到顶仍不通时的兜底）。 */
+  const retryMemberLink = useCallback((peerId: string) => {
+    engineRef.current?.retryVoiceLink(peerId);
+  }, []);
+
   /** 房主修改铭牌公告（乐观更新本地，引擎广播给全房）。 */
   const setRoomTopic = useCallback((text: string) => {
     setTopicState(text);
@@ -1414,6 +1419,7 @@ export function useVoice() {
     forceMute,
     toggleRoomLock,
     interact,
+    retryMemberLink,
     // 屏幕共享（围炉看 TV）
     screenShare,
     shareStream,

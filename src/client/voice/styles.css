@@ -3349,3 +3349,33 @@ button.vx-topic {
   gap: 8px;
   flex-wrap: wrap;
 }
+
+/* ------------------------------------------------ 语音链路异常提示（成员面板） */
+.vx-link-warn {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(229, 96, 79, 0.1);
+  border: 1px solid rgba(229, 96, 79, 0.35);
+}
+
+.vx-link-warn-text {
+  font-size: 12px;
+  font-weight: 700;
+  color: #a8402f;
+}
+
+html[data-theme="dark"] .vx-link-warn {
+  background: rgba(229, 96, 79, 0.16);
+  border-color: rgba(255, 160, 140, 0.4);
+}
+
+html[data-theme="dark"] .vx-link-warn-text {
+  color: #ffb4a4;
+}
+
+.vx-link-retry {
+  justify-content: center;
+}

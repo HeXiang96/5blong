@@ -27,6 +27,7 @@ import {
   Laugh,
   Moon,
   Music,
+  RefreshCw,
   Snowflake,
   Lock,
   LockOpen,
@@ -159,6 +160,7 @@ export function RoomView({
   onForceMute,
   onToggleLock,
   onInteract,
+  onRetryLink,
   topic,
   onSetTopic,
   sceneTheme,
@@ -235,6 +237,8 @@ export function RoomView({
   onForceMute: (id: string, muted: boolean) => void;
   onToggleLock: () => void;
   onInteract: (peerId: string, personId: string, kind: InteractKind) => void;
+  /** 手动重连某个成员的语音链路（自动自愈失败后的兜底）。 */
+  onRetryLink: (peerId: string) => void;
   /** 房主铭牌公告（全房可见；空串 = 没设）。 */
   topic: string;
   /** 房主修改公告（访客端不触发）。 */
@@ -563,6 +567,8 @@ export function RoomView({
   const listRef = useRef<HTMLDivElement | null>(null);
   const [draft, setDraft] = useState("");
   const [audioMenu, setAudioMenu] = useState<AudioMenuState | null>(null);
+  /** 当前面板对应成员的网络链路状态（连接中/失败时给"重新连接"入口）。 */
+  const menuLinkState = audioMenu && !audioMenu.self ? mediaStates[audioMenu.peerId] : undefined;
   const [voiceOpen, setVoiceOpen] = useState(false);
 
   const openAudioMenu = (event: ReactMouseEvent, member: Member) => {
@@ -762,6 +768,26 @@ export function RoomView({
                   {audioMenu.muted ? <VolumeX size={14} /> : <Volume2 size={14} />}
                   {audioMenu.muted ? "取消静音 TA" : "本地静音 TA"}
                 </button>
+
+                {/* 这条语音腿断了/还在连：给出明确状态和手动重连入口。
+                    自动自愈会自己跑（5 秒宽限 + 最多 3 次重拨），这里是人肉兜底。 */}
+                {menuLinkState === "connecting" || menuLinkState === "failed" ? (
+                  <>
+                    <div className="vx-menu-divider" />
+                    <div className="vx-link-warn">
+                      <span className="vx-link-warn-text">
+                        {menuLinkState === "failed" ? "与 TA 的语音链路已断开" : "与 TA 的语音链路连接中…"}
+                      </span>
+                      <button
+                        type="button"
+                        className="vx-menu-btn vx-link-retry"
+                        onClick={() => onRetryLink(audioMenu.peerId)}
+                      >
+                        <RefreshCw size={14} /> 重新连接
+                      </button>
+                    </div>
+                  </>
+                ) : null}
 
                 <div className="vx-menu-divider" />
                 <div className="vx-interact-row">

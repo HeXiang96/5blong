@@ -245,6 +245,7 @@ export function App() {
         onForceMute={voice.forceMute}
         onToggleLock={voice.toggleRoomLock}
         onInteract={voice.interact}
+        onRetryLink={voice.retryMemberLink}
         topic={voice.topic}
         onSetTopic={voice.setRoomTopic}
         sceneTheme={voice.sceneTheme}

@@ -151,6 +151,26 @@ const RECONNECT_WELCOME_MS = 7000;
  */
 const MEDIA_STAGGER_MS = 1200;
 
+/**
+ * 语音腿自愈参数。
+ *
+ * 背景：语音是 mesh，每一对成员之间各有一条独立连接。某一条腿断了，
+ * 别人照样听得到那个人，只有你听不到——这正是 2026-10-19 线上遇到的问题。
+ * 原先只监听 ICE 状态、不自愈，"断开"会永远停在"连接中"。
+ *
+ * 为什么是重拨而不是 restartIce：PeerJS 的 MediaConnection 不支持重协商，
+ * restartIce 产生的新 ufrag 没法再走一遍 offer/answer，实测不可靠；
+ * 关掉旧 call 重新 peer.call() 才能真的重建链路。
+ */
+/** 掉线判定宽限：ICE disconnected 常常几秒内自恢复，先等再动手。 */
+const VOICE_HEAL_GRACE_MS = 5000;
+/** 重拨后的观察窗：这么久还没连上就进入下一轮。 */
+const VOICE_HEAL_RETRY_MS = 6000;
+/** 最多重拨几次（含让位给对侧的那一轮）。到顶就停在 failed，交给用户手动重试。 */
+const VOICE_HEAL_MAX = 3;
+/** 非发起侧先等这么久，把首轮重拨让给 myId 较小的一侧，避免双方同时拨。 */
+const VOICE_HEAL_PEER_DELAY_MS = 2500;
+
 export type EngineStatus =
   | "idle"
   | "preparing"
@@ -321,6 +341,11 @@ export class VoiceMesh {
   private hostConn: DataConnection | null = null;
 
   private calls = new Map<string, MediaConnection>();
+  /**
+   * 每条语音腿的自愈状态（按 peerId）。
+   * timer=0 表示没有在等待；attempts 到顶后不再自动重拨，交给用户手动重试。
+   */
+  private readonly voiceHeals = new Map<string, { attempts: number; timer: number }>();
   private audio = new Map<string, HTMLAudioElement>();
   private monitors = new Map<string, Monitor>();
   private speaking = new Set<string>();
@@ -2791,13 +2816,30 @@ export class VoiceMesh {
     // 已有连接时不重复应答（重复 answer 会被 PeerJS 警告并丢弃）。
     if (this.calls.has(call.peer)) {
       const existing = this.calls.get(call.peer);
-      if (existing && existing !== call) {
+      /*
+       * 已有连接时通常要拒绝重复呼叫（重复 answer 会被 PeerJS 警告并丢弃）。
+       * **但旧连接已经死了要放行**——这是自愈重拨的关键一步：
+       * 对方发现链路断开后会重拨一条新连接，如果这里因为"我手里还有旧 call"
+       * 把新呼叫关掉，自愈就永远不成立（实测就是这个问题）。
+       */
+      const stale = existing ? this.isCallDead(existing) : true;
+      if (existing && existing !== call && !stale) {
         try {
           call.close();
         } catch {
           /* noop */
         }
         return;
+      }
+      if (existing && existing !== call) {
+        try {
+          existing.close();
+        } catch {
+          /* noop */
+        }
+        if (this.calls.get(call.peer) === existing) this.calls.delete(call.peer);
+        this.clearVoiceHeal(call.peer);
+        this.dropAudio(call.peer);
       }
     }
     // 应答必须用处理后的发送流（降噪 + 音量增益），否则房主/被呼方发出的
@@ -2811,9 +2853,25 @@ export class VoiceMesh {
   private track(call: MediaConnection, peerId: string): void {
     this.calls.set(peerId, call);
     call.on("stream", (stream) => this.playStream(peerId, stream));
+    /*
+     * 只清理"当前这条"连接：自愈重拨时旧 call 的 close 可能迟到，
+     * 那时新 call 已经在放声音了，按 peerId 一把梭会把新声音也清掉。
+     */
     const drop = () => {
-      if (this.calls.get(peerId) === call) this.calls.delete(peerId);
+      if (this.calls.get(peerId) !== call) return;
+      this.calls.delete(peerId);
       this.dropAudio(peerId);
+      /*
+       * 人在房里、连接却没了（对端关掉呼叫 / 连接被系统回收）：
+       * 之前这里只是静音收场，界面还会一直显示"已连接/中继"，
+       * 用户只会觉得"突然听不到他了"。现在标记失败并进入自愈。
+       * 成员真的离开时 members.has 为 false，不会误触发。
+       */
+      if (!this.destroyed && this.members.has(peerId)) {
+        this.roomLinkState.set(peerId, "failed");
+        this.events.mediaState(peerId, "failed");
+        this.scheduleVoiceHeal(peerId, call, VOICE_HEAL_GRACE_MS);
+      }
     };
     call.on("close", drop);
     call.on("error", drop);
@@ -2866,14 +2924,22 @@ export class VoiceMesh {
             this.pushRoomEvent("reconnect", `成员链路恢复（曾失败）· ${link}`);
           }
           this.roomLinkState.set(peerId, link);
+          this.clearVoiceHeal(peerId);   // 恢复了：清掉自愈状态，允许下次再来
           this.events.mediaState(peerId, relay ? "relay" : "connected");
         } else if (ice === "failed") {
           this.roomLinkState.set(peerId, "failed");
           const name = this.members.get(peerId)?.name ?? "";
           this.pushRoomEvent("error", `与成员「${name || peerId.slice(0, 6)}」的连接失败`);
           this.events.mediaState(peerId, "failed");
+          // 彻底失败：立刻进入自愈（重拨一条新连接）
+          this.scheduleVoiceHeal(peerId, call, 0);
         } else if (ice === "disconnected" || ice === "checking" || ice === "new") {
           this.events.mediaState(peerId, "connecting");
+          /*
+           * disconnected 有可能是瞬时抖动（切网、短暂丢包），先给 5 秒宽限；
+           * checking/new 属于正常建链过程，不触发自愈。
+           */
+          if (ice === "disconnected") this.scheduleVoiceHeal(peerId, call, VOICE_HEAL_GRACE_MS);
         }
       };
       pc.addEventListener("iceconnectionstatechange", () => {
@@ -2882,6 +2948,109 @@ export class VoiceMesh {
       void classify();
     };
     attach();
+  }
+
+  /**
+   * 语音腿自愈：断开/失败后重拨一条新的 PeerJS 呼叫。
+   * 参数与取舍见文件顶部 VOICE_HEAL_* 常量的注释。
+   */
+  private scheduleVoiceHeal(peerId: string, call: MediaConnection, delay: number): void {
+    let state = this.voiceHeals.get(peerId);
+    if (!state) {
+      state = { attempts: 0, timer: 0 };
+      this.voiceHeals.set(peerId, state);
+    }
+    if (state.timer || state.attempts >= VOICE_HEAL_MAX) return;
+    const mine = state;
+    mine.timer = this.timers.after(delay, () => {
+      mine.timer = 0;
+      if (this.destroyed || !this.members.has(peerId)) {
+        this.voiceHeals.delete(peerId);
+        return;
+      }
+      // 等这轮的时间里自己好了，就别动
+      const link = this.roomLinkState.get(peerId);
+      if (link === "direct" || link === "relay") {
+        this.voiceHeals.delete(peerId);
+        return;
+      }
+      // 对侧已经重拨并接管：后续交给新连接自己的监听
+      if (this.calls.get(peerId) !== call) return;
+
+      /*
+       * 首轮礼让：按既有约定（myId 较小的一侧发起呼叫）决定谁先重拨，
+       * 另一侧晚 2.5 秒兜底，避免两边同时拨造成信令抖动。
+       */
+      if (!this.shouldCall(peerId) && mine.attempts === 0) {
+        mine.attempts = 1;
+        this.scheduleVoiceHeal(peerId, call, VOICE_HEAL_PEER_DELAY_MS);
+        return;
+      }
+
+      mine.attempts += 1;
+      const name = this.members.get(peerId)?.name ?? peerId.slice(0, 6);
+      // 先摘映射再关：drop 回调看到"已不是当前连接"就会直接返回，不重复触发自愈
+      if (this.calls.get(peerId) === call) this.calls.delete(peerId);
+      try {
+        call.close();
+      } catch {
+        /* 已经关掉就算了 */
+      }
+      // 旧流的播放元素主动收掉，避免 close 迟到时残留在响（或误杀新流）
+      this.dropAudio(peerId);
+      this.pushRoomEvent("error", `语音链路重拨（第 ${mine.attempts} 次）· ${name}`);
+      this.events.mediaState(peerId, "connecting");
+      this.callPeer(peerId);
+      const fresh = this.calls.get(peerId);
+      if (fresh && mine.attempts < VOICE_HEAL_MAX) {
+        this.scheduleVoiceHeal(peerId, fresh, VOICE_HEAL_RETRY_MS);
+      }
+    });
+  }
+
+  /** 这条 MediaConnection 是否已经不可用（底层 pc 关闭/失败/长期断开）。 */
+  private isCallDead(call: MediaConnection): boolean {
+    const pc = (call as { peerConnection?: RTCPeerConnection }).peerConnection;
+    if (!pc) return false;   // 还没建好：先当活的，交给常规流程
+    const state = pc.connectionState;
+    const ice = pc.iceConnectionState;
+    return (
+      state === "closed" ||
+      state === "failed" ||
+      ice === "closed" ||
+      ice === "failed" ||
+      ice === "disconnected"
+    );
+  }
+
+  /** 链路恢复（或成员离开）时清掉自愈状态。 */
+  private clearVoiceHeal(peerId: string): void {
+    const state = this.voiceHeals.get(peerId);
+    if (!state) return;
+    if (state.timer) window.clearTimeout(state.timer);
+    this.voiceHeals.delete(peerId);
+  }
+
+  /**
+   * 手动重试（界面上的"重新连接"）：清掉计数后立刻重拨。
+   * 自动自愈到顶（VOICE_HEAL_MAX）仍不通时，用户还有这一条路。
+   */
+  retryVoiceLink(peerId: string): void {
+    if (!this.me || peerId === this.myId || !this.members.has(peerId)) return;
+    this.clearVoiceHeal(peerId);
+    const call = this.calls.get(peerId);
+    if (call) {
+      if (this.calls.get(peerId) === call) this.calls.delete(peerId);
+      try {
+        call.close();
+      } catch {
+        /* noop */
+      }
+      this.dropAudio(peerId);
+    }
+    this.events.mediaState(peerId, "connecting");
+    this.callPeer(peerId);
+    if (this.calls.get(peerId)) this.voiceHeals.set(peerId, { attempts: 1, timer: 0 });
   }
 
   /**
