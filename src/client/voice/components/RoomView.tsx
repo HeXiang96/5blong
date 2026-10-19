@@ -83,6 +83,7 @@ const INTERACT_ACTIONS: ReadonlyArray<{ kind: InteractKind; label: string; Icon:
 import { Banner, Spinner, Toggle } from "./ui";
 import { ViewportPopover } from "./ViewportPopover";
 import { PigActor, PenFrame, PenScatter, useElementSize, ENTRY_TOTAL_MS } from "./PigPen";
+import { Fireworks } from "./Fireworks";
 import { NpcVisitor, PenPropsLayer, type PenPropEntry } from "./PenProps";
 import { Campfire, PenTV, PenTvLightbox } from "./PenTV";
 import { NPC_NAME, feetViewportPx, phaseForActor, tvSlotFor } from "../pen";
@@ -464,11 +465,12 @@ export function RoomView({
   /** 全房动作是否正在播（蹦迪 2.6s / 烟花 3.2s）：直接看事件窗口，不做额外状态。 */
   const groupFx = useMemo(() => {
     let party = false;
-    let fireworks = false;
+    let fireworks = 0;
     for (const item of interactions) {
       if (item.event.to !== "*") continue;
       if (item.event.kind === "party") party = true;
-      if (item.event.kind === "fireworks") fireworks = true;
+      // 用时间戳做 key：再次触发时重新挂载 canvas，烟花从头发射
+      if (item.event.kind === "fireworks") fireworks = Math.max(fireworks, item.event.ts);
     }
     return { party, fireworks };
   }, [interactions]);
@@ -1089,14 +1091,8 @@ export function RoomView({
             {groupToast}
           </div>
         ) : null}
-        {/* 全屏烟花：纯 CSS 粒子，事件过期即卸载，不留常驻动画 */}
-        {groupFx.fireworks ? (
-          <span className="vx-fireworks" aria-hidden="true">
-            {Array.from({ length: 7 }, (_, i) => (
-              <i key={i} style={{ ["--fw-i" as string]: String(i) }} />
-            ))}
-          </span>
-        ) : null}
+        {/* 全屏烟花：Canvas 粒子（升空 → 绽放 → 熄灭），播完自动停 rAF */}
+        {groupFx.fireworks ? <Fireworks key={groupFx.fireworks} /> : null}
         {/* 整页猪圈：木栏围住整个房间区域，猪在整片场地里走动 */}
         <PenFrame width={stageWidth} />
 
@@ -1142,6 +1138,7 @@ export function RoomView({
               watching={tvLive}
               mediaState={member.local ? undefined : mediaStates[member.id]}
               reaction={reactionByActor.get(member.id)}
+              party={groupFx.party}
               mood={moodFor(
                 member.id,
                 member.local ? 0 : feedCounts[member.id] ?? 0,

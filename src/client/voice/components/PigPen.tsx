@@ -309,6 +309,8 @@ export interface PigActorProps {
   mediaState?: MediaLinkState;
   /** 最近一次冲着这头猪来的互动（戳/打招呼/投喂）。 */
   reaction?: InteractEvent;
+  /** 全房蹦迪进行中：所有人改用跳舞精灵（趴着的猪"跳"起来会很怪）。 */
+  party?: boolean;
   /**
    * 情绪状态（长驻小气泡，优先级低于 reaction）：
    * - "love"：被投喂够多次（享受中的常驻小爱心）
@@ -408,6 +410,7 @@ export function PigActor({
   mediaState,
   reaction,
   mood,
+  party = false,
   entryAt,
   feedCount = 0,
   followEnabled = false,
@@ -1153,6 +1156,9 @@ export function PigActor({
               */}
               {entering ? (
                 <img src={pigJoinUrl} className="vx-pig-sprite" alt="" aria-hidden="true" />
+              ) : party ? (
+                // 蹦迪：不管原本是站着还是趴着，都跳起来
+                <img src={pigDanceUrl} className="vx-pig-sprite" alt="" aria-hidden="true" />
               ) : reaction?.kind === "hoist" ? (
                 <img src={pigHoistUrl} className="vx-pig-sprite" alt="" aria-hidden="true" />
               ) : reaction && REACT_SRC[reaction.kind] ? (
