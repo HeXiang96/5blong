@@ -469,11 +469,53 @@ export function RoomView({
     return { party, fireworks };
   }, [interactions]);
 
-  /** 房主侧 30 秒冷却的本地镜像：判断有没有"最近一次全房动作"，用于按钮置灰。 */
-  const groupCooling = useMemo(() => {
-    const now = Date.now();
-    return interactions.some((item) => item.event.to === "*" && now - item.event.ts < GROUP_INTERACT_COOLDOWN_MS);
-  }, [interactions, idleTick]);
+  /**
+   * 全房动作的冷却倒计时（秒）。
+   *
+   * 原来是"静默置灰 30 秒"——用户点了看不出发生了什么（尤其在系统开启
+   * 「减少动态效果」时，动画被 CSS 关掉，等于零反馈），只感觉"点了没反应、
+   * 而且要等好久"。现在把剩余秒数直接写在按钮上，一秒一跳。
+   */
+  const [coolLeft, setCoolLeft] = useState(0);
+  /**
+   * 截止时间单独存在 ref 里：互动事件只在 interactions 里活 3.2 秒，
+   * 若把倒计时挂在事件上，事件一过期倒计时就冻住（实测冻在 27 秒）。
+   */
+  const groupCoolDeadline = useRef(0);
+  useEffect(() => {
+    let latest = 0;
+    for (const item of interactions) {
+      if (item.event.to === "*") latest = Math.max(latest, item.event.ts);
+    }
+    if (latest) {
+      groupCoolDeadline.current = Math.max(groupCoolDeadline.current, latest + GROUP_INTERACT_COOLDOWN_MS);
+    }
+    const update = () => {
+      const left = Math.max(0, Math.ceil((groupCoolDeadline.current - Date.now()) / 1000));
+      setCoolLeft(left);
+      return left;
+    };
+    if (update() === 0) return;
+    const timer = window.setInterval(() => {
+      if (update() === 0) window.clearInterval(timer);
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [interactions]);
+  const groupCooling = coolLeft > 0;
+
+  /**
+   * 全房动作的即时文字反馈：不依赖任何动画，所以"减少动态效果"下同样可见。
+   * 事件在 interactions 里活 3.2 秒，随之自动消失。
+   */
+  const groupToast = useMemo(() => {
+    let latest: { kind: InteractKind; ts: number } | null = null;
+    for (const item of interactions) {
+      if (item.event.to !== "*") continue;
+      if (!latest || item.event.ts > latest.ts) latest = { kind: item.event.kind, ts: item.event.ts };
+    }
+    if (!latest) return null;
+    return latest.kind === "party" ? "🎉 全场蹦迪！" : "🎆 烟花绽放！";
+  }, [interactions]);
 
   /** 场景换皮：雪原＝扔雪球，万圣夜＝丢南瓜（同位置同动作，只换标签与图标）。 */
   const interactActions = useMemo(() => {
@@ -1015,6 +1057,12 @@ export function RoomView({
       ) : null}
 
       <main className={`vx-stage${groupFx.party ? " vx-stage-party" : ""}`} ref={stageRef}>
+        {/* 全房动作的文字反馈：不依赖动画，"减少动态效果"下也一定看得见 */}
+        {groupToast ? (
+          <div className="vx-group-toast" role="status">
+            {groupToast}
+          </div>
+        ) : null}
         {/* 全屏烟花：纯 CSS 粒子，事件过期即卸载，不留常驻动画 */}
         {groupFx.fireworks ? (
           <span className="vx-fireworks" aria-hidden="true">
@@ -1412,10 +1460,11 @@ export function RoomView({
           className={`vx-ctl${groupCooling ? " vx-ctl-disabled" : ""}`}
           onClick={() => onInteract("*", "", "party")}
           disabled={groupCooling}
-          title={groupCooling ? "刚刚热闹过，歇 30 秒" : "全场一起跳三下（30 秒一次）"}
+          title={groupCooling ? `刚热闹过，还要等 ${coolLeft} 秒` : "全场一起跳三下（30 秒一次）"}
         >
           <span className="vx-ctl-icon">
             <Music size={20} />
+            {groupCooling ? <span className="vx-badge">{coolLeft}</span> : null}
           </span>
           <span>蹦迪</span>
         </button>
@@ -1425,10 +1474,11 @@ export function RoomView({
           className={`vx-ctl${groupCooling ? " vx-ctl-disabled" : ""}`}
           onClick={() => onInteract("*", "", "fireworks")}
           disabled={groupCooling}
-          title={groupCooling ? "刚刚热闹过，歇 30 秒" : "放一场全屏烟花（30 秒一次）"}
+          title={groupCooling ? `刚热闹过，还要等 ${coolLeft} 秒` : "放一场全屏烟花（30 秒一次）"}
         >
           <span className="vx-ctl-icon">
             <Sparkles size={20} />
+            {groupCooling ? <span className="vx-badge">{coolLeft}</span> : null}
           </span>
           <span>烟花</span>
         </button>
