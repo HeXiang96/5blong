@@ -569,6 +569,10 @@ npm run feedback:admin list 20   # 终端查看最近反馈（url / list / rm �
 <!-- AUTO-LOG:START -->
 ### 近期提交（自动生成）
 
+- `9ef573d` release: v1.7.1（10-19 19:39）
+- `1bbbcc6` feat(voice): 语音流停滞自愈 + 麦克风断开检测——不用退房重进（10-19 19:38）
+- `045585f` fix(voice): 麦克风发送链补 AudioContext resume——避免"连上了但没人听得见"（10-19 19:15）
+- `966e0d7` fix(voice): 补建链超时自愈——ICE 卡在 checking 时不再永远"连接中"（10-19 19:08）
 - `ef9ffb8` release: v1.7.0（10-19 17:59）
 - `737dd88` polish(pen): 烟花重做为 Canvas 粒子，蹦迪重做为迪厅灯光（10-19 17:57）
 - `7e5d0e2` feat(voice): 语音链路自愈——断连后自动重拨，附手动重连入口（10-19 17:20）
@@ -576,11 +580,6 @@ npm run feedback:admin list 20   # 终端查看最近反馈（url / list / rm �
 - `22faac3` fix(pen): 蹦迪/烟花"点了没反应"——补文字反馈与冷却倒计时（10-19 08:23）
 - `5b1ad11` polish(pen): 猪头顶信息去撞车——气泡统一槽位、网络点下移到脚边（10-18 13:47）
 - `3bb2f7c` feat(pen): 新增请客/哄睡/蹦迪/烟花 + 情绪气泡 + 场景换皮（10-18 13:26）
-- `e22bfdb` chore: 删未用 three 依赖、修复无效动态导入、清理重复路由（10-18 11:44）
-- `25e288e` perf: 开黑圈懒加载分包 + 首页大图 GIF 转动画 WebP（10-18 11:42）
-- `b6c9a4f` feat(stats): 房间遥测离线分析脚本 rooms:stats（10-18 11:20）
-- `a05bd31` feat(bump): 推送后 ls-remote 双确认 + 自动补推，杜绝 main 漏推（10-18 11:18）
-- `e123da8` docs: 文档数字自动化——docs:sync 注入用例数，docs:check 校验挂进 check（10-18 10:38）
 <!-- AUTO-LOG:END -->
 
 ## 怎么用
