@@ -239,6 +239,11 @@ export interface EngineEvents {
    */
   playbackBlocked: (peerId: string, detail: string) => void;
   /**
+   * 自己这边的麦克风有问题（音频引擎没跑起来 / 轨道被静音）：
+   * 不发这条事件的话，表现就是"别人听不见我，但我这边一切正常"。
+   */
+  micProblem?: (detail: string) => void;
+  /**
    * 成员进出房间（带名字）。
    *
    * 原来的提示只有一声提示音，视觉上只有 `1/8` 悄悄变成 `2/8`——
@@ -357,6 +362,8 @@ export class VoiceMesh {
   private speaking = new Set<string>();
 
   private ctx: AudioContext | null = null;
+  /** statechange 监听只注册一次，避免每次重建发送链都叠加。 */
+  private ctxWatched = false;
   /** 所有定时器的登记表（按 interval / timeout 分开，各自用对应的 clear）。 */
   private readonly timers = new Timers();
   private heartbeatTimer = 0;
@@ -3301,6 +3308,34 @@ export class VoiceMesh {
     }
   }
 
+  /** 把 AudioContext 拉起来；返回是否真的在 running。 */
+  private async ensureContextRunning(ctx: AudioContext): Promise<boolean> {
+    if (ctx.state === "running") return true;
+    try {
+      await ctx.resume();
+    } catch {
+      /* 某些环境需要用户手势，交给下面的复查判定 */
+    }
+    // resume 会改 state，但 TS 已按前一次判断收窄了类型，这里重新读一次
+    return (ctx.state as AudioContextState) === "running";
+  }
+
+  /** 上下文被挂起时自动救一次（托盘恢复、切设备后常见）。只注册一次。 */
+  private watchContextState(ctx: AudioContext): void {
+    if (this.ctxWatched) return;
+    this.ctxWatched = true;
+    ctx.addEventListener?.("statechange", () => {
+      if (this.destroyed || !this.me) return;
+      if (ctx.state !== "suspended") return;
+      void this.ensureContextRunning(ctx).then((ok) => {
+        if (!ok) {
+          this.pushRoomEvent("error", "AudioContext 被挂起且恢复失败");
+          this.events.micProblem?.("麦克风引擎被系统挂起：点一下窗口恢复，或重新进房");
+        }
+      });
+    });
+  }
+
   private audioContext(): AudioContext | null {
     if (this.ctx) return this.ctx;
     const Ctor =
@@ -3372,6 +3407,22 @@ export class VoiceMesh {
     gain.connect(limiter ?? dest);
     limiter?.connect(dest);
     this.outgoingStream = dest.stream;
+
+    /*
+     * AudioContext 默认可能是 suspended（无用户手势、页面在后台、WebView2 从托盘恢复）：
+     * 这种情况下 MediaStreamDestination 产出的是**静音流**——别人完全听不见你，
+     * 而你这边界面一切正常，是最难自查的一类故障。所以必须显式 resume 并复查。
+     */
+    this.watchContextState(ctx);
+    const running = await this.ensureContextRunning(ctx);
+    const track = this.outgoingStream.getAudioTracks()[0];
+    if (!running) {
+      this.pushRoomEvent("error", "麦克风音频引擎未运行（AudioContext suspended）");
+      this.events.micProblem?.("麦克风引擎没启动：请点一下窗口，或在设置里重新选一次麦克风");
+    } else if (track?.muted) {
+      this.pushRoomEvent("error", "麦克风轨道被系统静音");
+      this.events.micProblem?.("系统把麦克风静音了：检查一下 Windows 的麦克风权限/静音开关");
+    }
   }
 
   /**
