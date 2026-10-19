@@ -176,6 +176,13 @@ const VOICE_HEAL_PEER_DELAY_MS = 2500;
  * 超过这个时间还没连上，就当作失败，直接进入重拨。
  */
 const VOICE_CONNECT_TIMEOUT_MS = 9000;
+/**
+ * 语音流停滞判定：ICE 全都是 connected、界面上也显示"中继/直连"，
+ * 但对方的 RTP 已经不再进来——"打着打着突然没声音"通常就是这一种。
+ * 每 6 秒采样一次 inbound 字节数，连续 3 次不增长（约 18 秒）就判定停滞并重拨。
+ */
+const MEDIA_FLOW_POLL_MS = 6000;
+const MEDIA_FLOW_STALL_LIMIT = 3;
 
 export type EngineStatus =
   | "idle"
@@ -364,6 +371,10 @@ export class VoiceMesh {
   private ctx: AudioContext | null = null;
   /** statechange 监听只注册一次，避免每次重建发送链都叠加。 */
   private ctxWatched = false;
+  /** 各语音腿的 inbound 字节采样，用于发现"连着但没数据"。 */
+  private readonly flowSamples = new Map<string, { bytes: number; stalls: number; sawBytes: boolean }>();
+  private micEndedNotified = false;
+  private mediaFlowTimer = 0;
   /** 所有定时器的登记表（按 interval / timeout 分开，各自用对应的 clear）。 */
   private readonly timers = new Timers();
   private heartbeatTimer = 0;
@@ -2444,6 +2455,70 @@ export class VoiceMesh {
   private startHeartbeat(): void {
     if (this.heartbeatTimer) return;
     this.heartbeatTimer = this.timers.every(HEARTBEAT_MS, () => this.tickLiveness());
+    if (!this.mediaFlowTimer) {
+      this.mediaFlowTimer = this.timers.every(MEDIA_FLOW_POLL_MS, () => void this.checkMediaFlow());
+    }
+  }
+
+  /**
+   * 语音流监看：连着但没数据时自动重拨，免得用户退房重进。
+   *
+   * 只对"曾经收到过音频"的腿生效——纯收听者（没麦克风）本来就只有 0 字节，
+   * 否则会把它当成故障反复重拨。
+   */
+  private async checkMediaFlow(): Promise<void> {
+    if (this.destroyed || !this.me) return;
+    /*
+     * 先查自己：麦克风被拔掉/被系统收回时，轨道会 ended——此时自己发出去的是空流，
+     * 别人听不见，而界面还显示"麦克风开"。这种事不能等用户自己发现。
+     */
+    const own = this.localStream?.getAudioTracks()[0];
+    if (own && own.readyState === "ended" && !this.micEndedNotified) {
+      this.micEndedNotified = true;
+      this.pushRoomEvent("error", "麦克风轨道已结束（设备被断开）");
+      this.events.micProblem?.("麦克风被断开了（设备拔掉或被系统收回）：请在设置里重新选择麦克风");
+    } else if (own && own.readyState === "live") {
+      this.micEndedNotified = false;
+    }
+    if (this.calls.size === 0) return;
+    for (const [peerId, call] of [...this.calls]) {
+      const pc = (call as { peerConnection?: RTCPeerConnection }).peerConnection;
+      if (!pc || pc.connectionState === "closed") continue;
+      let bytes = 0;
+      try {
+        const stats = await pc.getStats();
+        stats.forEach((report) => {
+          const r = report as RTCInboundRtpStreamStats & { kind?: string };
+          if (r.type !== "inbound-rtp") return;
+          if ((r.kind ?? (r as { mediaType?: string }).mediaType) !== "audio") return;
+          bytes += r.bytesReceived ?? 0;
+        });
+      } catch {
+        continue;
+      }
+      const prev = this.flowSamples.get(peerId);
+      if (!prev) {
+        this.flowSamples.set(peerId, { bytes, stalls: 0, sawBytes: bytes > 0 });
+        continue;
+      }
+      if (bytes > prev.bytes) {
+        prev.bytes = bytes;
+        prev.sawBytes = true;
+        prev.stalls = 0;
+        continue;
+      }
+      if (!prev.sawBytes) continue; // 从没收到过：可能只是纯收听，别乱拨
+      prev.stalls += 1;
+      if (prev.stalls < MEDIA_FLOW_STALL_LIMIT) continue;
+
+      this.flowSamples.delete(peerId);
+      const name = this.members.get(peerId)?.name ?? peerId.slice(0, 6);
+      const secs = Math.round((MEDIA_FLOW_POLL_MS * MEDIA_FLOW_STALL_LIMIT) / 1000);
+      this.pushRoomEvent("error", `与「${name}」的语音 ${secs} 秒无数据，自动重拨`);
+      this.roomLinkState.set(peerId, "failed");
+      this.events.mediaState(peerId, "failed");
+      this.scheduleVoiceHeal(peerId, call, 0);
+    }
   }
 
   // --------------------------------------------------------------- 存活与说话
@@ -3214,6 +3289,7 @@ export class VoiceMesh {
   }
 
   private dropAudio(peerId: string): void {
+    this.flowSamples.delete(peerId);
     const element = this.audio.get(peerId);
     if (element) {
       element.pause();
