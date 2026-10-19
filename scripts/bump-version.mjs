@@ -62,7 +62,12 @@ for (const rel of ["src-tauri/Cargo.toml", "src-tauri/Cargo.lock"]) {
     `$1${version}`,
   );
   if (next === text) {
-    if (text.includes(`version = "${version}"`) && rel.endsWith(".lock")) {
+    /*
+     * 幂等：文件已经是目标版本就直接跳过（.toml 与 .lock 一视同仁）。
+     * 原来只允许 .lock 走这条路——于是发版中断后重试时，已经被改过的
+     * Cargo.toml 会被判成"找不到 version 行"而中止（v1.7.1 就卡在这）。
+     */
+    if (text.includes(`version = "${version}"`)) {
       console.log(`${rel} 已是 ${version}`);
       continue;
     }
@@ -83,7 +88,13 @@ for (const rel of ["src-tauri/Cargo.toml", "src-tauri/Cargo.lock"]) {
 const changelogPath = path.join(root, "src/client/voice/changelog.ts");
 try {
   const changelogSrc = readFileSync(changelogPath, "utf-8");
-  const head = changelogSrc.match(/CHANGELOG: ChangelogEntry\[\] = \[\s*\{\s*version: "([^"]+)"/);
+  /*
+   * 不能写死 "{\s*version"：自动插入的条目在 version 前面带一行注释
+   * （见下方 entry 的生成逻辑），写死就会匹配失败——v1.7.0 发完之后
+   * v1.7.1 直接卡在"changelog.ts 结构异常"。改成在数组开头附近找第一个 version。
+   */
+  const tail = changelogSrc.slice(changelogSrc.indexOf("CHANGELOG: ChangelogEntry[] = ["));
+  const head = tail.match(/version: "([^"]+)"/);
   if (!head) {
     console.error("changelog.ts 结构异常：找不到 CHANGELOG 首条，中止发版。");
     process.exit(1);
