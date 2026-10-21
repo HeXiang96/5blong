@@ -872,12 +872,17 @@ export const MAX_MEMBERS = 8;
 
 export const HEARTBEAT_MS = 2000;
 /**
- * 心跳超时。3 次心跳（6s）足够容忍一次抖动与后台标签页节流，
- * 又比"关掉页面后还显示在线"的体感短。
+ * 心跳超时（房主据此踢人）。
+ *
+ * ⚠️ 原来是 6000ms，前提写的是"足够容忍后台标签页节流"——**这个判断是错的**：
+ * 浏览器/WebView2 会把隐藏页面的 setInterval 节流到约 1 次/分钟。
+ * 也就是说任何人切到别的窗口 6 秒，就会被房主当作掉线踢出房间
+ * （症状：打着打着突然没了、要重新进房）。2026-10-21 改为 25s：
+ * 容忍多次节流周期与真实网络抖动，同时仍能在对方真关页时较快清理。
  */
-export const HEARTBEAT_TIMEOUT_MS = 6000;
-/** 访客连续收不到房主 pong 多久后判定掉线并尝试重连。 */
-export const HOST_SILENCE_TIMEOUT_MS = 10_000;
+export const HEARTBEAT_TIMEOUT_MS = 25_000;
+/** 访客连续收不到房主 pong 多久后判定掉线并尝试重连（同样要扛住后台节流）。 */
+export const HOST_SILENCE_TIMEOUT_MS = 30_000;
 /**
  * 连上信令后等待房主 welcome 的上限（单次）。
  *

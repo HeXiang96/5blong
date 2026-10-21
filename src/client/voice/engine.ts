@@ -337,6 +337,32 @@ function startPoseTicker(onTick: () => void): void {
   worker.postMessage("start");
   stopPoseTicker = () => worker.terminate();
 }
+/*
+ * 心跳用 Worker 计时，理由与猪位广播相同，但后果更严重：
+ * 主线程定时器在页面隐藏时会被节流到约一分钟一次，而房主收不到 ping
+ * 就会把人移出房间——"切出去看个消息回来就被踢"就是这个原因。
+ */
+let stopHeartbeatTicker: (() => void) | null = null;
+function startHeartbeatTicker(onTick: () => void): void {
+  stopHeartbeatTicker?.();
+  if (typeof Worker === "undefined") {
+    const id = setInterval(onTick, HEARTBEAT_MS);
+    stopHeartbeatTicker = () => clearInterval(id);
+    return;
+  }
+  const source =
+    `let t=null;onmessage=(e)=>{if(e.data==='start'&&!t)t=setInterval(()=>postMessage(0),${HEARTBEAT_MS});` +
+    "if(e.data==='stop'&&t){clearInterval(t);t=null;}}";
+  const worker = new Worker(URL.createObjectURL(new Blob([source], { type: "text/javascript" })));
+  worker.onmessage = () => onTick();
+  worker.postMessage("start");
+  stopHeartbeatTicker = () => worker.terminate();
+}
+function stopHeartbeatTickerFn(): void {
+  stopHeartbeatTicker?.();
+  stopHeartbeatTicker = null;
+}
+
 function stopPoseTickerFn(): void {
   stopPoseTicker?.();
   stopPoseTicker = null;
@@ -374,6 +400,8 @@ export class VoiceMesh {
   /** 各语音腿的 inbound 字节采样，用于发现"连着但没数据"。 */
   private readonly flowSamples = new Map<string, { bytes: number; stalls: number; sawBytes: boolean }>();
   private micEndedNotified = false;
+  /** 每条腿最近一次"确实收到 RTP 音频"的时间，用于判活时豁免。 */
+  private readonly lastMediaAt = new Map<string, number>();
   private mediaFlowTimer = 0;
   /** 所有定时器的登记表（按 interval / timeout 分开，各自用对应的 clear）。 */
   private readonly timers = new Timers();
@@ -1013,6 +1041,7 @@ export class VoiceMesh {
     this.stopRoomTelemetry();
     this.stopSessionStats(true);
     stopPoseTickerFn();
+    this.stopHeartbeat();
 
     this.timers.clear();
     this.welcomeDeadline = 0;
@@ -2452,9 +2481,15 @@ export class VoiceMesh {
     this.events.ended("host-left", detail);
   }
 
+  private stopHeartbeat(): void {
+    this.heartbeatTimer = 0;
+    stopHeartbeatTickerFn();
+  }
+
   private startHeartbeat(): void {
     if (this.heartbeatTimer) return;
-    this.heartbeatTimer = this.timers.every(HEARTBEAT_MS, () => this.tickLiveness());
+    this.heartbeatTimer = 1; // 标记已启动（实际计时由 Worker 承担）
+    startHeartbeatTicker(() => this.tickLiveness());
     if (!this.mediaFlowTimer) {
       this.mediaFlowTimer = this.timers.every(MEDIA_FLOW_POLL_MS, () => void this.checkMediaFlow());
     }
@@ -2505,6 +2540,7 @@ export class VoiceMesh {
         prev.bytes = bytes;
         prev.sawBytes = true;
         prev.stalls = 0;
+        this.lastMediaAt.set(peerId, Date.now());
         continue;
       }
       if (!prev.sawBytes) continue; // 从没收到过：可能只是纯收听，别乱拨
@@ -2535,6 +2571,12 @@ export class VoiceMesh {
       for (const guest of Array.from(this.guests.values())) {
         if (!guest.joined) continue;
         if (now - guest.lastSeen > HEARTBEAT_TIMEOUT_MS) {
+          /*
+           * 媒体还在流就别踢：信令心跳可能只是被后台节流丢了，
+           * 而语音一直是通的。只有"既没心跳、也没音频数据"才算真掉线。
+           */
+          const mediaAt = this.lastMediaAt.get(guest.member.id) ?? 0;
+          if (now - mediaAt < HEARTBEAT_TIMEOUT_MS) continue;
           this.evictGuest(guest.member.id, "timeout");
         }
       }
