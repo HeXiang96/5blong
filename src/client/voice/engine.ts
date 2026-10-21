@@ -392,6 +392,14 @@ export class VoiceMesh {
    */
   private readonly voiceHeals = new Map<string, { attempts: number; timer: number }>();
   private audio = new Map<string, HTMLAudioElement>();
+  /**
+   * 临时压低"房间语音播放"的系数（1 = 不压低）。
+   *
+   * 用途：共享声音回退到整机回环时（老系统拿不到进程级采集），
+   * 共享音频里会含房间语音 → 观众听到回声。压到 15% 后那一路几乎不可闻，
+   * 共享者仍能听清别人说话的关键信息。
+   */
+  private duckFactor = 1;
   private monitors = new Map<string, Monitor>();
   private speaking = new Set<string>();
 
@@ -3927,7 +3935,8 @@ export class VoiceMesh {
     const element = this.audio.get(peerId);
     if (!element) return;
     const chain = this.peerChains.get(peerId);
-    const volume = this.peerMuted.has(peerId) ? 0 : this.peerVolumes.get(peerId) ?? 1;
+    const volume =
+      (this.peerMuted.has(peerId) ? 0 : this.peerVolumes.get(peerId) ?? 1) * this.duckFactor;
     if (chain && this.ctx) {
       // 增益走 GainNode（可 >1），元素音量固定 1，避免两处相乘
       chain.gain.gain.setTargetAtTime(volume, this.ctx.currentTime, 0.02);
@@ -3939,6 +3948,15 @@ export class VoiceMesh {
     }
     // 闭听优先级最高（独立于本地音量设置，恢复时不受影响）。
     element.muted = this.deafened;
+  }
+
+  /**
+   * 临时压低全部成员的播放音量（1 = 恢复）。
+   * 只影响本地收听，不改成员各自的音量设置，也不影响发送。
+   */
+  setRoomDuck(factor: number): void {
+    this.duckFactor = Math.min(1, Math.max(0, factor));
+    for (const peerId of this.audio.keys()) this.applyPeerAudio(peerId);
   }
 
   /** 把某个成员的音频接进"增益 + 软限幅"链，元素播放链的输出。 */

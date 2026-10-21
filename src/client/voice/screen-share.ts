@@ -50,7 +50,7 @@ export function randomSessionId(): string {
 // 画质档位（业主指定：高清 HD 720p60 = 5000 kbps / 超清 1080p60 = 8000 kbps）
 // ---------------------------------------------------------------------------
 
-export type ShareQuality = "hd720" | "fhd1080";
+export type ShareQuality = "hd720" | "hd720p30" | "fhd1080" | "fhd1080p30";
 
 export interface ShareQualityPreset {
   label: string;
@@ -76,8 +76,14 @@ export interface ShareQualityPreset {
  * 仍远低于原先的 8M / 20M，不会把上行打爆。
  */
 export const SHARE_QUALITY_PRESETS: Record<ShareQuality, ShareQualityPreset> = {
-  hd720: { label: "高清 HD 720p", width: 1280, height: 720, fps: 60, maxBitrate: 5_000_000 },
-  fhd1080: { label: "超清 1080p", width: 1920, height: 1080, fps: 60, maxBitrate: 8_000_000 },
+  hd720: { label: "高清 720p·60", width: 1280, height: 720, fps: 60, maxBitrate: 5_000_000 },
+  /*
+   * 30fps 档（对齐 Piik 的档位表）：看文档/PPT/网页时 60fps 毫无收益，
+   * 却要多花一倍码率。弱网或观众多时选这个，房主上行能省一半。
+   */
+  hd720p30: { label: "高清 720p·30 省流量", width: 1280, height: 720, fps: 30, maxBitrate: 3_000_000 },
+  fhd1080: { label: "超清 1080p·60", width: 1920, height: 1080, fps: 60, maxBitrate: 8_000_000 },
+  fhd1080p30: { label: "超清 1080p·30 省流量", width: 1920, height: 1080, fps: 30, maxBitrate: 5_000_000 },
 };
 
 /**
@@ -343,7 +349,12 @@ export function autoTransportFor(
   if (preference === "p2p") return { transport: "p2p", reason: "你选了直连" };
   if (preference === "sfu") return { transport: "sfu", reason: "你选了 SFU 转发" };
   const viewers = Math.max(0, memberCount - 1);
-  if (viewers <= 4) return { transport: "p2p", reason: `观众 ${viewers} 人，直连画质最好` };
+  /*
+   * 2026-10-21 从 ≤4 收到 ≤2（对齐 Piik 的端点出站配额思路）：
+   * 每一路直连都是一份完整上行。4 个观众按 1080p60 的 8Mbps 上限就是 32Mbps，
+   * 家用上行必炸，表现为"房主自己卡、观众全糊"。3 个观众起改走 SFU。
+   */
+  if (viewers <= 2) return { transport: "p2p", reason: `观众 ${viewers} 人，直连画质最好` };
   return { transport: "sfu", reason: `观众 ${viewers} 人，直连上行会打爆，自动走 SFU` };
 }
 

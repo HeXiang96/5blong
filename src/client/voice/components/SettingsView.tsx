@@ -18,6 +18,7 @@ import {
   type DeviceOption,
 } from "../devices";
 import { toAvatarDataUrl } from "../storage";
+import { listLoopbackTargets } from "../loopback";
 import { Avatar, Toggle } from "./ui";
 import { HealthCheck } from "./HealthCheck";
 
@@ -59,10 +60,18 @@ export function SettingsView({
   const [testError, setTestError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [theme, setTheme] = useState<ThemeChoice>(() => loadTheme());
+  /** "只采集某个应用"的候选列表（仅桌面客户端能枚举）。 */
+  const [loopTargets, setLoopTargets] = useState<{ pid: number; name: string }[]>([]);
   const stopTest = useRef<(() => void) | null>(null);
   const fileInput = useRef<HTMLInputElement | null>(null);
   /** 桌面客户端（Tauri）：托盘等相关说明只在客户端里展示。 */
   const isDesktop = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+
+  const refreshLoopTargets = async () => {
+    if (!isDesktop) return;
+    const list = await listLoopbackTargets();
+    setLoopTargets(list);
+  };
 
   const refreshDevices = async () => {
     const groups = await listDevices();
@@ -71,6 +80,7 @@ export function SettingsView({
   };
 
   useEffect(() => {
+    void refreshLoopTargets();
     void refreshDevices();
     const off = onDeviceChange(() => void refreshDevices());
     return () => {
@@ -373,6 +383,46 @@ export function SettingsView({
                 客户端共享时会自动排除本应用的语音（不会把你听到的人声再采一遍），所以不会再出现回声；
                 网页版拿不到这个能力，共享声音仍可能有回声。
               </small>
+              <label className="vx-field">
+                <span className="vx-field-label">老系统回退时压低房间声音</span>
+                <Toggle
+                  checked={voice.shareFallbackDuck}
+                  label="老系统回退时压低房间声音"
+                  onChange={(next) => setVoice((prev) => ({ ...prev, shareFallbackDuck: next }))}
+                />
+              </label>
+              <small>
+                个别老系统不支持"按应用取声音"，只能整机采集——那种情况共享音频里会带上房间人声。
+                打开后会在共享期间把别人说话压到 15%，几乎听不出回声（你自己也会觉得声音变小）。
+              </small>
+
+              {isDesktop ? (
+                <div className="vx-field">
+                  <span className="vx-field-label">只共享这个应用的声音</span>
+                  <select
+                    className="vx-input"
+                    value={String(voice.shareAppPid ?? "")}
+                    onChange={(event) => {
+                      const raw = event.target.value;
+                      setVoice((prev) => ({ ...prev, shareAppPid: raw ? Number(raw) : null }));
+                    }}
+                  >
+                    <option value="">整机（自动排除本应用人声）</option>
+                    {loopTargets.map((target) => (
+                      <option key={target.pid} value={String(target.pid)}>
+                        {target.name}
+                      </option>
+                    ))}
+                  </select>
+                  <button type="button" className="vx-menu-btn" onClick={() => void refreshLoopTargets()}>
+                    刷新正在出声的应用
+                  </button>
+                  <small>
+                    选一个应用就只采它的声音，通知音、音乐、别的软件都不会混进共享音频。
+                    列表只显示"此刻正在出声"的程序——先让游戏/视频出点声再刷新。
+                  </small>
+                </div>
+              ) : null}
             </section>
 
             <section className="vx-card">

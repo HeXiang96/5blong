@@ -460,7 +460,7 @@ export interface ScreenShareState {
    * 订阅端用它 + 实收分辨率推算"当前订阅到哪一层"（f/h/q），显示在灯箱里。
    * 缺省 = 旧版本房主，不显示层信息。
    */
-  quality?: "hd720" | "fhd1080";
+  quality?: "hd720" | "hd720p30" | "fhd1080" | "fhd1080p30";
 }
 
 /** 校验从线上收到的屏幕共享状态；形状不对就丢弃。 */
@@ -485,7 +485,10 @@ export function parseScreenShareState(input: unknown): ScreenShareState | null {
     transport: raw["transport"] === "p2p" ? "p2p" : "sfu",
     // 缺省不带这个键（旧房主不广播它，订阅端按单档拉流）
     ...(raw["simulcast"] === true ? { simulcast: true } : {}),
-    ...(raw["quality"] === "hd720" || raw["quality"] === "fhd1080"
+    ...(raw["quality"] === "hd720" ||
+    raw["quality"] === "hd720p30" ||
+    raw["quality"] === "fhd1080" ||
+    raw["quality"] === "fhd1080p30"
       ? { quality: raw["quality"] }
       : {}),
   };
@@ -502,7 +505,7 @@ export interface ScreenSharePublication {
   /** SFU 发布是否用了 simulcast 多档（缺省 = 单档）。 */
   simulcast?: boolean;
   /** 发布档位（订阅端据实收分辨率推算订阅层）。 */
-  quality?: "hd720" | "fhd1080";
+  quality?: "hd720" | "hd720p30" | "fhd1080" | "fhd1080p30";
 }
 
 export function parseScreenSharePublication(input: unknown): ScreenSharePublication | null {
@@ -520,7 +523,10 @@ export function parseScreenSharePublication(input: unknown): ScreenSharePublicat
     hasAudio: raw["hasAudio"] === true,
     transport: raw["transport"] === "sfu" ? "sfu" : "p2p",
     ...(raw["simulcast"] === true ? { simulcast: true } : {}),
-    ...(raw["quality"] === "hd720" || raw["quality"] === "fhd1080"
+    ...(raw["quality"] === "hd720" ||
+    raw["quality"] === "hd720p30" ||
+    raw["quality"] === "fhd1080" ||
+    raw["quality"] === "fhd1080p30"
       ? { quality: raw["quality"] }
       : {}),
   };

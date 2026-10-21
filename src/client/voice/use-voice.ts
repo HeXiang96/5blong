@@ -593,8 +593,25 @@ export function useVoice() {
         let viaNativeAudio = false;
         if (desktopNative && settings.shareAudio) {
           try {
-            const native = await startLoopbackAudio((message) =>
-              setNotice({ kind: "error", sticky: true, text: message }),
+            const native = await startLoopbackAudio(
+              (message) => setNotice({ kind: "error", sticky: true, text: message }),
+              (message) => {
+                /*
+                 * 回退到整机回环：共享音频里会带房间语音。
+                 * 开了"压低房间语音"就把本地播放压到 15%，观众那边几乎听不出回声。
+                 */
+                if (settings.shareFallbackDuck) {
+                  engineRef.current?.setRoomDuck(0.15);
+                  setNotice({
+                    kind: "info",
+                    sticky: true,
+                    text: "这台系统只能整机采集，已自动压低房间声音避免回声（结束后恢复）",
+                  });
+                } else {
+                  setNotice({ kind: "info", text: message });
+                }
+              },
+              settings.shareAppPid ?? null,
             );
             stream.addTrack(native.track);
             nativeLoopbackStopRef.current = native.stop;
@@ -779,6 +796,8 @@ export function useVoice() {
   const stopScreenShare = useCallback((opts?: { viaTrackEnded?: boolean }) => {
     // engine 内部会判断：有状态且是本人 → 停播广播；广播未到的窗口期 → 仍发停播申报
     engineRef.current?.stopScreenShare();
+    // 停播一定要恢复房间语音音量（回退压缩是共享期间的临时状态）
+    engineRef.current?.setRoomDuck(1);
     sharePubRef.current?.stop();
     sharePubRef.current = null;
     for (const track of shareLocalStreamRef.current?.getTracks() ?? []) track.stop();

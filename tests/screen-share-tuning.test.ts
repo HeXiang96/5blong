@@ -16,6 +16,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   JITTER_ADAPTIVE_MS,
   RESOLUTION_LADDER,
+  SHARE_QUALITY_PRESETS,
   autoTransportFor,
   boostScreenOfferSdp,
   h264ProfileRank,
@@ -101,12 +102,25 @@ describe("RESOLUTION_LADDER（降级阶梯）", () => {
 });
 
 describe("autoTransportFor（按人数自动选传输）", () => {
-  it("自动：观众 ≤4 走直连，5 位及以上走 SFU（2026-10-14 从 ≤2 上调）", () => {
+  it("自动：观众 ≤2 走直连，3 位及以上走 SFU（2026-10-21 从 ≤4 收回）", () => {
+    // 每一路直连都是一份完整上行：4 个观众 × 8Mbps = 32Mbps，家用上行必爆
     expect(autoTransportFor("auto", 1).transport).toBe("p2p"); // 0 位观众
     expect(autoTransportFor("auto", 3).transport).toBe("p2p"); // 2 位观众
-    expect(autoTransportFor("auto", 5).transport).toBe("p2p"); // 4 位观众
+    expect(autoTransportFor("auto", 4).transport).toBe("sfu"); // 3 位观众
     expect(autoTransportFor("auto", 6).transport).toBe("sfu"); // 5 位观众
     expect(autoTransportFor("auto", 8).transport).toBe("sfu"); // 7 位观众
+  });
+
+  it("30fps 档位的码率上限低于同分辨率 60fps 档", () => {
+    expect(SHARE_QUALITY_PRESETS.hd720p30.fps).toBe(30);
+    expect(SHARE_QUALITY_PRESETS.hd720p30.maxBitrate).toBeLessThan(
+      SHARE_QUALITY_PRESETS.hd720.maxBitrate,
+    );
+    expect(SHARE_QUALITY_PRESETS.fhd1080p30.fps).toBe(30);
+    expect(SHARE_QUALITY_PRESETS.fhd1080p30.maxBitrate).toBeLessThan(
+      SHARE_QUALITY_PRESETS.fhd1080.maxBitrate,
+    );
+    expect(SHARE_QUALITY_PRESETS.hd720p30.width).toBe(SHARE_QUALITY_PRESETS.hd720.width);
   });
 
   it("显式选择永远优先", () => {

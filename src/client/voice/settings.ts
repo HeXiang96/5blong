@@ -43,6 +43,19 @@ export interface VoiceSettings {
    * 观众不会听到"同一句话两遍"；网页版没有这条路，仍由选择器里的开关决定。
    */
   shareAudio: boolean;
+  /**
+   * 共享声音回退到"整机回环"时，是否自动压低房间语音（默认关）。
+   *
+   * 老系统（Win10 2004 以下）拿不到进程级采集，共享音频里会包含房间语音，
+   * 观众就会听到回声。开了这个开关，回退发生时把本地播放压到 15%，
+   * 回声几乎不可闻；代价是共享者自己听别人说话变小。
+   */
+  shareFallbackDuck: boolean;
+  /**
+   * 只采集这个进程声音（Windows 进程回环 INCLUDE）；null/undefined = 整机混音减去本应用。
+   * 仅桌面客户端有效；网页版忽略。
+   */
+  shareAppPid?: number | null;
   /** 屏幕共享画质档位（720p60 / 1080p60）。 */
   shareQuality: ShareQuality;
   /**
@@ -71,7 +84,7 @@ export interface VoiceSettings {
 }
 
 /** 屏幕共享画质档位（定义在 screen-share.ts，这里只引用字面量类型）。 */
-export type ShareQuality = "hd720" | "fhd1080";
+export type ShareQuality = "hd720" | "hd720p30" | "fhd1080" | "fhd1080p30";
 
 export type ThemeChoice = "system" | "dark" | "light";
 
@@ -114,6 +127,8 @@ export function defaultSettings(): VoiceSettings {
     peerVolumes: {},
     peerMuted: {},
     shareAudio: true,
+    shareFallbackDuck: false,
+    shareAppPid: null,
     shareQuality: "fhd1080",
     shareTransport: "auto",
     shareViewMode: "auto",
@@ -144,7 +159,14 @@ export function loadSettings(): VoiceSettings {
     peerMuted: stored.peerMuted && typeof stored.peerMuted === "object" ? stored.peerMuted : {},
     // 屏幕共享画质：默认超清 1080p；存量配置里没有该字段时也走默认
     shareAudio: stored.shareAudio !== false,
-    shareQuality: stored.shareQuality === "hd720" ? "hd720" : "fhd1080",
+    shareFallbackDuck: stored.shareFallbackDuck === true,
+    shareAppPid: typeof stored.shareAppPid === "number" ? stored.shareAppPid : null,
+    shareQuality:
+      stored.shareQuality === "hd720" ||
+      stored.shareQuality === "hd720p30" ||
+      stored.shareQuality === "fhd1080p30"
+        ? stored.shareQuality
+        : "fhd1080",
     // 屏幕共享传输：v2 起默认"自动"。无版本号的旧配置一律迁移到 auto
     // （那时的 p2p 是默认值而非用户选择）；显式选过 p2p/sfu 的照旧保留。
     shareTransport:

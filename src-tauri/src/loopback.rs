@@ -75,6 +75,7 @@ mod imp {
         stop: Arc<AtomicBool>,
         on_chunk: Channel<String>,
         app: tauri::AppHandle,
+        only_pid: Option<u32>,
     ) -> Result<(), String> {
         /*
          * 优先进程级采集（整机混音 − 本应用进程树）：
@@ -84,9 +85,19 @@ mod imp {
          */
         let mut pcm_buf: Vec<i16> = Vec::new();
         let attempted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            crate::process_loopback::run_capture(stop.clone(), |pcm| {
-                push_pcm(&mut pcm_buf, pcm, &on_chunk)
-            })
+            match only_pid {
+                // 指定应用：只采那个进程树（通知音/音乐都不会混进来）
+                Some(pid) => crate::process_loopback::run_capture_with(
+                    pid,
+                    false,
+                    stop.clone(),
+                    &mut |pcm: &[i16]| push_pcm(&mut pcm_buf, pcm, &on_chunk),
+                ),
+                // 默认：整机混音减去本应用（共享桌面时不会有房间语音）
+                None => crate::process_loopback::run_capture(stop.clone(), |pcm| {
+                    push_pcm(&mut pcm_buf, pcm, &on_chunk)
+                }),
+            }
         }));
         match attempted {
             Ok(Ok(())) => return Ok(()),
@@ -186,6 +197,7 @@ mod imp {
         app: tauri::AppHandle,
         state: State<'_, LoopbackState>,
         on_chunk: Channel<String>,
+        only_pid: Option<u32>,
     ) -> Result<LoopbackStart, String> {
         // 先停旧的（不持锁 join，避免长时间占住状态锁）
         let existing = state.worker.lock().unwrap().take();
@@ -205,7 +217,7 @@ mod imp {
                 // catch_unwind：wasapi 内部还有别的坑时（见 wait/read 的注释），
                 // panic 不能无声吞掉采集线程——必须把原因发到页面给用户看。
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    capture_loop(thread_stop.clone(), on_chunk.clone(), thread_app.clone())
+                    capture_loop(thread_stop.clone(), on_chunk.clone(), thread_app.clone(), only_pid)
                 }));
                 let err = match result {
                     Ok(Ok(())) => return,
@@ -233,6 +245,16 @@ mod imp {
         Ok(LoopbackStart { sample_rate: 48_000, channels: 2 })
     }
 
+    /// 列出正在出声的应用（供 UI 选"只采集这个应用"）。
+    #[tauri::command]
+    pub fn list_loopback_targets() -> Result<Vec<serde_json::Value>, String> {
+        let sessions = crate::process_loopback::list_audio_sessions()?;
+        Ok(sessions
+            .into_iter()
+            .map(|(pid, name)| serde_json::json!({ "pid": pid, "name": name }))
+            .collect())
+    }
+
     /// 停止回环采集（停播时调用；重复调用安全）。
     #[tauri::command]
     pub fn stop_loopback_capture(state: State<'_, LoopbackState>) -> Result<(), String> {
@@ -253,6 +275,11 @@ mod imp {
     #[tauri::command]
     pub fn stop_loopback_capture() -> Result<(), String> {
         Ok(())
+    }
+
+    #[tauri::command]
+    pub fn list_loopback_targets() -> Result<Vec<serde_json::Value>, String> {
+        Ok(Vec::new())
     }
 }
 

@@ -219,3 +219,85 @@ pub fn run_capture_with(
     let _ = unsafe { client.Stop() };
     Ok(())
 }
+
+/// 列出当前正在出声的音频会话（进程 id + 可执行名）。
+///
+/// 用途：UI 上让用户挑"只采集这个应用的声音"（INCLUDE 模式），
+/// 这样通知音、音乐、浏览器里的杂音都不会混进共享音频。
+pub fn list_audio_sessions() -> Result<Vec<(u32, String)>, String> {
+    use windows::Win32::Media::Audio::Endpoints::IAudioMeterInformation;
+    use windows::Win32::Media::Audio::{
+        eConsole, eRender, IAudioSessionControl2, IAudioSessionManager2, IMMDeviceEnumerator,
+        MMDeviceEnumerator,
+    };
+    use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_ALL};
+    unsafe {
+        let _ = windows::Win32::System::Com::CoInitializeEx(
+            None,
+            windows::Win32::System::Com::COINIT_MULTITHREADED,
+        );
+        let enumerator: IMMDeviceEnumerator =
+            CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)
+                .map_err(|e| format!("创建设备枚举器失败：{e}"))?;
+        let device = enumerator
+            .GetDefaultAudioEndpoint(eRender, eConsole)
+            .map_err(|e| format!("取默认播放设备失败：{e}"))?;
+        let manager: IAudioSessionManager2 = device
+            .Activate(CLSCTX_ALL, None)
+            .map_err(|e| format!("取会话管理器失败：{e}"))?;
+        let sessions = manager
+            .GetSessionEnumerator()
+            .map_err(|e| format!("枚举会话失败：{e}"))?;
+        let count = sessions.GetCount().map_err(|e| e.to_string())?;
+
+        let mut out: Vec<(u32, String)> = Vec::new();
+        for i in 0..count {
+            let Ok(control) = sessions.GetSession(i) else { continue };
+            let Ok(control2) = control.cast::<IAudioSessionControl2>() else { continue };
+            let Ok(pid) = control2.GetProcessId() else { continue };
+            if pid == 0 {
+                continue; // 系统声音（System Sounds）没有进程
+            }
+            // 只听正在出声的：静音/挂起的会话没必要列出来
+            let mut loud = true;
+            if let Ok(meter) = control.cast::<IAudioMeterInformation>() {
+                if let Ok(peak) = meter.GetPeakValue() {
+                    loud = peak > 0.0005;
+                }
+            }
+            if !loud {
+                continue;
+            }
+            if out.iter().any(|(p, _)| *p == pid) {
+                continue;
+            }
+            let name = process_name(pid).unwrap_or_else(|| format!("进程 {pid}"));
+            out.push((pid, name));
+        }
+        out.sort_by(|a, b| a.1.cmp(&b.1));
+        Ok(out)
+    }
+}
+
+/// 取进程可执行文件名（不带路径），拿不到就返回 None。
+fn process_name(pid: u32) -> Option<String> {
+    use windows::Win32::System::Threading::{
+        OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
+        PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+    unsafe {
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
+        let mut buf = [0u16; 512];
+        let mut len = buf.len() as u32;
+        let ok = QueryFullProcessImageNameW(
+            handle,
+            PROCESS_NAME_WIN32,
+            windows::core::PWSTR(buf.as_mut_ptr()),
+            &mut len,
+        );
+        let _ = windows::Win32::Foundation::CloseHandle(handle);
+        ok.ok()?;
+        let path = String::from_utf16_lossy(&buf[..len as usize]);
+        Some(path.rsplit(['\\', '/']).next().unwrap_or(&path).to_string())
+    }
+}

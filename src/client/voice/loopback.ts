@@ -84,6 +84,9 @@ export interface LoopbackAudio {
 /** 启动内置系统声音采集。失败抛错（调用方自行提示并降级为无声音）。 */
 export async function startLoopbackAudio(
   onLost?: (message: string) => void,
+  onFallback?: (message: string) => void,
+  /** 只采集这个进程的声音（INCLUDE）；不传=整机混音减去本应用 */
+  onlyPid?: number | null,
 ): Promise<LoopbackAudio> {
   const [{ invoke, Channel }, { listen }] = await Promise.all([
     import("@tauri-apps/api/core"),
@@ -99,7 +102,9 @@ export async function startLoopbackAudio(
        * 进程级采集不可用（老系统/被策略禁用）时会回退整机回环：
        * 那个模式下共享音频里会含房间语音，观众可能听到回声——必须让共享者看到。
        */
-      const unlistenFallback = await listen<string>("loopback:fallback", (event) => onLost(event.payload));
+      const unlistenFallback = await listen<string>("loopback:fallback", (event) =>
+        (onFallback ?? onLost)?.(event.payload),
+      );
       const prevLost = unlistenLost;
       unlistenLost = () => {
         prevLost?.();
@@ -174,6 +179,7 @@ export async function startLoopbackAudio(
 
   const info = await invoke<{ sampleRate: number; channels: number }>("start_loopback_capture", {
     onChunk: channel,
+    onlyPid: onlyPid ?? null,
   });
   if (info.sampleRate !== ctx.sampleRate) {
     // Rust 侧固定 48k，正常不会走到；防御性处理：格式对不上直接判失败
@@ -218,4 +224,15 @@ export async function startLoopbackAudio(
   }
 
   return { track, stop };
+}
+
+/** 列出正在出声的应用（仅桌面客户端；网页版返回空）。 */
+export async function listLoopbackTargets(): Promise<{ pid: number; name: string }[]> {
+  if (!isTauriRuntime()) return [];
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    return await invoke<{ pid: number; name: string }[]>("list_loopback_targets");
+  } catch {
+    return [];
+  }
 }

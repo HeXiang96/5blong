@@ -26,6 +26,7 @@ const settings = {
   peerVolumes: {},
   peerMuted: {},
   shareAudio: true,
+  shareFallbackDuck: false,
   shareQuality: "fhd1080" as const,
   shareTransport: "p2p" as const,
   shareViewMode: "auto" as const,
