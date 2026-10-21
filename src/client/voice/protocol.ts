@@ -572,7 +572,8 @@ export type GuestMessage =
 export type HostMessage =
   | { t: "welcome"; code: string; hostId: string; proof: string; roster: WireMember[]; you: string; locked?: boolean; screenShare?: ScreenShareState; topic?: string; theme?: string }
   | { t: "reject"; reason: RejectReason }
-  | { t: "kick"; id: string }
+  /** reason="timeout" 表示因网络长时间无响应被移出（客户端应自动重新进房）。 */
+  | { t: "kick"; id: string; reason?: string }
   | { t: "force-mute"; id: string; muted: boolean }
   | { t: "lock"; locked: boolean }
   | { t: "interact"; event: InteractEvent }

@@ -402,6 +402,9 @@ export class VoiceMesh {
   private micEndedNotified = false;
   /** 每条腿最近一次"确实收到 RTP 音频"的时间，用于判活时豁免。 */
   private readonly lastMediaAt = new Map<string, number>();
+  /** 兜底补拨的节流时间戳（每成员 5 秒最多一次）。 */
+  private readonly lastDialAt = new Map<string, number>();
+  private dialWatchTimer = 0;
   private mediaFlowTimer = 0;
   /** 所有定时器的登记表（按 interval / timeout 分开，各自用对应的 clear）。 */
   private readonly timers = new Timers();
@@ -1518,9 +1521,16 @@ export class VoiceMesh {
     if (this.screenShareState?.sharerId === this.myId) this.startScreenCalls();
   }
 
-  private evictGuest(peerId: string, _reason: string): void {
+  private evictGuest(peerId: string, reason: string): void {
     const guest = this.guests.get(peerId);
     if (!guest) return;
+    /*
+     * 超时移除必须告知本人：否则他那边界面还显示在房间里，
+     * 说话没人应、也听不到别人——"退房重进才好"的观感就是这么来的。
+     */
+    if (reason === "timeout" && guest.conn) {
+      this.send(guest.conn, { t: "kick", id: guest.member.id, reason: "timeout" });
+    }
     const wasJoined = guest.joined;
     this.guests.delete(peerId);
     this.members.delete(peerId);
@@ -2412,7 +2422,13 @@ export class VoiceMesh {
       case "kick": {
         // 房主只会把 kick 发给被踢者本人。
         if (message.id === this.myId) {
-          this.events.ended("rejected", "你已被房主移出房间");
+          if (message.reason === "timeout") {
+            // 网络长时间卡顿被移出：明确告知，并立刻自动重新进房
+            this.events.status("reconnecting", "网络中断，正在自动重新进房…");
+            void this.redialAfterDrop();
+          } else {
+            this.events.ended("rejected", "你已被房主移出房间");
+          }
         }
         break;
       }
@@ -2492,6 +2508,43 @@ export class VoiceMesh {
     startHeartbeatTicker(() => this.tickLiveness());
     if (!this.mediaFlowTimer) {
       this.mediaFlowTimer = this.timers.every(MEDIA_FLOW_POLL_MS, () => void this.checkMediaFlow());
+    }
+    if (!this.dialWatchTimer) {
+      this.dialWatchTimer = this.timers.every(3000, () => this.ensureCalls());
+    }
+  }
+
+  /**
+   * 兜底补拨：房里有成员、但这儿没有到他的媒体连接时，主动拨一条。
+   *
+   * 为什么需要：谁发起呼叫是按 `myId < peerId` 约定死的。如果**该发起的那一侧
+   * 拿不到麦克风流**（设备被占、权限被拒、采集失败），另一侧就会一直等——
+   * 双方界面都在房里，却谁也不出声。卡顿、退房重进之后尤其容易踩到。
+   */
+  private ensureCalls(): void {
+    if (this.destroyed || !this.me || !this.outgoingStream) return;
+    const now = Date.now();
+    for (const member of this.members.values()) {
+      if (member.local) continue;
+      const call = this.calls.get(member.id);
+      if (call) {
+        // 有连接：若长时间没有任何音频进来，说明这条腿已经僵死，清掉让下一轮补拨
+        const mediaAt = this.lastMediaAt.get(member.id) ?? 0;
+        if (mediaAt && now - mediaAt > 15_000) {
+          this.calls.delete(member.id);
+          try {
+            call.close();
+          } catch {
+            /* noop */
+          }
+          this.dropAudio(member.id);
+        }
+        continue;
+      }
+      const lastTry = this.lastDialAt.get(member.id) ?? 0;
+      if (now - lastTry < 5000) continue; // 别把信令打爆
+      this.lastDialAt.set(member.id, now);
+      this.callPeer(member.id);
     }
   }
 
