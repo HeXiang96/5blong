@@ -358,6 +358,21 @@ export function SettingsView({
             </section>
 
             <section className="vx-card">
+              <label className="vx-field">
+                <span className="vx-field-label">共享时带上系统声音</span>
+                <Toggle
+                  checked={voice.shareAudio}
+                  label="共享时带上系统声音"
+                  onChange={(next) => setVoice((prev) => ({ ...prev, shareAudio: next }))}
+                />
+              </label>
+              <small>
+                客户端共享时会自动排除本应用的语音（不会把你听到的人声再采一遍），所以不会再出现回声；
+                网页版拿不到这个能力，共享声音仍可能有回声。
+              </small>
+            </section>
+
+            <section className="vx-card">
               <h3>外观</h3>
               <div className="vx-field">
                 <span className="vx-field-label">主题</span>

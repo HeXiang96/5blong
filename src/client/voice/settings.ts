@@ -36,6 +36,13 @@ export interface VoiceSettings {
   peerVolumes: Record<string, number>;
   /** 对每个成员的本地静音（不接收其声音），按 peerId 记录；只影响本机。 */
   peerMuted: Record<string, boolean>;
+  /**
+   * 桌面端共享时是否带上系统声音（默认开）。
+   *
+   * 客户端用**进程级回环**采（整机混音 − 本应用），所以房间语音不会被采进去，
+   * 观众不会听到"同一句话两遍"；网页版没有这条路，仍由选择器里的开关决定。
+   */
+  shareAudio: boolean;
   /** 屏幕共享画质档位（720p60 / 1080p60）。 */
   shareQuality: ShareQuality;
   /**
@@ -106,6 +113,7 @@ export function defaultSettings(): VoiceSettings {
     micVolume: 1,
     peerVolumes: {},
     peerMuted: {},
+    shareAudio: true,
     shareQuality: "fhd1080",
     shareTransport: "auto",
     shareViewMode: "auto",
@@ -135,6 +143,7 @@ export function loadSettings(): VoiceSettings {
       stored.peerVolumes && typeof stored.peerVolumes === "object" ? stored.peerVolumes : {},
     peerMuted: stored.peerMuted && typeof stored.peerMuted === "object" ? stored.peerMuted : {},
     // 屏幕共享画质：默认超清 1080p；存量配置里没有该字段时也走默认
+    shareAudio: stored.shareAudio !== false,
     shareQuality: stored.shareQuality === "hd720" ? "hd720" : "fhd1080",
     // 屏幕共享传输：v2 起默认"自动"。无版本号的旧配置一律迁移到 auto
     // （那时的 p2p 是默认值而非用户选择）；显式选过 p2p/sfu 的照旧保留。

@@ -20,6 +20,9 @@ use tauri_plugin_updater::{Update, UpdaterExt};
 /// 内置系统声音采集（Windows WASAPI 回环）：浏览器在多声道播放设备上
 /// 拿不到系统音频，客户端在 Rust 侧自己采后喂给页面随共享发布。
 mod loopback;
+/// 进程级系统声音采集（Win10 2004+）：共享桌面时排除本应用，避免房间语音被采两遍。
+#[cfg(windows)]
+pub mod process_loopback;
 
 /// 已发现、待用户确认下载的更新（确认后 start_update_download 取走）。
 struct UpdaterState {

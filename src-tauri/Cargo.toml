@@ -40,4 +40,14 @@ webview2-com = "0.39"
 # 内置系统声音采集（WASAPI 回环）：浏览器在多声道（7.1/8ch）播放设备上拿不到
 # 系统音频（Chromium 对回环端点格式挑剔），客户端在 Rust 侧自己采（同 Oopz 的做法）。
 wasapi = "0.14"
+# 进程级系统声音采集（共享桌面时排除本应用，避免房间语音被采两遍）
+windows-core = "0.62"
+windows = { version = "0.62", features = [
+  "Win32_Foundation",
+  "Win32_Media_Audio",
+  "Win32_System_Com",
+  "Win32_System_Com_StructuredStorage",
+  "Win32_System_Variant",
+  "Win32_System_Threading",
+] }
 base64 = "0.22"

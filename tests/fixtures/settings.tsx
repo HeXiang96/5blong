@@ -25,6 +25,7 @@ const settings = {
   micVolume: 1,
   peerVolumes: {},
   peerMuted: {},
+  shareAudio: true,
   shareQuality: "fhd1080" as const,
   shareTransport: "p2p" as const,
   shareViewMode: "auto" as const,

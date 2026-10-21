@@ -54,13 +54,60 @@ mod imp {
     use super::*;
     use std::collections::VecDeque;
 
+    /// 把 PCM 切成 2048 帧（~43ms）推给页面；返回 false 表示页面已关/停播。
+    fn push_pcm(buf: &mut Vec<i16>, pcm: &[i16], on_chunk: &Channel<String>) -> bool {
+        const CHUNK_SAMPLES: usize = 2048 * 2; // 立体声
+        buf.extend_from_slice(pcm);
+        while buf.len() >= CHUNK_SAMPLES {
+            let chunk: Vec<i16> = buf.drain(..CHUNK_SAMPLES).collect();
+            let bytes: Vec<u8> = chunk.iter().flat_map(|v| v.to_le_bytes()).collect();
+            let payload = base64::engine::general_purpose::STANDARD.encode(&bytes);
+            if on_chunk.send(payload).is_err() {
+                return false;
+            }
+        }
+        true
+    }
+
     /// 采集循环：默认渲染设备 → 回环 → 立体声 f32 → i16 → base64 → Channel。
     /// 每块 ~43ms（2048 帧），前端 AudioWorklet 缓冲后按采样节拍播出去。
     fn capture_loop(
         stop: Arc<AtomicBool>,
         on_chunk: Channel<String>,
-        _app: tauri::AppHandle,
+        app: tauri::AppHandle,
     ) -> Result<(), String> {
+        /*
+         * 优先进程级采集（整机混音 − 本应用进程树）：
+         * 我们自己的语音由 WebView2 子进程渲染，被排除后共享音频里就没有人声，
+         * 观众不会听到"同一句话两遍"。共享整个桌面同样成立。
+         * 老系统（< Win10 2004）或策略禁用时回退整机回环，并告知页面。
+         */
+        let mut pcm_buf: Vec<i16> = Vec::new();
+        let attempted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            crate::process_loopback::run_capture(stop.clone(), |pcm| {
+                push_pcm(&mut pcm_buf, pcm, &on_chunk)
+            })
+        }));
+        match attempted {
+            Ok(Ok(())) => return Ok(()),
+            Ok(Err(err)) => {
+                if stop.load(Ordering::SeqCst) {
+                    return Ok(());
+                }
+                log::warn!("[loopback] 进程级采集不可用，回退整机回环：{err}");
+            }
+            Err(_) => {
+                log::warn!("[loopback] 进程级采集异常，回退整机回环");
+            }
+        }
+        let _ = app.emit(
+            "loopback:fallback",
+            "这台系统不支持按进程取声音，已改用整机采集（共享声音时可能有回声）",
+        );
+        if stop.load(Ordering::SeqCst) {
+            return Ok(());
+        }
+
         use wasapi::{Direction, SampleType, ShareMode, WaveFormat};
 
         wasapi::initialize_mta().map_err(|e| e.to_string())?;

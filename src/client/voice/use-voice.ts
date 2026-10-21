@@ -523,7 +523,14 @@ export function useVoice() {
          * 把话说清楚后返回；客户端记住这次失败，下次共享自动跳过浏览器音频、
          * 由内置采集补上（见 audioRejectedRef）。
          */
-        const skipBrowserAudio = isTauriRuntime() && audioRejectedRef.current;
+        /*
+         * 桌面端**不再向浏览器要系统音频**：改用 Rust 的进程级回环
+         * （整机混音 − 本应用进程树）。房间语音由 WebView2 播放、属于本进程树，
+         * 会被排除掉，所以共享音频里不含人声——观众不会听到同一句话两遍。
+         * 网页版做不到，仍由选择器里的"共享音频"开关决定（那条路有回声风险）。
+         */
+        const desktopNative = isTauriRuntime();
+        const skipBrowserAudio = desktopNative;
         try {
           stream = await navigator.mediaDevices.getDisplayMedia({
             video: shareVideoConstraints(quality),
@@ -583,11 +590,7 @@ export function useVoice() {
          * 网页版没有这条路：systemAudioUnavailable 时走下面的提示。
          */
         let viaNativeAudio = false;
-        if (
-          !hasAudio &&
-          isTauriRuntime() &&
-          (systemAudioUnavailable || audioRejectedRef.current)
-        ) {
+        if (desktopNative && settings.shareAudio) {
           try {
             const native = await startLoopbackAudio((message) =>
               setNotice({ kind: "error", sticky: true, text: message }),
@@ -596,6 +599,10 @@ export function useVoice() {
             nativeLoopbackStopRef.current = native.stop;
             hasAudio = true;
             viaNativeAudio = true;
+            setNotice({
+              kind: "info",
+              text: "已带上系统声音（自动排除房间语音，不会回声）",
+            });
           } catch (error) {
             console.warn("[screen-share] 内置系统声音采集失败：", error);
             setNotice({
@@ -604,6 +611,9 @@ export function useVoice() {
               text: `${error instanceof Error ? error.message : "内置系统声音采集失败"}；已只共享画面，可把 Windows 默认播放设备换成普通立体声扬声器后重试`,
             });
           }
+        }
+        if (desktopNative && !settings.shareAudio) {
+          setNotice({ kind: "info", text: "只共享画面（要带声音可在设置里打开「共享时带上系统声音」）" });
         }
         // 传输方式：显式选择优先，"自动"按观众数决定（1~2 人直连、3 人以上 SFU）——
         // P2P 的上行是"码率 × 观众数"，3 人以上会把家用上行打爆（P1-11）。

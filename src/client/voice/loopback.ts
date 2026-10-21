@@ -95,6 +95,16 @@ export async function startLoopbackAudio(
   if (onLost) {
     try {
       unlistenLost = await listen<string>("loopback:error", (event) => onLost(event.payload));
+      /*
+       * 进程级采集不可用（老系统/被策略禁用）时会回退整机回环：
+       * 那个模式下共享音频里会含房间语音，观众可能听到回声——必须让共享者看到。
+       */
+      const unlistenFallback = await listen<string>("loopback:fallback", (event) => onLost(event.payload));
+      const prevLost = unlistenLost;
+      unlistenLost = () => {
+        prevLost?.();
+        unlistenFallback();
+      };
     } catch {
       /* 事件监听失败不阻塞采集 */
     }
