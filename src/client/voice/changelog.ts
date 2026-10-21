@@ -20,6 +20,15 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.7.3",
+    date: "2026-10-21",
+    lines: [
+      "长时间不说话不会被误判成掉线（FPS 听脚步不影响）",
+      "开黑圈的语音断了会自动重连，不用退房",
+      "麦克风偶尔没声的老问题补上了自检",
+    ],
+  },
+  {
     version: "1.7.2",
     date: "2026-10-21",
     lines: [
