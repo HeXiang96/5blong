@@ -17,6 +17,8 @@
 import { Peer } from "peerjs";
 import type { DataConnection, MediaConnection } from "peerjs";
 import { RnnoiseWorkletNode, loadRnnoise } from "@sapphi-red/web-noise-suppressor";
+
+import { applyAudioProfile, opusSdpTransform } from "../voice/audio-profile";
 import rnnoiseWorkletUrl from "@sapphi-red/web-noise-suppressor/rnnoiseWorklet.js?url";
 import rnnoiseWasmUrl from "@sapphi-red/web-noise-suppressor/rnnoise.wasm?url";
 import rnnoiseSimdWasmUrl from "@sapphi-red/web-noise-suppressor/rnnoise_simd.wasm?url";
@@ -74,6 +76,8 @@ export class GameMesh {
   private micGainNode: GainNode | null = null;
   private nsNode: RnnoiseWorkletNode | null = null;
   private micBoost = 1;
+  /** 音频引擎没跑起来时只提示一次 */
+  private onAudioStalled = false;
   private nsOn = true;
   /** 小结统计：开房时间、每人（在场 ms / 发言 ms）。 */
   private startedAt = 0;
@@ -508,13 +512,14 @@ export class GameMesh {
         const silent = this.getSilentStream();
         if (!silent) continue;
         try {
-          const call = this.peer!.call(peerId, silent);
+          const call = this.peer!.call(peerId, silent, { sdpTransform: opusSdpTransform("voice") });
           if (!call) continue;
           this.calls.set(peerId, call);
           this.silentCalls.add(peerId);
           call.on("stream", (stream) => this.attachAudio(peerId, stream));
           call.on("close", () => this.forgetCall(peerId));
           call.on("error", () => this.forgetCall(peerId));
+          this.watchCallHealth(call, peerId);
         } catch {
           /* 单个呼叫失败不影响其他人 */
         }
@@ -522,16 +527,62 @@ export class GameMesh {
       }
       if (this.myId >= peerId) continue;
       try {
-        const call = this.peer!.call(peerId, this.publishedStream ?? this.localStream);
+        const call = this.peer!.call(peerId, this.publishedStream ?? this.localStream, {
+          sdpTransform: opusSdpTransform("voice"),
+        });
         if (!call) continue;
         this.calls.set(peerId, call);
         call.on("stream", (stream) => this.attachAudio(peerId, stream));
         call.on("close", () => this.forgetCall(peerId));
         call.on("error", () => this.forgetCall(peerId));
+        this.watchCallHealth(call, peerId);
       } catch {
         /* 单个呼叫失败不影响其他人 */
       }
     }
+  }
+
+  /**
+   * 盯住一条语音链路的 ICE 状态。
+   *
+   * 原来的实现只在 call 触发 close/error 时才重连；而 ICE 静默死掉时
+   * **不会触发 close**——表现就是"打着打着队友没声了，必须退房重进"。
+   * 这里补上：failed 立即收；disconnected 给 4 秒缓冲仍不恢复才收。
+   * 收掉之后 forgetCall 会重新对账（reconcileAudio）自动补拨。
+   */
+  private watchCallHealth(call: MediaConnection, peerId: string): void {
+    let tries = 0;
+    const attach = () => {
+      const pc = (call as unknown as { peerConnection?: RTCPeerConnection }).peerConnection;
+      if (!pc) {
+        if (tries++ < 15 && !this.destroyed) window.setTimeout(attach, 200);
+        return;
+      }
+      void applyAudioProfile(pc, "voice");
+      pc.addEventListener("iceconnectionstatechange", () => {
+        const state = pc.iceConnectionState;
+        const drop = () => {
+          if (this.calls.get(peerId) !== call) return;
+          try {
+            call.close();
+          } catch {
+            /* noop */
+          }
+          this.forgetCall(peerId);
+        };
+        if (state === "failed") {
+          drop();
+          return;
+        }
+        if (state === "disconnected") {
+          // 短暂抖动很常见（切网/丢包），先给 4 秒自愈机会
+          window.setTimeout(() => {
+            if (pc.iceConnectionState === "disconnected" || pc.iceConnectionState === "failed") drop();
+          }, 4000);
+        }
+      });
+    };
+    attach();
   }
 
   private forgetCall(peerId: string): void {
@@ -869,10 +920,13 @@ export class GameMesh {
           }
         });
         peer.on("call", (call) => {
-          call.answer(this.publishedStream ?? this.localStream ?? undefined);
+          call.answer(this.publishedStream ?? this.localStream ?? undefined, {
+            sdpTransform: opusSdpTransform("voice"),
+          });
           call.on("stream", (stream) => this.attachAudio(call.peer, stream));
           call.on("close", () => this.forgetCall(call.peer));
           this.calls.set(call.peer, call);
+          this.watchCallHealth(call, call.peer);
         });
         peer.on("disconnected", () => {
           try {
@@ -940,6 +994,22 @@ export class GameMesh {
       this.audioCtx = new AudioContext();
     }
     const ctx = this.audioCtx;
+    /*
+     * 和语音房同一个坑（2026-10-21 修过一次）：AudioContext 在无用户手势 /
+     * 页面后台时是 suspended，此时 MediaStreamDestination 产出的是**静音流**——
+     * 队友完全听不到你，而界面上一切正常。所以进房后必须显式唤醒并复查。
+     */
+    if (ctx.state !== "running") {
+      try {
+        await ctx.resume();
+      } catch {
+        /* 交给下面的复查 */
+      }
+    }
+    if (ctx.state !== "running" && !this.onAudioStalled) {
+      this.onAudioStalled = true;
+      this.events.status("error", "音频引擎没启动：点一下窗口，或在设置里重新选麦克风");
+    }
     // 拆旧链（换降噪开关时重建）
     try {
       this.nsNode?.disconnect();
