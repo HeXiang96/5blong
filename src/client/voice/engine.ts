@@ -178,12 +178,20 @@ const VOICE_HEAL_PEER_DELAY_MS = 2500;
  */
 const VOICE_CONNECT_TIMEOUT_MS = 9000;
 /**
- * 语音流停滞判定：ICE 全都是 connected、界面上也显示"中继/直连"，
- * 但对方的 RTP 已经不再进来——"打着打着突然没声音"通常就是这一种。
- * 每 6 秒采样一次 inbound 字节数，连续 3 次不增长（约 18 秒）就判定停滞并重拨。
+ * 语音流停滞判定（兜底用，不是主力）。
+ *
+ * 为什么不能判得太急：FPS 游戏里"几十秒不说话"完全正常。对端若启用了
+ * Opus 的 DTX（静音不发包），我们的 18 秒阈值会把**健康链路**判成故障并重拨——
+ * 重拨那几秒本身就会"突然没声音"，等于我们制造了故障。
+ *
+ * 现在的口径：
+ * - 看**收包数**（packetsReceived）而不是字节数——静音帧很小，但包数是硬的；
+ * - 阈值放宽到 8 次 × 6 秒 ≈ 48 秒：足够跨过一整段静默，又能在真出问题时兜住；
+ * - 链路真断（ICE failed/disconnected）由 ICE 判定负责，不靠这里；
+ *   这里只负责"ICE 还显示连接、但媒体确实死了"这种假绿。
  */
 const MEDIA_FLOW_POLL_MS = 6000;
-const MEDIA_FLOW_STALL_LIMIT = 3;
+const MEDIA_FLOW_STALL_LIMIT = 8;
 
 export type EngineStatus =
   | "idle"
@@ -407,7 +415,10 @@ export class VoiceMesh {
   /** statechange 监听只注册一次，避免每次重建发送链都叠加。 */
   private ctxWatched = false;
   /** 各语音腿的 inbound 字节采样，用于发现"连着但没数据"。 */
-  private readonly flowSamples = new Map<string, { bytes: number; stalls: number; sawBytes: boolean }>();
+  private readonly flowSamples = new Map<
+    string,
+    { packets: number; acks: number; stalls: number; sawPackets: boolean }
+  >();
   private micEndedNotified = false;
   /** 每条腿最近一次"确实收到 RTP 音频"的时间，用于判活时豁免。 */
   private readonly lastMediaAt = new Map<string, number>();
@@ -2695,38 +2706,58 @@ export class VoiceMesh {
     for (const [peerId, call] of [...this.calls]) {
       const pc = (call as { peerConnection?: RTCPeerConnection }).peerConnection;
       if (!pc || pc.connectionState === "closed") continue;
-      let bytes = 0;
+      let packets = 0;
+      /** 对方对我们这条流的反馈次数（RTCP receiver report）：静音也在增长 */
+      let acks = 0;
       try {
         const stats = await pc.getStats();
         stats.forEach((report) => {
-          const r = report as RTCInboundRtpStreamStats & { kind?: string };
-          if (r.type !== "inbound-rtp") return;
-          if ((r.kind ?? (r as { mediaType?: string }).mediaType) !== "audio") return;
-          bytes += r.bytesReceived ?? 0;
+          if (report.type === "inbound-rtp") {
+            const r = report as RTCInboundRtpStreamStats & { kind?: string };
+            if ((r.kind ?? (r as { mediaType?: string }).mediaType) !== "audio") return;
+            packets += r.packetsReceived ?? 0;
+            return;
+          }
+          if (report.type === "remote-inbound-rtp") {
+            // 对方回给我们的 RR 次数：链路活着就会周期性增长，与"他说不话说"无关
+            // TS 的 DOM 类型里没有这个统计结构的定义，按字段结构断言
+            const r = report as { roundTripTimeMeasurements?: number };
+            acks += r.roundTripTimeMeasurements ?? 0;
+          }
         });
       } catch {
         continue;
       }
       const prev = this.flowSamples.get(peerId);
       if (!prev) {
-        this.flowSamples.set(peerId, { bytes, stalls: 0, sawBytes: bytes > 0 });
+        this.flowSamples.set(peerId, { packets, acks, stalls: 0, sawPackets: packets > 0 });
         continue;
       }
-      if (bytes > prev.bytes) {
-        prev.bytes = bytes;
-        prev.sawBytes = true;
+      /*
+       * 关键：只要**任一方向还有进展**就算链路活着。
+       *
+       * - 他在说话：我们这边的 inbound 包数在涨；
+       * - 他长时间不说话（FPS 蹲点听脚步）：包数不涨，但他仍在收我们的声音、
+       *   仍会周期性回 RTCP 报告（acks 涨）——这同样证明链路是通的。
+       *
+       * 只有"我收不到他的包"且"他也不回任何反馈"持续足够久，才真的是死了。
+       */
+      if (packets > prev.packets || acks > prev.acks) {
+        prev.packets = packets;
+        prev.acks = acks;
+        prev.sawPackets = true;
         prev.stalls = 0;
         this.lastMediaAt.set(peerId, Date.now());
         continue;
       }
-      if (!prev.sawBytes) continue; // 从没收到过：可能只是纯收听，别乱拨
+      if (!prev.sawPackets) continue; // 从没收到过：可能只是纯收听，别乱拨
       prev.stalls += 1;
       if (prev.stalls < MEDIA_FLOW_STALL_LIMIT) continue;
 
       this.flowSamples.delete(peerId);
       const name = this.members.get(peerId)?.name ?? peerId.slice(0, 6);
       const secs = Math.round((MEDIA_FLOW_POLL_MS * MEDIA_FLOW_STALL_LIMIT) / 1000);
-      this.pushRoomEvent("error", `与「${name}」的语音 ${secs} 秒无数据，自动重拨`);
+      this.pushRoomEvent("error", `与「${name}」的语音 ${secs} 秒没有收到任何包，自动重拨`);
       this.roomLinkState.set(peerId, "failed");
       this.events.mediaState(peerId, "failed");
       this.scheduleVoiceHeal(peerId, call, 0);
