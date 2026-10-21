@@ -8,6 +8,8 @@ import { ConfirmView, LandingView, SessionSummaryCard } from "./components/pages
 import { RoomView } from "./components/RoomView";
 import { FeedbackDialog } from "./components/FeedbackDialog";
 import { OnboardingDialog } from "./components/OnboardingDialog";
+import { WhatsNewDialog } from "./components/WhatsNewDialog";
+import { shouldShowWhatsNew } from "./whats-new";
 import { SettingsView } from "./components/SettingsView";
 import { Banner } from "./components/ui";
 import { gameCodeFromUrl } from "../game/game-links";
@@ -82,6 +84,7 @@ export function App() {
    * `?tv=demo`（调试/全链路验证）跳过，免得挡着自动开播。
    */
   const [onboardingOpen, setOnboardingOpen] = useState(false);
+  const [whatsNewOpen, setWhatsNewOpen] = useState(false);
   useEffect(() => {
     if (voice.view !== "landing") return;
     if (typeof location !== "undefined" && /[?&]tv=demo/.test(location.search)) return;
@@ -90,6 +93,20 @@ export function App() {
     return () => window.clearTimeout(timer);
   }, [voice.view]);
   const closeOnboarding = useCallback(() => setOnboardingOpen(false), []);
+  const closeWhatsNew = useCallback(() => setWhatsNewOpen(false), []);
+
+  /*
+   * 大更新公告：只在首页、且导览没弹的时候弹，避免两个弹窗叠一起。
+   * 导览关掉之后会重新跑一遍（依赖 onboardingOpen）。
+   */
+  useEffect(() => {
+    if (voice.view !== "landing") return;
+    if (onboardingOpen) return;
+    if (typeof location !== "undefined" && /[?&]tv=demo/.test(location.search)) return;
+    if (!shouldShowWhatsNew()) return;
+    const timer = window.setTimeout(() => setWhatsNewOpen(true), 700);
+    return () => window.clearTimeout(timer);
+  }, [voice.view, onboardingOpen]);
   useEffect(() => {
     const isDesktop = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
     if (!isDesktop) return;
@@ -164,6 +181,7 @@ export function App() {
         />
         <FeedbackDialog open={feedback.open} errorText={feedback.errorText} onClose={closeFeedback} />
         <OnboardingDialog open={onboardingOpen} onClose={closeOnboarding} />
+        <WhatsNewDialog open={whatsNewOpen} onClose={closeWhatsNew} />
       </>
     );
   }
@@ -280,6 +298,7 @@ export function App() {
       ) : null}
       <FeedbackDialog open={feedback.open} errorText={feedback.errorText} onClose={closeFeedback} />
       <OnboardingDialog open={onboardingOpen} onClose={closeOnboarding} />
+      <WhatsNewDialog open={whatsNewOpen} onClose={closeWhatsNew} />
       </>
     );
   }
@@ -302,6 +321,7 @@ export function App() {
           ) : null}
           <FeedbackDialog open={feedback.open} errorText={feedback.errorText} onClose={closeFeedback} />
           <OnboardingDialog open={onboardingOpen} onClose={closeOnboarding} />
+      <WhatsNewDialog open={whatsNewOpen} onClose={closeWhatsNew} />
           <LandingView
             identity={voice.identity}
             onIdentityChange={voice.setIdentity}

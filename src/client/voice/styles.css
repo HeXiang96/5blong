@@ -3379,3 +3379,70 @@ html[data-theme="dark"] .vx-link-warn-text {
 .vx-link-retry {
   justify-content: center;
 }
+
+/* --------------------------------------------------- 大更新公告（WhatsNew） */
+.vx-whatsnew {
+  width: min(560px, 100%);
+  /* 六条内容在小屏/矮窗口会超出视口：整块限高并内部滚动，别让"知道了"被挤出去 */
+  max-height: min(86dvh, 700px);
+  overflow-y: auto;
+}
+
+.vx-whatsnew-title {
+  margin: 0 0 6px;
+  font-size: 20px;
+  font-weight: 800;
+}
+
+.vx-whatsnew-lead {
+  margin: 0 0 14px;
+  color: var(--vx-muted-fg, var(--vx-fg));
+  font-size: 13px;
+  opacity: 0.78;
+}
+
+.vx-whatsnew-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.vx-whatsnew-item {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.vx-whatsnew-emoji {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 9px;
+  background: var(--vx-accent-soft);
+  font-size: 15px;
+  line-height: 1;
+}
+
+.vx-whatsnew-item strong {
+  display: block;
+  margin-bottom: 3px;
+  font-size: 14px;
+}
+
+.vx-whatsnew-item p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  opacity: 0.82;
+}
+
+.vx-whatsnew-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 18px;
+}
