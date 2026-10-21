@@ -44,10 +44,17 @@ export function markWhatsNewSeen(): void {
   }
 }
 
-export type WhatsNewIcon = "headphones" | "mute" | "target" | "film" | "pulse" | "home";
+/** 图标名 → 组件在弹窗里映射（不用 emoji：部分环境缺字体，会渲染成方块）。 */
+export type WhatsNewIcon =
+  | "headphones"
+  | "mute"
+  | "target"
+  | "volume"
+  | "film"
+  | "pulse"
+  | "home";
 
 export interface WhatsNewItem {
-  /** 图标名（组件里映射到 lucide 组件；不用 emoji，避免字体缺失变方块） */
   icon: WhatsNewIcon;
   title: string;
   body: string;
@@ -55,22 +62,27 @@ export interface WhatsNewItem {
 
 export const WHATS_NEW: { title: string; lead: string; items: WhatsNewItem[] } = {
   title: "这次更新改了不少",
-  lead: "挑六件最影响日常使用的说：",
+  lead: "挑七件最影响日常使用的说：",
   items: [
     {
       icon: "headphones",
       title: "断线不用退房重进了",
-      body: "网络卡一下、切去别的窗口、甚至短暂断网，语音都会自己接回来。以前这几种情况会被当成掉线，直接被移出房间。",
+      body: "网络卡一下、切去别的窗口、短暂断网，语音都会自己接回来。以前这几种情况会被当成掉线，直接移出房间。",
     },
     {
       icon: "mute",
       title: "共享屏幕不再有回声",
-      body: "以前共享声音会把房间里的人声一起采走，同一句话你能听到两遍。现在共享的声音里不含人声，说话的人照样听得见。",
+      body: "以前共享声音会把房间里的人声一起采走，同一句话听到两遍。现在共享的声音里不含人声，说话的人照样听得见。",
     },
     {
       icon: "target",
       title: "只共享一个应用的声音",
-      body: "桌面端在设置里指定程序，就只采它的声音。通知音、背景音乐、浏览器里的杂音都不会混进去。",
+      body: "桌面端在设置里指定程序，只采它的声音。通知音、背景音乐、浏览器杂音都不会混进去。",
+    },
+    {
+      icon: "volume",
+      title: "通话声音更实了",
+      body: "语音关掉了静音时的间断发送，开口那一下不再发虚；共享声音从单声道换成双声道，码率也翻了一倍。",
     },
     {
       icon: "film",
@@ -80,7 +92,7 @@ export const WHATS_NEW: { title: string; lead: string; items: WhatsNewItem[] } =
     {
       icon: "pulse",
       title: "出问题能一键导出了",
-      body: "设置 → 帮助 → 导出诊断信息，会生成一个文件，里面是连接状态、延迟丢包和最近的自动重连记录。以后出问题发给我们，比截图描述准得多。",
+      body: "设置 → 帮助 → 导出诊断信息，会生成一个文件：连接状态、延迟丢包、最近的自动重连记录都在里面。",
     },
     {
       icon: "home",

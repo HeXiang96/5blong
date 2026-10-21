@@ -1398,8 +1398,12 @@ export function useVoice() {
     }
     try {
       const bundle = await engine.diagnostics(version);
-      downloadDiagnostics(bundle);
-      setNotice({ kind: "info", text: "诊断信息已导出（只含运行状态与统计，不含 IP 与身份标识）" });
+      const fileName = downloadDiagnostics(bundle);
+      setNotice({
+        kind: "info",
+        // 说清楚存成什么、在哪儿能找：只写"已导出"用户根本不知道去哪个文件夹找
+        text: `已保存 ${fileName}，到系统的「下载」文件夹里就能找到（只含运行状态与统计，不含 IP）`,
+      });
       return true;
     } catch (error) {
       setNotice({ kind: "error", text: `导出失败：${error instanceof Error ? error.message : "未知原因"}` });
