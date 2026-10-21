@@ -20,6 +20,16 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.7.2",
+    date: "2026-10-21",
+    lines: [
+      "断线会自动接回来，不用退房重进",
+      "共享屏幕的声音不再有回声",
+      "能只共享某个应用的声音（客户端）",
+      "设置里可以一键导出诊断信息",
+    ],
+  },
+  {
     // bump 自动插入（发版时保证首条 = 本次版本）；内容按需补充，留空 = 公告栏展示上一条有内容版本
     version: "1.7.1",
     date: "2026-10-19",
