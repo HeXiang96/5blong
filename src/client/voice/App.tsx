@@ -179,7 +179,12 @@ export function App() {
           onOpenOnboarding={() => setOnboardingOpen(true)}
           onExportDiagnostics={() => void voice.exportDiagnostics()}
         />
-        <FeedbackDialog open={feedback.open} errorText={feedback.errorText} onClose={closeFeedback} />
+        <FeedbackDialog
+          open={feedback.open}
+          errorText={feedback.errorText}
+          onCollectDiagnostics={voice.collectDiagnostics}
+          onClose={closeFeedback}
+        />
         <OnboardingDialog open={onboardingOpen} onClose={closeOnboarding} />
         <WhatsNewDialog open={whatsNewOpen} onClose={closeWhatsNew} />
       </>
@@ -296,7 +301,12 @@ export function App() {
           />
         </div>
       ) : null}
-      <FeedbackDialog open={feedback.open} errorText={feedback.errorText} onClose={closeFeedback} />
+      <FeedbackDialog
+          open={feedback.open}
+          errorText={feedback.errorText}
+          onCollectDiagnostics={voice.collectDiagnostics}
+          onClose={closeFeedback}
+        />
       <OnboardingDialog open={onboardingOpen} onClose={closeOnboarding} />
       <WhatsNewDialog open={whatsNewOpen} onClose={closeWhatsNew} />
       </>
@@ -319,7 +329,12 @@ export function App() {
               </Banner>
             </div>
           ) : null}
-          <FeedbackDialog open={feedback.open} errorText={feedback.errorText} onClose={closeFeedback} />
+          <FeedbackDialog
+          open={feedback.open}
+          errorText={feedback.errorText}
+          onCollectDiagnostics={voice.collectDiagnostics}
+          onClose={closeFeedback}
+        />
           <OnboardingDialog open={onboardingOpen} onClose={closeOnboarding} />
       <WhatsNewDialog open={whatsNewOpen} onClose={closeWhatsNew} />
           <LandingView

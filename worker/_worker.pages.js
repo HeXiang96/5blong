@@ -303,7 +303,14 @@ const FEEDBACK_CATEGORIES = new Set(["voice", "mic", "room", "screen", "lag", "o
 /** 单条上限：描述 500 字、联系方式 120 字、环境信息 2KB。 */
 const FEEDBACK_MAX_MESSAGE = 500;
 const FEEDBACK_MAX_CONTACT = 120;
-const FEEDBACK_MAX_CONTEXT = 2048;
+/**
+ * 上下文（自动附带的诊断信息）上限。
+ *
+ * 原来是 2048，且**超长就整包丢弃**——而连接诊断动辄几十 KB，
+ * 等于"附了也白附"。现在放宽到 64KB，超长时只截断 diag 字段，其余照存。
+ * D1 单行上限 1MB，64KB 很安全。
+ */
+const FEEDBACK_MAX_CONTEXT = 64 * 1024;
 /** 每个 IP 每小时最多提交条数。 */
 const FEEDBACK_HOURLY_LIMIT = 5;
 
@@ -346,8 +353,20 @@ async function handleFeedback(request, env) {
   const platform = clampText(body?.platform, 40);
   let contextJson = "";
   try {
-    const raw = JSON.stringify(body?.context ?? {});
-    contextJson = raw.length > FEEDBACK_MAX_CONTEXT ? "" : raw;
+    const ctx = body?.context && typeof body.context === "object" ? body.context : {};
+    let raw = JSON.stringify(ctx);
+    if (raw.length > FEEDBACK_MAX_CONTEXT) {
+      // 超长：先保其余字段，再把 diag 截到剩余额度；实在放不下才整体丢弃
+      const rest = { ...ctx };
+      delete rest.diag;
+      const budget = FEEDBACK_MAX_CONTEXT - JSON.stringify({ ...rest, diag: "" }).length;
+      if (typeof ctx.diag === "string" && budget > 200) {
+        rest.diag = ctx.diag.slice(0, budget);
+      }
+      raw = JSON.stringify(rest);
+      if (raw.length > FEEDBACK_MAX_CONTEXT) raw = "";
+    }
+    contextJson = raw;
   } catch {
     contextJson = "";
   }
@@ -460,7 +479,19 @@ function feedbackListHtml(url, rows) {
         try {
           const parsed = JSON.parse(r.context_json);
           context = Object.entries(parsed)
-            .map(([k, v]) => `<span class="kv">${escapeHtml(k)}: ${escapeHtml(String(v))}</span>`)
+            .map(([k, v]) => {
+              // 诊断包是几十 KB 的 JSON：折叠起来，别把列表撑爆
+              if (k === "diag") {
+                let pretty = String(v);
+                try {
+                  pretty = JSON.stringify(JSON.parse(pretty), null, 2);
+                } catch {
+                  /* 截断过的 JSON 解析不了，原样展示 */
+                }
+                return `<details class="diag"><summary>连接诊断（点开看）</summary><pre>${escapeHtml(pretty)}</pre></details>`;
+              }
+              return `<span class="kv">${escapeHtml(k)}: ${escapeHtml(String(v))}</span>`;
+            })
             .join("");
         } catch {
           context = "";
@@ -513,6 +544,13 @@ function adminPage(title, contentHtml, status) {
   .msg { margin: 0 0 8px; white-space: pre-wrap; word-break: break-word; }
   .contact { margin: 0 0 8px; color: #6b6257; font-size: 13px; }
   .ctx { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+  .ctx details.diag { flex-basis: 100%; }
+  .ctx details.diag summary { cursor: pointer; font-weight: 600; opacity: .85; }
+  .ctx details.diag pre {
+    margin: 8px 0 0; padding: 10px; max-height: 340px; overflow: auto;
+    background: rgba(0,0,0,.04); border-radius: 8px;
+    font-size: 11.5px; line-height: 1.5; white-space: pre-wrap; word-break: break-all;
+  }
   .kv { background: #f6f4ef; border-radius: 6px; padding: 2px 8px; font-size: 12px; color: #6b6257; }
   form { margin: 0; }
   button { border: 1px solid #d6cfc2; background: #fff; border-radius: 8px; padding: 5px 12px;

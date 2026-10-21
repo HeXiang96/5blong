@@ -24,11 +24,14 @@ import {
 export function FeedbackDialog({
   open,
   errorText,
+  onCollectDiagnostics,
   onClose,
 }: {
   open: boolean;
   /** 从错误提示条进入时带上的原文（自动填进环境信息） */
   errorText?: string;
+  /** 采集当前连接诊断（延迟/丢包/重连记录）；没有房间时返回 null */
+  onCollectDiagnostics?: () => Promise<Record<string, unknown> | null>;
   onClose: () => void;
 }) {
   const [category, setCategory] = useState<FeedbackCategory>("other");
@@ -37,6 +40,8 @@ export function FeedbackDialog({
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
   const [contextOpen, setContextOpen] = useState(false);
+  /** 是否附带连接诊断（默认带：排查"断线/没声音"这类问题，没有它基本没法定位） */
+  const [attachDiag, setAttachDiag] = useState(true);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
 
@@ -76,7 +81,18 @@ export function FeedbackDialog({
     if (!canSubmit) return;
     setSubmitting(true);
     setResult(null);
-    const payload = buildFeedbackPayload({ category, message, contact }, context);
+    const nextContext = { ...context };
+    if (attachDiag && onCollectDiagnostics) {
+      const diag = await onCollectDiagnostics();
+      if (diag) {
+        /*
+         * 服务端上限 64KB（原来 2KB 且超长会整包丢弃）。
+         * 这里先截到 48K 字符：诊断包里最长的是事件列表，砍尾巴不影响定责。
+         */
+        nextContext.diag = JSON.stringify(diag).slice(0, 48_000);
+      }
+    }
+    const payload = buildFeedbackPayload({ category, message, contact }, nextContext);
     const outcome = await submitFeedback(payload);
     setSubmitting(false);
     if (outcome.ok) {
@@ -149,6 +165,15 @@ export function FeedbackDialog({
               placeholder="QQ / 微信 / 邮箱，想跟进时方便找你"
               onChange={(event) => setContact(event.target.value)}
             />
+          </label>
+
+          <label className="vx-feedback-check">
+            <input
+              type="checkbox"
+              checked={attachDiag}
+              onChange={(event) => setAttachDiag(event.target.checked)}
+            />
+            <span>附上我的连接信息（延迟、丢包、最近的重连记录；不含聊天和录音）</span>
           </label>
 
           <div className="vx-feedback-context">

@@ -1377,6 +1377,28 @@ export function useVoice() {
     // 之前是投喂瞬间就涨——猪还没动体型先变大，观感很怪。
   }, []);
 
+  /** 取应用版本（桌面端问 Tauri，网页版给 "web"）。 */
+  const appVersion = useCallback(async (): Promise<string> => {
+    if (!isTauriRuntime()) return "web";
+    try {
+      const app = await import("@tauri-apps/api/app");
+      return await app.getVersion();
+    } catch {
+      return "desktop";
+    }
+  }, []);
+
+  /** 取当前诊断快照（不下载），供"反馈附带连接信息"使用。 */
+  const collectDiagnostics = useCallback(async (): Promise<Record<string, unknown> | null> => {
+    const engine = engineRef.current;
+    if (!engine) return null;
+    try {
+      return await engine.diagnostics(await appVersion());
+    } catch {
+      return null;
+    }
+  }, [appVersion]);
+
   /**
    * 导出诊断包：把当前引擎状态、每条腿的 stats、最近事件打包成 JSON 下载。
    * 不联网、不上传，用于出问题后回传排查。
@@ -1387,15 +1409,7 @@ export function useVoice() {
       setNotice({ kind: "error", text: "还没有房间数据可导出" });
       return false;
     }
-    let version = "web";
-    if (isTauriRuntime()) {
-      try {
-        const app = await import("@tauri-apps/api/app");
-        version = await app.getVersion();
-      } catch {
-        version = "desktop";
-      }
-    }
+    const version = await appVersion();
     try {
       const bundle = await engine.diagnostics(version);
       const fileName = downloadDiagnostics(bundle);
@@ -1526,6 +1540,7 @@ export function useVoice() {
     retryMemberLink,
     resumeLastRoom,
     exportDiagnostics,
+    collectDiagnostics,
     // 屏幕共享（围炉看 TV）
     screenShare,
     shareStream,
