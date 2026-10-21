@@ -569,6 +569,7 @@ npm run feedback:admin list 20   # 终端查看最近反馈（url / list / rm �
 <!-- AUTO-LOG:START -->
 ### 近期提交（自动生成）
 
+- `e367c29` release: v1.7.5（10-21 18:24）
 - `4d4bd03` ci: checkout/setup-node 升到 v7，消除 GitHub 的 Node 20 弃用警告（10-21 12:05）
 - `456ad21` release: v1.7.3（10-21 11:47）
 - `1ecd696` fix(game): 开黑圈语音补上音频唤醒、语音参数与链路自愈（10-21 11:42）
@@ -576,8 +577,6 @@ npm run feedback:admin list 20   # 终端查看最近反馈（url / list / rm �
 - `08b43f7` release: v1.7.2（10-21 11:32）
 - `c5eb394` feat(feedback): 反馈可附带连接诊断，后台折叠查看（10-21 11:30）
 - `20e16f3` polish(ui): 公告补上音频一条，导出提示带上文件名与位置（10-21 11:26）
-- `3346eeb` feat(ui): 大更新公告弹窗（首次打开弹一次）（10-21 11:16）
-- `fcc2ca4` feat(screen,voice): SFU 阈值收紧 + 30fps 档 + 回退压低 + 按应用采集（10-21 11:00）
 <!-- AUTO-LOG:END -->
 
 ## 怎么用
