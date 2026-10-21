@@ -8,6 +8,7 @@ import {
   type MediaLinkState,
   type Member,
 } from "./engine";
+import { downloadDiagnostics } from "./diagnostics";
 import { loadIdentity, resolveDisplayNames, saveIdentity, type Identity } from "./identity";
 import { debugPoseFrom, eventTtl, pruneEvents, type PenEvent } from "./pen";
 import { clearPenPoses, setLatestPenPoses } from "./pen-follow";
@@ -936,7 +937,12 @@ export function useVoice() {
     setView("room");
     const engine = startEngine();
     await engine.host(identityRef.current, settings, true);
+    const mine = engine.invite;
+    // 记下"我的房间"：房主关掉客户端后，首页可以用同一房号+钥匙重建，
+    // 访客不用重新加（房号推导出的房主 peer id 断开后会被释放）。
+    if (mine) saveLastRoom(mine.code, "host", mine.roomKey);
   }, [resetRoom, settings, startEngine]);
+
 
   const joinRoom = useCallback(
     async (target: JoinTarget, muted: boolean) => {
@@ -956,6 +962,34 @@ export function useVoice() {
     },
     [resetRoom, settings, startEngine],
   );
+
+  /**
+   * 恢复上次的房间：
+   * - 自己是房主 → 用原房号与原钥匙重新建房（老邀请链接继续有效）；
+   * - 自己是访客 → 重新按房号加入。
+   */
+  const resumeLastRoom = useCallback(async () => {
+    const last = loadLastRoom();
+    if (!last) return;
+    if (last.role === "host") {
+      resetRoom();
+      setTopicState("");
+      setNotice(null);
+      setJoinError(null);
+      setInvite(null);
+      setView("room");
+      const engine = startEngine();
+      await engine.host(identityRef.current, settings, true, {
+        code: last.code,
+        roomKey: last.roomKey,
+      });
+      const mine = engine.invite;
+      if (mine) saveLastRoom(mine.code, "host", mine.roomKey);
+      return;
+    }
+    const target = parseJoinInput(last.code);
+    if (target) void joinRoom(target, true);
+  }, [joinRoom, resetRoom, settings, startEngine]);
 
   /** 进房成功即切到房间视图（由引擎事件驱动，不依赖 join() 何时返回）。 */
   useEffect(() => {
@@ -1324,6 +1358,36 @@ export function useVoice() {
     // 之前是投喂瞬间就涨——猪还没动体型先变大，观感很怪。
   }, []);
 
+  /**
+   * 导出诊断包：把当前引擎状态、每条腿的 stats、最近事件打包成 JSON 下载。
+   * 不联网、不上传，用于出问题后回传排查。
+   */
+  const exportDiagnostics = useCallback(async (): Promise<boolean> => {
+    const engine = engineRef.current;
+    if (!engine) {
+      setNotice({ kind: "error", text: "还没有房间数据可导出" });
+      return false;
+    }
+    let version = "web";
+    if (isTauriRuntime()) {
+      try {
+        const app = await import("@tauri-apps/api/app");
+        version = await app.getVersion();
+      } catch {
+        version = "desktop";
+      }
+    }
+    try {
+      const bundle = await engine.diagnostics(version);
+      downloadDiagnostics(bundle);
+      setNotice({ kind: "info", text: "诊断信息已导出（只含运行状态与统计，不含 IP 与身份标识）" });
+      return true;
+    } catch (error) {
+      setNotice({ kind: "error", text: `导出失败：${error instanceof Error ? error.message : "未知原因"}` });
+      return false;
+    }
+  }, []);
+
   /** 手动重连某个成员的语音链路（自动自愈到顶仍不通时的兜底）。 */
   const retryMemberLink = useCallback((peerId: string) => {
     engineRef.current?.retryVoiceLink(peerId);
@@ -1437,6 +1501,8 @@ export function useVoice() {
     toggleRoomLock,
     interact,
     retryMemberLink,
+    resumeLastRoom,
+    exportDiagnostics,
     // 屏幕共享（围炉看 TV）
     screenShare,
     shareStream,

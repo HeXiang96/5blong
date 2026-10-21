@@ -49,6 +49,7 @@ export function LandingView({
   onCancelJoin,
   onDismissError,
   lastRoom = null,
+  onResumeLastRoom,
   onCreateGame,
   onJoinGame,
 }: {
@@ -68,6 +69,8 @@ export function LandingView({
   onDismissError?: () => void;
   /** 上次房间（本机记忆；null = 没有或不展示）。 */
   lastRoom?: LastRoom | null;
+  /** 恢复上次的房间（房主用原房号重新开房 / 访客按码重进） */
+  onResumeLastRoom?: () => void;
   /** 开黑圈：创建（需要创建码）/ 加入（输房间码）。 */
   onCreateGame: () => void;
   onJoinGame: () => void;
@@ -238,11 +241,19 @@ export function LandingView({
               onClick={() => {
                 setParseError(null);
                 onDismissError?.();
-                onJoin(lastRoom.code);
+                if (onResumeLastRoom) onResumeLastRoom();
+                else onJoin(lastRoom.code);
               }}
-              title="回到你上次的房间（房主在线才能进）"
+              title={
+                lastRoom.role === "host"
+                  ? "用原房号重新开房（访客的老邀请链接继续有效）"
+                  : "回到你上次的房间（房主在线才能进）"
+              }
             >
-              <History size={18} /> 上次房间 {lastRoom.code} · 一键重进
+              <History size={18} />{" "}
+              {lastRoom.role === "host"
+                ? `我的房间 ${lastRoom.code} · 重新开房`
+                : `上次房间 ${lastRoom.code} · 一键重进`}
             </button>
           ) : null}
           <button

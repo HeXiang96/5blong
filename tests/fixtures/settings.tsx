@@ -40,6 +40,7 @@ createRoot(document.getElementById("root")!).render(
       onClose={() => {}}
       onOpenFeedback={() => {}}
       onOpenOnboarding={() => {}}
+      onExportDiagnostics={() => {}}
       onNotice={() => {}}
     />
   </StrictMode>,

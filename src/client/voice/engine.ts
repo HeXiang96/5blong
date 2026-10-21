@@ -43,6 +43,7 @@ import {
   type ScreenViewPreference,
   type WireMember,
 } from "./protocol";
+import { applyAudioProfile, opusSdpTransform } from "./audio-profile";
 import { sessionScopedId, type Identity } from "./identity";
 import {
   RESOLUTION_LADDER_LABEL,
@@ -404,6 +405,8 @@ export class VoiceMesh {
   private readonly lastMediaAt = new Map<string, number>();
   /** 兜底补拨的节流时间戳（每成员 5 秒最多一次）。 */
   private readonly lastDialAt = new Map<string, number>();
+  /** 本地诊断事件环形缓冲（最多 300 条，导出诊断包时带上）。 */
+  private readonly diagLog: { at: string; kind: string; detail: string }[] = [];
   private dialWatchTimer = 0;
   private mediaFlowTimer = 0;
   /** 所有定时器的登记表（按 interval / timeout 分开，各自用对应的 clear）。 */
@@ -565,8 +568,19 @@ export class VoiceMesh {
     return { code: this.code, hostId: this.hostId, roomKey: this.roomKey };
   }
 
-  /** 房主建房。房间码冲突时自动换码重试。 */
-  async host(identity: Identity, settings: VoiceSettings, muted: boolean): Promise<void> {
+  /**
+   * 房主建房。房间码冲突时自动换码重试。
+   *
+   * `prefer` 用于"恢复上次的房间"：第一次尝试用指定房号（房主 peer id 由房号推导，
+   * 断开后是空的，能重新占回来），钥匙沿用旧的，老邀请链接才不会失效。
+   * 指定房号被别人占了就退回随机房号——不会卡死。
+   */
+  async host(
+    identity: Identity,
+    settings: VoiceSettings,
+    muted: boolean,
+    prefer?: { code?: string; roomKey?: string },
+  ): Promise<void> {
     if (this.destroyed) return;
     this.hosting = true;
     /*
@@ -590,7 +604,8 @@ export class VoiceMesh {
     let attempt = 0;
     while (!this.destroyed && attempt < 3) {
       attempt += 1;
-      const code = makeRoomCode(randomIndex);
+      const want = attempt === 1 ? prefer?.code : undefined;
+      const code = want && isRoomCode(want) ? normalizeCode(want) : makeRoomCode(randomIndex);
       // 房主注册在由房间码推导的固定 ID 上：访客只输房间码也能定位到房主，
       // 不需要任何注册后端。ID 被占用（撞码/有人蹲守）时 openPeer 返回
       // "retry"，下面的循环换新码重来。
@@ -601,7 +616,8 @@ export class VoiceMesh {
       if (outcome === "open") {
         this.code = code;
         this.hostId = id;
-        this.roomKey = randomToken(24);
+        // 恢复房间时沿用旧钥匙，否则旧邀请链接会失效
+        this.roomKey = (attempt === 1 && prefer?.roomKey) || randomToken(24);
         this.myId = id;
         this.me = {
           id,
@@ -911,6 +927,13 @@ export class VoiceMesh {
 
   /** 记一条房间事件（进会话档案的异常流水）。 */
   private pushRoomEvent(kind: string, detail: string): void {
+    /*
+     * 本地诊断环形缓冲：与房间遥测解耦——遥测只上报汇总，
+     * 而排障需要"最近发生了什么"的原始序列（导出诊断包时用）。
+     */
+    this.diagLog.push({ at: new Date().toISOString(), kind, detail: detail.slice(0, 180) });
+    if (this.diagLog.length > 300) this.diagLog.splice(0, this.diagLog.length - 300);
+
     const t = this.roomTelemetry;
     if (!t) return;
     t.events.push({ at: new Date().toISOString(), kind, detail: detail.slice(0, 180) });
@@ -2554,6 +2577,98 @@ export class VoiceMesh {
    * 只对"曾经收到过音频"的腿生效——纯收听者（没麦克风）本来就只有 0 字节，
    * 否则会把它当成故障反复重拨。
    */
+  /**
+   * 一键诊断快照：把"现在到底什么状态"变成可回传的证据。
+   *
+   * 刻意不含：peerId / personId / IP / 候选地址 / 房间明文码以外的身份信息。
+   * 成员用序号表示，昵称保留（排障需要对上号）。
+   */
+  async diagnostics(appVersion = "web"): Promise<Record<string, unknown>> {
+    const peers: Record<string, unknown>[] = [];
+    for (const [peerId, call] of this.calls) {
+      const pc = (call as { peerConnection?: RTCPeerConnection }).peerConnection;
+      const member = this.members.get(peerId);
+      const entry: Record<string, unknown> = {
+        index: peers.length,
+        name: member?.name ?? "?",
+        hasMic: member?.hasMic !== false,
+        link: this.roomLinkState.get(peerId) ?? "unknown",
+        healAttempts: this.voiceHeals.get(peerId)?.attempts ?? 0,
+        lastMediaAgoMs: this.lastMediaAt.has(peerId) ? Date.now() - (this.lastMediaAt.get(peerId) ?? 0) : null,
+      };
+      if (pc) {
+        entry["iceConnectionState"] = pc.iceConnectionState;
+        entry["connectionState"] = pc.connectionState;
+        try {
+          const report = await pc.getStats();
+          let inbound: Record<string, unknown> | null = null;
+          let relay = false;
+          let localType = "";
+          let pairRtt: number | null = null;
+          report.forEach((r) => {
+            if (r.type === "inbound-rtp") {
+              const i = r as RTCInboundRtpStreamStats & { kind?: string };
+              if ((i.kind ?? "") === "audio") {
+                inbound = {
+                  packetsReceived: i.packetsReceived ?? 0,
+                  packetsLost: i.packetsLost ?? 0,
+                  jitter: i.jitter ?? 0,
+                  bytesReceived: i.bytesReceived ?? 0,
+                };
+              }
+            }
+            if (r.type === "candidate-pair") {
+              const p = r as RTCIceCandidatePairStats;
+              if (p.state === "succeeded" || p.nominated) {
+                pairRtt = p.currentRoundTripTime ?? null;
+                const local = report.get(p.localCandidateId ?? "") as { candidateType?: string } | undefined;
+                localType = local?.candidateType ?? "";
+                relay = localType === "relay";
+              }
+            }
+          });
+          entry["inbound"] = inbound;
+          entry["localCandidateType"] = localType;
+          entry["relay"] = relay;
+          entry["rttMs"] = pairRtt === null ? null : Math.round(pairRtt * 1000);
+        } catch (error) {
+          entry["statsError"] = String(error).slice(0, 120);
+        }
+      }
+      peers.push(entry);
+    }
+
+    const track = this.localStream?.getAudioTracks()[0];
+    return {
+      at: new Date().toISOString(),
+      app: { version: appVersion },
+      env: {
+        ua: navigator.userAgent,
+        desktop: typeof window !== "undefined" && "__TAURI_INTERNALS__" in window,
+        hidden: document.hidden,
+        online: navigator.onLine,
+      },
+      room: {
+        hosting: this.hosting,
+        memberCount: this.members.size,
+        code: this.code,
+        joined: this.joined,
+      },
+      audio: {
+        ctxState: this.ctx?.state ?? "none",
+        ctxSampleRate: this.ctx?.sampleRate ?? null,
+        micReadyState: track?.readyState ?? "none",
+        micEnabled: track?.enabled ?? null,
+        micMuted: track?.muted ?? null,
+        micVolume: this.micGainNode ? Number(this.micGainNode.gain.value.toFixed(2)) : null,
+        noiseSuppression: this.nsEnabled,
+        outgoingStream: Boolean(this.outgoingStream),
+      },
+      peers,
+      events: this.diagLog.slice(-200),
+    };
+  }
+
   private async checkMediaFlow(): Promise<void> {
     if (this.destroyed || !this.me) return;
     /*
@@ -2803,11 +2918,14 @@ export class VoiceMesh {
     const call = this.peer.call(peerId, this.screenStream, {
       metadata: { kind: "screen-share", sessionId: this.screenShareState?.sessionId ?? "" },
       sdpTransform: (sdp: string) =>
-        boostScreenOfferSdp(sdp, { codec: useAv1 ? "av1" : "h264", startBitrateKbps: startKbps }),
+        opusSdpTransform("music")(
+          boostScreenOfferSdp(sdp, { codec: useAv1 ? "av1" : "h264", startBitrateKbps: startKbps }),
+        ),
     });
     if (!call) return;
     this.screenCalls.set(peerId, call);
     const pc = this.screenPeerConnection(call);
+    if (pc) void applyAudioProfile(pc, "music");
     if (!pc) {
       call.on("close", () => {
         if (this.screenCalls.get(peerId) === call) this.screenCalls.delete(peerId);
@@ -2937,7 +3055,7 @@ export class VoiceMesh {
       }
       return;
     }
-    call.answer();
+    call.answer(undefined, { sdpTransform: opusSdpTransform("music") });
     call.on("stream", (stream) => {
       if (this.screenShareState?.sessionId !== sessionId) {
         try {
@@ -2984,7 +3102,10 @@ export class VoiceMesh {
     // 没有麦克风就不发起：对方仍然会 call 我（纯收听者因此能听到所有人）。
     const stream = this.outgoingStream ?? this.localStream;
     if (!this.peer || !stream || this.calls.has(peerId)) return;
-    const call = this.peer.call(peerId, stream);
+    const call = this.peer.call(peerId, stream, {
+      // 语音参数显式化：关 DTX（静音段停发会让恢复时的起音发虚），码率 40k
+      sdpTransform: opusSdpTransform("voice"),
+    });
     if (!call) return;
     this.track(call, peerId);
   }
@@ -3028,8 +3149,8 @@ export class VoiceMesh {
     // 应答必须用处理后的发送流（降噪 + 音量增益），否则房主/被呼方发出的
     // 声音绕过整条发送链，降噪和麦克风增强对这一路完全不生效。
     const outgoing = this.outgoingStream ?? this.localStream;
-    if (outgoing) call.answer(outgoing);
-    else call.answer();
+    if (outgoing) call.answer(outgoing, { sdpTransform: opusSdpTransform("voice") });
+    else call.answer(undefined, { sdpTransform: opusSdpTransform("voice") });
     this.track(call, call.peer);
   }
 
@@ -3077,13 +3198,36 @@ export class VoiceMesh {
       // 画面的清晰度/帧率，绝不让语音断续。画面侧的 priority:low 在
       // applyScreenSenderParams 里设，两边口径一致。
       this.boostVoicePriority(pc);
+      // 码率上限 + contentHint 落到实际发送端（SDP 里的值只是期望）
+      void applyAudioProfile(pc, "voice");
+      /*
+       * 媒体证据要轮询：ICE 变 connected 时通常一个包还没来，
+       * 而之后再没有事件会触发检查——只看一次会把好好的连接判成失败
+       * （实测：两端都卡在"连接中"，5 秒后被自愈重拨打乱）。
+       */
+      let mediaProbes = 0;
+      let classifying = false;
       const classify = async () => {
+        if (classifying || this.destroyed) return;
+        classifying = true;
+        try {
+          await classifyOnce();
+        } finally {
+          classifying = false;
+        }
+      };
+      const classifyOnce = async () => {
         const ice = pc.iceConnectionState;
         if (ice === "connected" || ice === "completed") {
           let relay = false;
+          let packets = 0;
           try {
             const stats = await pc.getStats();
             stats.forEach((report) => {
+              if (report.type === "inbound-rtp") {
+                const r = report as RTCInboundRtpStreamStats & { kind?: string };
+                if ((r.kind ?? "") === "audio") packets += r.packetsReceived ?? 0;
+              }
               if (report.type === "candidate-pair") {
                 const pair = report as RTCIceCandidatePairStats;
                 if (pair.state === "succeeded" || pair.nominated) {
@@ -3097,6 +3241,25 @@ export class VoiceMesh {
           } catch {
             /* noop */
           }
+          /*
+           * 只有 ICE 通不算通：SDP/候选打通了但一个 RTP 包都没收到的情况真实存在
+           * （这周就遇到"界面显示中继、其实没声音"）。以"确实收到音频包"为准。
+           *
+           * 例外：对方没有麦克风（纯收听者）本来就不发音频，不能因此判失败。
+           */
+          const peerHasMic = this.members.get(peerId)?.hasMic !== false;
+          if (peerHasMic && packets === 0) {
+            this.events.mediaState(peerId, "connecting");
+            if (mediaProbes < 20) {
+              // 每 700ms 再探一次，最多约 14 秒
+              mediaProbes += 1;
+              this.timers.after(700, () => void classify());
+            } else {
+              this.scheduleVoiceHeal(peerId, call, VOICE_HEAL_GRACE_MS);
+            }
+            return;
+          }
+          mediaProbes = 0;
           const link = relay ? "relay" : "direct";
           const prev = this.roomLinkState.get(peerId);
           if (prev === "failed" && this.roomTelemetry) {

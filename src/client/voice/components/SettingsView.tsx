@@ -35,6 +35,7 @@ export function SettingsView({
   onNotice,
   onOpenFeedback,
   onOpenOnboarding,
+  onExportDiagnostics,
 }: {
   identity: Identity;
   settings: VoiceSettings;
@@ -45,6 +46,8 @@ export function SettingsView({
   onOpenFeedback: (errorText?: string) => void;
   /** 回看首次打开的功能导览 */
   onOpenOnboarding: () => void;
+  /** 导出诊断包（引擎状态 + 每条链路 stats + 最近事件），用于排查问题 */
+  onExportDiagnostics: () => void;
 }) {
   const [tab, setTab] = useState<Tab>("profile");
   const [draft, setDraft] = useState<Identity>(identity);
@@ -555,6 +558,17 @@ export function SettingsView({
             </section>
 
             <section className="vx-card">
+              <div className="vx-field">
+                <span className="vx-field-label">遇到问题？导出一份诊断信息</span>
+                <button type="button" className="vx-menu-btn" onClick={onExportDiagnostics}>
+                  <Sparkles size={14} /> 导出诊断信息
+                </button>
+                <small>
+                  包含当前连接状态、每条语音链路的直连/中继与丢包延迟、最近的自动重连记录。
+                  不含 IP、账号与聊天内容，只保存在你本机，可自行发给我们排查。
+                </small>
+              </div>
+
               <h3 className="vx-card-title">几个常见问题</h3>
               <ul className="vx-shortcuts vx-shortcuts-plain">
                 <li>

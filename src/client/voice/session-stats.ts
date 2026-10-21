@@ -98,19 +98,27 @@ const LAST_ROOM_KEY = "5blong:v1:lastRoom";
 export interface LastRoom {
   code: string;
   savedAt: number;
-  /** 记录来源：只有 guest（加入别人的房）才展示"一键重进"——
-   *  房主自己关掉的房间不存在了，"重进"没有意义（2026-10-16 业主反馈）。 */
-  role?: "guest";
+  /**
+   * 记录来源：
+   * - guest：加入别人的房，重进=再 join 一次；
+   * - host：自己开的房，重进=用同一房号与钥匙重新建房
+   *   （房号推导出的房主 peer id 在断开后是空的，可以重新占回来）。
+   */
+  role: "guest" | "host";
+  /** 房主恢复时复用同一把钥匙，旧邀请链接才不会失效。 */
+  roomKey?: string;
 }
 
-export function saveLastRoom(code: string, role: "guest"): void {
+/** 超过这个时间的记录不再展示：房间早就凉了，留着只会让人白点一次。 */
+const LAST_ROOM_MAX_AGE_MS = 12 * 60 * 60 * 1000;
+
+export function saveLastRoom(code: string, role: "guest" | "host", roomKey?: string): void {
   const normalized = code.trim();
   if (!/^[0-9]{4}$/.test(normalized)) return;
   try {
-    localStorage.setItem(
-      LAST_ROOM_KEY,
-      JSON.stringify({ code: normalized, savedAt: Date.now(), role } satisfies LastRoom),
-    );
+    const record: LastRoom = { code: normalized, savedAt: Date.now(), role };
+    if (role === "host" && roomKey) record.roomKey = roomKey;
+    localStorage.setItem(LAST_ROOM_KEY, JSON.stringify(record));
   } catch {
     /* 隐私模式等存不进去就算了 */
   }
@@ -121,10 +129,14 @@ export function loadLastRoom(): LastRoom | null {
     const raw = localStorage.getItem(LAST_ROOM_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<LastRoom>;
-    // 旧记录没带 role（可能是自己开过的房），一律不展示。
-    if (parsed?.role !== "guest") return null;
+    if (parsed?.role !== "guest" && parsed?.role !== "host") return null;
+    const savedAt = typeof parsed.savedAt === "number" ? parsed.savedAt : 0;
+    // 太旧的记录没有意义（房间里早没人了）
+    if (!savedAt || Date.now() - savedAt > LAST_ROOM_MAX_AGE_MS) return null;
     if (typeof parsed.code === "string" && /^[0-9]{4}$/.test(parsed.code)) {
-      return { code: parsed.code, savedAt: typeof parsed.savedAt === "number" ? parsed.savedAt : 0, role: "guest" };
+      const record: LastRoom = { code: parsed.code, savedAt, role: parsed.role };
+      if (parsed.role === "host" && typeof parsed.roomKey === "string") record.roomKey = parsed.roomKey;
+      return record;
     }
   } catch {
     /* 坏数据当没有 */

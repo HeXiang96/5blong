@@ -160,6 +160,7 @@ export function App() {
           onNotice={(kind, text) => voice.setNotice({ kind, text })}
           onOpenFeedback={openFeedback}
           onOpenOnboarding={() => setOnboardingOpen(true)}
+          onExportDiagnostics={() => void voice.exportDiagnostics()}
         />
         <FeedbackDialog open={feedback.open} errorText={feedback.errorText} onClose={closeFeedback} />
         <OnboardingDialog open={onboardingOpen} onClose={closeOnboarding} />
@@ -273,6 +274,7 @@ export function App() {
             onNotice={(kind, text) => voice.setNotice({ kind, text })}
             onOpenFeedback={openFeedback}
             onOpenOnboarding={() => setOnboardingOpen(true)}
+          onExportDiagnostics={() => void voice.exportDiagnostics()}
           />
         </div>
       ) : null}
@@ -315,6 +317,7 @@ export function App() {
             onCancelJoin={voice.cancelJoin}
             onDismissError={() => voice.setJoinError(null)}
             lastRoom={voice.lastRoom}
+            onResumeLastRoom={() => void voice.resumeLastRoom()}
             onCreateGame={() => openGame("create")}
             onJoinGame={() => openGame("join")}
           />

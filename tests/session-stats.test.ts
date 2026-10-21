@@ -96,7 +96,25 @@ describe("上次房间记忆", () => {
     expect(loadLastRoom()?.code).toBe("8294");
   });
 
-  it("只展示访客身份的记录（房主自己的房不显示一键重进）", () => {
+  it("房主记录带上钥匙，能用于恢复同一房间", () => {
+    localStorage.removeItem("5blong:v1:lastRoom");
+    saveLastRoom("7003", "host", "key-abc");
+    const last = loadLastRoom();
+    expect(last?.role).toBe("host");
+    expect(last?.roomKey).toBe("key-abc");
+  });
+
+  it("超过 12 小时的记录不再展示", () => {
+    localStorage.removeItem("5blong:v1:lastRoom");
+    const old = Date.now() - 13 * 60 * 60 * 1000;
+    localStorage.setItem(
+      "5blong:v1:lastRoom",
+      JSON.stringify({ code: "7004", savedAt: old, role: "guest" }),
+    );
+    expect(loadLastRoom()).toBeNull();
+  });
+
+  it("房主身份也会被记录（用于重新开房）", () => {
     localStorage.removeItem("5blong:v1:lastRoom");
     // 模拟旧版记录：没带 role（可能是房主自己开的房）
     localStorage.setItem("5blong:v1:lastRoom", JSON.stringify({ code: "7001", savedAt: 1 }));
