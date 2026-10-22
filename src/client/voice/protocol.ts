@@ -842,7 +842,15 @@ function num(value: unknown): number | null {
 function parseRoster(value: unknown): WireMember[] {
   if (!Array.isArray(value)) return [];
   const members: WireMember[] = [];
-  for (const raw of value.slice(0, MAX_MEMBERS)) {
+  /*
+   * 注意：这里是**名册解析**，不是准入。房主自己也算一名成员，所以名册最多
+   * MAX_MEMBERS + 1 条（房主 + 访客）。原来按 MAX_MEMBERS 截断，房满时
+   * （房主 + 8 位访客 = 9 人）最后一个人会从所有人的名单里消失，各端随即
+   * 把他从 members 删掉并 dropMedia —— 他和大约一半人互相听不到，
+   * 而且只要再广播一次名册就会复现（2026-10-22 排查到的"有的人互相听不到"）。
+   * 仍然有上界，避免被超长数组打爆。
+   */
+  for (const raw of value.slice(0, MAX_MEMBERS + 1)) {
     const member = parseMember(raw);
     if (member) members.push(member);
   }

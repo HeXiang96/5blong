@@ -1160,6 +1160,25 @@ export class VoiceMesh {
       el.remove();
     }
     this.audio.clear();
+    /*
+     * 泵元素必须一起收：它们 muted 但又持有远端 MediaStream（连解码器），
+     * 只清 audio 不清 pumpEls 会让每次进出房间都在 body 上留下几个 `<audio>`，
+     * 长会话反复进退房时内存和音频句柄持续上涨。
+     */
+    for (const pump of this.pumpEls.values()) {
+      try {
+        pump.pause();
+        pump.srcObject = null;
+        pump.remove();
+      } catch {
+        /* noop */
+      }
+    }
+    this.pumpEls.clear();
+    this.voiceHeals.clear();
+    this.lastMediaAt.clear();
+    this.lastDialAt.clear();
+    this.roomLinkState.clear();
 
     void this.ctx?.close().catch(() => {});
     this.ctx = null;
@@ -1489,7 +1508,12 @@ export class VoiceMesh {
       codeMatches: this.code.length === ROOM_CODE_LEN,
       proofValid: expected === message.proof || codeOnly,
       existing: this.guests.has(peerId),
-      memberCount: this.guests.size,
+      /*
+       * 必须把房主自己算进去：MAX_MEMBERS 是**全房人数**（含房主），
+       * 原来只数访客，于是房主 + 8 访客 = 9 人也能进来，再叠加名册解析的上界，
+       * 第 9 个人就会从名单里消失、媒体被关（"有的人互相听不到"）。
+       */
+      memberCount: this.guests.size + 1,
     });
 
     if (this.destroyed) return;
@@ -1510,6 +1534,13 @@ export class VoiceMesh {
     const previous = this.guests.get(peerId);
     if (previous && previous.conn !== conn) {
       try {
+        /*
+         * 先摘监听再关：PeerJS 的 DataConnection.close() 是**同步** emit close 的，
+         * 而 onHostConnection 的 close 处理会按 dataConns 反查——那时旧连接还挂着，
+         * 于是把"正在重连的这个人"当成"离开"：广播 peer-leave、响离开音，
+         * 并且 dropMedia 把刚重建的语音腿拆掉（全场看他"退圈又进圈"）。
+         */
+        previous.conn.removeAllListeners();
         previous.conn.close();
       } catch {
         /* noop */
@@ -1598,6 +1629,14 @@ export class VoiceMesh {
     this.guests.delete(peerId);
     this.members.delete(peerId);
     this.dropMedia(peerId);
+    /*
+     * 链路状态一并清掉：同一个 peerId（同一身份重连）回来时不能继承
+     * 旧的 attempts=3 —— 否则这一场里他再出问题就不会自动自愈了。
+     */
+    this.clearVoiceHeal(peerId);
+    this.lastMediaAt.delete(peerId);
+    this.lastDialAt.delete(peerId);
+    this.roomLinkState.delete(peerId);
 
     // 共享者掉线：电视收起来（房间与语音完全不受影响）。
     if (this.screenShareState?.sharerId === peerId) {
@@ -2150,7 +2189,15 @@ export class VoiceMesh {
     }
 
     this.dropPeer();
-    const outcome = await this.openPeer(guestPeerId(randomToken(12)));
+    /*
+     * 重拨前再拉一次 ICE 凭据：上一次 /ice 可能因 2.5 秒超时退回了纯 STUN，
+     * ice.ts 的注释承诺"下一次重拨就用上中继"——那就必须真的在这里补拉，
+     * 否则跨网（对称 NAT）用户一次抖动就整场打不洞。
+     */
+    await ensureIceServers();
+    if (this.destroyed) return;
+    // 走带退避的重试路径：信令抖一下不该直接把这次重拨判死
+    const outcome = await this.openPeerWithRetry(() => guestPeerId(randomToken(12)));
     if (this.destroyed) return;
     if (outcome !== "open") {
       this.events.status("error", outcome);
@@ -2402,6 +2449,10 @@ export class VoiceMesh {
           if (id === this.myId || seen.has(id)) continue;
           this.members.delete(id);
           this.dropMedia(id);
+          // 同上：成员走了，他的链路/自愈/节流状态不能留着
+          this.clearVoiceHeal(id);
+          this.lastDialAt.delete(id);
+          this.roomLinkState.delete(id);
         }
         this.emitMembers();
         this.callPeers();
@@ -2587,6 +2638,8 @@ export class VoiceMesh {
   private ensureCalls(): void {
     if (this.destroyed || !this.me || !this.outgoingStream) return;
     const now = Date.now();
+    /** 每个 tick 最多补拨一条：与 MEDIA_STAGGER_MS 的错峰意图保持一致。 */
+    let dialed = 0;
     for (const member of this.members.values()) {
       if (member.local) continue;
       const call = this.calls.get(member.id);
@@ -2604,10 +2657,19 @@ export class VoiceMesh {
         }
         continue;
       }
+      if (dialed >= 1) continue;
+      /*
+       * 自愈次数到顶就停手：这条腿已经连续失败 3 次，后台再偷偷拨只会
+       * 把界面上的"已断开，可点重新连接"变成"偶尔响一下又断"。
+       * 恢复由用户手动 retryVoiceLink 触发（它会清零计数）。
+       */
+      const heal = this.voiceHeals.get(member.id);
+      if (heal && heal.attempts >= VOICE_HEAL_MAX) continue;
       const lastTry = this.lastDialAt.get(member.id) ?? 0;
       if (now - lastTry < 5000) continue; // 别把信令打爆
       this.lastDialAt.set(member.id, now);
       this.callPeer(member.id);
+      dialed += 1;
     }
   }
 
@@ -2676,6 +2738,25 @@ export class VoiceMesh {
         }
       }
       peers.push(entry);
+    }
+    /*
+     * 补上"压根没有连接"的成员。
+     *
+     * 这一点很关键：排"我听不到他"的时候，那条故障腿往往已经被 dropMedia
+     * 从 calls 里删掉了——只遍历 calls 会恰好漏掉要排查的那个人，
+     * 诊断包里 memberCount 比 peers 多，却看不出缺的是谁、为什么缺。
+     */
+    for (const [peerId, member] of this.members) {
+      if (member.local || this.calls.has(peerId)) continue;
+      peers.push({
+        index: peers.length,
+        name: member.name,
+        hasMic: member.hasMic !== false,
+        link: this.roomLinkState.get(peerId) ?? "no-call",
+        healAttempts: this.voiceHeals.get(peerId)?.attempts ?? 0,
+        lastMediaAgoMs: this.lastMediaAt.has(peerId) ? Date.now() - (this.lastMediaAt.get(peerId) ?? 0) : null,
+        note: "no-call（媒体连接已断开/尚未建立）",
+      });
     }
 
     const track = this.localStream?.getAudioTracks()[0];
@@ -3246,7 +3327,19 @@ export class VoiceMesh {
        * 把新呼叫关掉，自愈就永远不成立（实测就是这个问题）。
        */
       const stale = existing ? this.isCallDead(existing) : true;
-      if (existing && existing !== call && !stale) {
+      /*
+       * 呼叫冲突（glare）：两边同时拨，各自都收到对方的来电。
+       *
+       * 原来一律"留自己的、拒对方的"，而 PeerJS 关闭一条**未应答**的呼叫
+       * 不会给对方任何信令——于是两边各留一条永远建不起来的 call，占着
+       * calls 让兜底补拨也跳过（calls.has 直接 continue）。这对人就会僵在
+       * "连接中"十几秒甚至整场没声音，而且两边界面一切正常。
+       *
+       * 现在按既有约定裁决：只有"该发起的那一侧"（myId < peerId）保留自己的
+       * 呼叫，另一侧主动让位——关掉自己那条，接下对方的来呼。
+       */
+      const keepMine = this.shouldCall(call.peer);
+      if (existing && existing !== call && !stale && keepMine) {
         try {
           call.close();
         } catch {
@@ -3336,6 +3429,12 @@ export class VoiceMesh {
         }
       };
       const classifyOnce = async () => {
+        /*
+         * 身份守卫：旧连接的 classify 链（含 700ms 重探，最多 20 次）可能在
+         * 新连接已经接管之后才回来。没有这道守卫，它会把新连接的自愈计数清零、
+         * 把链路状态写回旧值、还一直报"连接中"——自愈只成功一轮就再也不触发。
+         */
+        if (this.calls.get(peerId) !== call) return;
         const ice = pc.iceConnectionState;
         if (ice === "connected" || ice === "completed") {
           let relay = false;
@@ -3526,7 +3625,8 @@ export class VoiceMesh {
   private clearVoiceHeal(peerId: string): void {
     const state = this.voiceHeals.get(peerId);
     if (!state) return;
-    if (state.timer) window.clearTimeout(state.timer);
+    // 用登记表取消：直接 window.clearTimeout 会让 Timers 里的 id 永远摘不掉
+    if (state.timer) this.timers.cancel(state.timer);
     this.voiceHeals.delete(peerId);
   }
 
@@ -3663,6 +3763,12 @@ export class VoiceMesh {
     if (!element) return false;
     if (!element.srcObject) return false;
     if (element.paused) return false;
+    /*
+     * 泵也必须还在播：它停了，Chromium 就不拉动解码器，主元素虽然显示
+     * "正在播放"，实际吐的是零样本——包在到、元素在播、一点声音都没有。
+     */
+    const pump = this.pumpEls.get(peerId);
+    if (pump && pump.paused) return false;
     if (!this.ctx) return true;
     if (this.peerChains.has(peerId)) return true;
     // 没有增益链时只有一种合法形态：元素直接播原始远端流（建链失败时的兜底）
@@ -3687,6 +3793,13 @@ export class VoiceMesh {
     this.inboundZeroPolls.delete(peerId);
     this.playbackMisses.delete(peerId);
     this.remoteStreams.delete(peerId);
+    /*
+     * ⚠️ 必须清 lastMediaAt：它是"这条腿最近一次收到音频"的时间戳。
+     * 不清的话，重拨出来的新连接一出生就继承了旧连接的过期时间戳，
+     * ensureCalls 会在 3 秒内把它当成"僵死腿"关掉，然后拨一条、再关一条，
+     * 无限循环——表现就是"这个人一直连不上，偶尔响一下又断"。
+     */
+    this.lastMediaAt.delete(peerId);
     const element = this.audio.get(peerId);
     if (element) {
       element.pause();
@@ -3742,17 +3855,25 @@ export class VoiceMesh {
   unlockAudio(): boolean {
     const ctx = this.audioContext();
     if (ctx) void resumeAudio(ctx);
-    let allPlaying = true;
-    for (const element of this.audio.values()) {
-      void element.play().catch(() => {
-        allPlaying = false;
-      });
+    /*
+     * 泵元素必须一起重试。Chromium 的远端起播缺陷（见 pumpEls 注释）只有
+     * "原始流被某个 media element 拉动"才会解码；泵要是没播起来，主元素
+     * 照样能 play()（放的是静音），getStats 也一切正常，就是没声音。
+     */
+    for (const pump of this.pumpEls.values()) {
+      void pump.play().catch(() => undefined);
     }
-    return allPlaying;
+    for (const element of this.audio.values()) {
+      void element.play().catch(() => undefined);
+    }
+    return !this.hasBlockedAudio();
   }
 
   /** 当前有没有"没播起来"的远端音频（界面据此显示恢复提示）。 */
   hasBlockedAudio(): boolean {
+    for (const pump of this.pumpEls.values()) {
+      if (pump.paused) return true;
+    }
     for (const element of this.audio.values()) {
       if (element.paused) return true;
     }
@@ -3923,6 +4044,13 @@ export class VoiceMesh {
    * 对策：音量 >100% 时自动挂起 AGC，回到 ≤100% 再恢复。
    */
   private agcSuspendedForBoost = false;
+  /**
+   * 用户在设置里对 AGC 的**意图**（关掉 AGC 就是关掉）。
+   *
+   * 必须单独记：把麦克风增强从 >100% 拉回 100% 时，原来硬编码恢复
+   * `autoGainControl: true`，会把用户明确关掉的 AGC 又打开（音量忽大忽小）。
+   */
+  private captureAgcWanted = true;
 
   setMicVolume(value: number): void {
     const gain = this.micGainNode;
@@ -3934,7 +4062,10 @@ export class VoiceMesh {
     if (track && typeof track.applyConstraints === "function" && wantBoost !== this.agcSuspendedForBoost) {
       this.agcSuspendedForBoost = wantBoost;
       void track
-        .applyConstraints({ advanced: [{ autoGainControl: !wantBoost }] })
+        .applyConstraints({
+          // 恢复到"用户设置"，而不是硬编码 true
+          advanced: [{ autoGainControl: wantBoost ? false : this.captureAgcWanted }],
+        })
         .catch(() => {
           /* 个别设备不支持运行时改约束：保持现状，增益仍有部分效果 */
         });
@@ -4005,12 +4136,19 @@ export class VoiceMesh {
   async applyCaptureProcessing(
     processing: Pick<AudioProcessing, "echoCancellation" | "autoGainControl">,
   ): Promise<{ echoCancellation: boolean; autoGainControl: boolean }> {
+    this.captureAgcWanted = processing.autoGainControl;
+    /*
+     * 增强 >100% 时 AGC 必须保持挂起：否则同一次"保存设置"里
+     * setMicVolume 刚挂起、这里又用基础约束把它打开，两者互相抵消——
+     * 正是"调到 200% 声音没增强"的回归路径（设置页保存时最常踩）。
+     */
+    const agc = this.agcSuspendedForBoost ? false : processing.autoGainControl;
     const tracks = this.localStream?.getAudioTracks() ?? [];
     for (const track of tracks) {
       try {
         await track.applyConstraints({
           echoCancellation: processing.echoCancellation,
-          autoGainControl: processing.autoGainControl,
+          autoGainControl: agc,
         });
       } catch {
         /* 不支持就保持原样，下面回读会体现出来 */
@@ -4191,8 +4329,14 @@ export class VoiceMesh {
 
   /** 对某个成员本地静音/取消（只影响自己听不听得到）。 */
   togglePeerMuted(peerId: string): boolean {
-    if (this.peerMuted.has(peerId)) this.peerMuted.delete(peerId);
-    else this.peerMuted.add(peerId);
+    if (this.peerMuted.has(peerId)) {
+      this.peerMuted.delete(peerId);
+      /*
+       * 取消静音时如果他的音量正好是 0（被拖到最左），增益仍然是 0：
+       * 按钮变回"未静音"却还是没声音，用户只会反复点。这里补回 1。
+       */
+      if ((this.peerVolumes.get(peerId) ?? 1) <= 0) this.peerVolumes.set(peerId, 1);
+    } else this.peerMuted.add(peerId);
     this.applyPeerAudio(peerId);
     return this.peerMuted.has(peerId);
   }

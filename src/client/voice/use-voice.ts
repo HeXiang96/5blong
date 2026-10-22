@@ -717,6 +717,15 @@ export function useVoice() {
           sharePubRef.current?.stop();
           sharePubRef.current = null;
           for (const track of stream.getTracks()) track.stop();
+          /*
+           * 必须把"压低房间语音"和内置回环采集一起收回来。
+           * 上面整机回环回退时已经把本地播放压到 15%，而恢复只挂在"正常停播"
+           * 这一条路径上——共享根本没开起来时，整房声音会永久只剩 15%，
+           * 用户只看得到"未共享"，完全联想不到是这里。
+           */
+          engineRef.current?.setRoomDuck(1);
+          void nativeLoopbackStopRef.current?.();
+          nativeLoopbackStopRef.current = null;
           setNotice({ kind: "error", text: "电视被别人占着，晚点再来" });
           return false;
         }
@@ -773,6 +782,10 @@ export function useVoice() {
         sharePubRef.current?.stop();
         sharePubRef.current = null;
         setSharePc(null);
+        // 同上：失败路径必须把 duck 与内置回环采集复位，否则整房语音永久变小声
+        engineRef.current?.setRoomDuck(1);
+        void nativeLoopbackStopRef.current?.();
+        nativeLoopbackStopRef.current = null;
         // 用户取消选择器（NotAllowedError）不算错误，静默返回
         if ((error as DOMException)?.name === "NotAllowedError") return false;
         // 带上错误名：用户截图给我们时能直接定位是哪类失败；置顶不自动消失

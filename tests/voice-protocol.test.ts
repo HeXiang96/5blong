@@ -435,7 +435,7 @@ describe("wire message parsing", () => {
     expect(parseGuestMessage({ t: "peer-leave", id: "x" })).toBeNull();
   });
 
-  it("caps the roster a host can push at a guest", () => {
+  it("caps the roster a host can push at a guest（含房主，故上界是 MAX_MEMBERS + 1）", () => {
     const roster = Array.from({ length: 200 }, (_, i) => ({ id: `p${i}`, name: "n" }));
     const welcome = parseHostMessage({
       t: "welcome",
@@ -445,7 +445,7 @@ describe("wire message parsing", () => {
       you: "y",
       roster,
     });
-    expect(welcome && "roster" in welcome ? welcome.roster.length : 0).toBe(MAX_MEMBERS);
+    expect(welcome && "roster" in welcome ? welcome.roster.length : 0).toBe(MAX_MEMBERS + 1);
   });
 
   it("parses a guest interact request", () => {

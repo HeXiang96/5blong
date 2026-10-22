@@ -43,6 +43,8 @@ export class SessionStatsRecorder {
   /** 见过的成员 id（计人次）。 */
   private seen = new Set<string>();
   private peak = 0;
+  /** 上次采样时刻：用来按真实间隔累计，避免后台节流把时长算少 30 倍。 */
+  private lastObserveAt = 0;
 
   begin(now = Date.now()): void {
     this.startedAt = now;
@@ -52,8 +54,20 @@ export class SessionStatsRecorder {
    * 喂一次采样：当前名册 + 当前正在说话的成员 id 集合。
    * 重复调用安全；finish() 之后再调用会被忽略。
    */
-  observe(members: SessionMemberSample[], speakingIds: ReadonlySet<string>): void {
+  observe(members: SessionMemberSample[], speakingIds: ReadonlySet<string>, now = Date.now()): void {
     if (this.finished || this.startedAt === 0) return;
+    /*
+     * 按"距上次采样的真实间隔"累计，不再固定 +2 秒。
+     *
+     * 页面切到后台时 setInterval 会被节流到约 1 次/分钟（本产品的主力用法
+     * 就是切进游戏），固定 +2s 会把所有人的发言时长系统性低估约 30 倍，
+     * 小结里的"话痨王"完全不可信。上限 10 秒，避免一次长间隔把
+     * "他只说了两秒"记成一分钟。
+     */
+    const deltaSec = this.lastObserveAt
+      ? Math.min(10, Math.max(0, (now - this.lastObserveAt) / 1000))
+      : STATS_SAMPLE_SEC;
+    this.lastObserveAt = now;
     for (const member of members) {
       this.names.set(member.id, member.name);
       if (!this.seen.has(member.id)) {
@@ -61,7 +75,7 @@ export class SessionStatsRecorder {
         this.speakingSec.set(member.id, 0);
       }
       if (speakingIds.has(member.id)) {
-        this.speakingSec.set(member.id, (this.speakingSec.get(member.id) ?? 0) + STATS_SAMPLE_SEC);
+        this.speakingSec.set(member.id, (this.speakingSec.get(member.id) ?? 0) + deltaSec);
       }
     }
     this.peak = Math.max(this.peak, members.length);
@@ -73,7 +87,7 @@ export class SessionStatsRecorder {
     if (!this.summary) {
       this.finished = true;
       const speakers = [...this.speakingSec.entries()]
-        .map(([id, seconds]) => ({ id, name: this.names.get(id) ?? "成员", seconds }))
+        .map(([id, seconds]) => ({ id, name: this.names.get(id) ?? "成员", seconds: Math.round(seconds) }))
         .sort((a, b) => b.seconds - a.seconds);
       this.summary = {
         startedAt: this.startedAt,

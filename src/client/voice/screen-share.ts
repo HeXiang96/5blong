@@ -142,6 +142,12 @@ export function createJitterBufferTuner(
   const apply = (targetMs: number) => {
     if (stopped) return;
     for (const receiver of pc.getReceivers()) {
+      /*
+       * 只改视频接收器：共享声音也挂在这条 PC 上，视频的 150~1200ms 抖动缓冲
+       * 套到音频上，观众听到的声音会比画面晚一两秒（"对不上嘴"）。
+       * 音频本身有 WebRTC 自适应抖动缓冲，不需要我们插手。
+       */
+      if (receiver.track?.kind !== "video") continue;
       try {
         receiver.jitterBufferTarget = targetMs;
       } catch {
@@ -1851,7 +1857,8 @@ async function subscribeScreenInner(
   // 一刀切 4000ms 少一秒延迟。（这只治"抖"，持续带宽不足仍要靠发送端降档。）
   pc.ontrack = (event) => {
     stream.addTrack(event.track);
-    if (event.receiver) {
+    // 同样只给视频排队：音频套 3 秒缓冲会变成"声音追着画面后知后觉"
+    if (event.receiver && event.track.kind === "video") {
       try {
         event.receiver.jitterBufferTarget = JITTER_BUFFER_MS.sfu;
       } catch {

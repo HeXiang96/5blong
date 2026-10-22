@@ -33,9 +33,11 @@ describe("SessionStatsRecorder（今晚小结）", () => {
       { id: "c", name: "丙" },
     ];
     // 甲说 3 拍、乙说 1 拍、丙没说（每拍 = STATS_SAMPLE_SEC 秒）
-    rec.observe(members, new Set(["a"]));
-    rec.observe(members, new Set(["a", "b"]));
-    rec.observe(members, new Set(["a"]));
+    // 显式给时间轴：累计口径是"距上次采样的真实间隔"，不再固定 +2 秒
+    const t0 = Date.now();
+    rec.observe(members, new Set(["a"]), t0);
+    rec.observe(members, new Set(["a", "b"]), t0 + STATS_SAMPLE_SEC * 1000);
+    rec.observe(members, new Set(["a"]), t0 + STATS_SAMPLE_SEC * 2000);
     const s = rec.finish()!;
     expect(s.speakers[0]).toMatchObject({ id: "a", name: "甲", seconds: STATS_SAMPLE_SEC * 3 });
     expect(s.speakers[1]).toMatchObject({ id: "b", name: "乙", seconds: STATS_SAMPLE_SEC });

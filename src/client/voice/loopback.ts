@@ -162,7 +162,13 @@ export async function startLoopbackAudio(
     node.port.postMessage({ type: "chunk", samples }, [samples.buffer]);
   };
 
+  // 先声明再赋值：cleanup 里会引用它，而 cleanup 可能在赋值之前被调用
+  // （采样率不匹配的防御分支）——用 const 会产生 TDZ 错误，把真正的失败原因吃掉。
+  let track: MediaStreamTrack | undefined;
+
   const cleanup = async (): Promise<void> => {
+    // 先关闸：停播后 Rust 侧最后一两块 PCM 还可能到，不能再向已关闭的 worklet 发消息
+    nodeReady = false;
     unlistenLost?.();
     try {
       await invoke("stop_loopback_capture");
@@ -187,7 +193,8 @@ export async function startLoopbackAudio(
     throw new Error(`采样率不匹配（采集 ${info.sampleRate}，图 ${ctx.sampleRate}）`);
   }
 
-  const [track] = destination.stream.getAudioTracks();
+  const [firstTrack] = destination.stream.getAudioTracks();
+  track = firstTrack;
   if (!track) {
     await cleanup();
     throw new Error("音频图没有产出音轨");

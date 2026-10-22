@@ -102,6 +102,23 @@ export class GameMesh {
    * 那属于对端行为，重连解决不了）。
    */
   private readonly onewayHeals = new Map<string, number>();
+  /**
+   * 每条连接"是哪一刻建的"。
+   *
+   * 用来收拾僵尸连接：PeerJS 关掉一条**未应答**的呼叫不会给对方任何信令，
+   * 对方那条 pc 会永远停在 `new`——既不 failed 也不 disconnected，不触发任何
+   * 事件；它却一直占着 `calls`，让 reconcile 的 `calls.has()` 跳过补拨。
+   * 结果是这一对人永久互相听不到（2026-10-22 审查确认）。
+   */
+  private readonly callStartedAt = new Map<string, number>();
+  /**
+   * 连续重拨失败次数（按 peer）。
+   *
+   * forgetCall 原来固定 300ms 后重拨：对"信令侧已经不可达、但还没被移出房间"
+   * 的人会变成每 3 秒一次的无限循环（15 人房里每人各跑一套）。
+   * 这里按次数指数退避，真正连上就清零。
+   */
+  private readonly redialBackoff = new Map<string, number>();
   /** 上一次所处的队伍：一变就整组重建连接（否则残留的静音通道会吞掉声音）。 */
   private lastTeam: Team | null = null;
   /** 正在说话的人（电平超过阈值）。 */
@@ -248,7 +265,17 @@ export class GameMesh {
           }
           this.scores = message.scores;
           this.events.roster([...this.members.values()], this.scores, this.unlocked);
-          if (me) this.localMuted = me.muted;
+          if (me) {
+            this.localMuted = me.muted;
+            /*
+             * 名册是权威：房主侧的静音状态覆盖本地时，必须同步到实际轨道。
+             * 原来只改 localMuted，于是出现"按钮显示麦克风开着、实际还在静音"
+             * （gmute 因连接瞬时不可用被丢掉时最容易踩），队友说听不到、自己看不出来。
+             */
+            for (const track of this.localStream?.getAudioTracks() ?? []) {
+              track.enabled = !this.localMuted;
+            }
+          }
           this.reconcileAudio();
         } else if (message?.t === "gkick") {
           settle("你已被房主移出开黑圈");
@@ -408,6 +435,8 @@ export class GameMesh {
     this.mediaWatchTimer = 0;
     this.mediaWatch.clear();
     this.onewayHeals.clear();
+    this.callStartedAt.clear();
+    this.redialBackoff.clear();
     for (const entry of this.analysers.values()) window.clearInterval(entry.timer);
     this.analysers.clear();
     for (const audio of this.audios.values()) {
@@ -461,6 +490,15 @@ export class GameMesh {
       } catch {
         /* noop */
       }
+      /*
+       * 监控基线必须一起清：换队后新连接是从 0 开始计包的，而旧连接的
+       * {packets: 6000} 还留着的话，新连接会被单向看门狗判成"包数没涨"，
+       * 15~25 秒后把一条完全健康的连接拆掉（换队越勤越明显）。
+       */
+      this.mediaWatch.delete(peerId);
+      this.onewayHeals.delete(peerId);
+      this.callStartedAt.delete(peerId);
+      this.redialBackoff.delete(peerId);
       this.dropAudio(peerId);
     }
     this.calls.clear();
@@ -541,6 +579,7 @@ export class GameMesh {
           const call = this.peer!.call(peerId, silent, { sdpTransform: opusSdpTransform("voice") });
           if (!call) continue;
           this.calls.set(peerId, call);
+          this.callStartedAt.set(peerId, Date.now());
           this.silentCalls.add(peerId);
           call.on("stream", (stream) => this.attachAudio(peerId, stream));
           call.on("close", () => this.forgetCall(peerId, call));
@@ -558,6 +597,7 @@ export class GameMesh {
         });
         if (!call) continue;
         this.calls.set(peerId, call);
+        this.callStartedAt.set(peerId, Date.now());
         call.on("stream", (stream) => this.attachAudio(peerId, stream));
         call.on("close", () => this.forgetCall(peerId, call));
         call.on("error", () => this.forgetCall(peerId, call));
@@ -594,6 +634,29 @@ export class GameMesh {
     if (this.destroyed || !this.joined) return;
     for (const [peerId, call] of [...this.calls]) {
       const member = this.members.get(peerId);
+      /*
+       * 僵尸连接先处理：**未应答的呼叫**永远不会产生任何事件，
+       * 所以这一步必须放在"没麦/闭麦/待分队"这些过滤之前，否则
+       * 无麦成员的僵尸腿会一直占着 calls。（PeerJS 关掉未应答的呼叫
+       * 不会通知对端，对端 pc 会永远停在 new。）
+       */
+      const pc = (call as unknown as { peerConnection?: RTCPeerConnection }).peerConnection;
+      const ice = pc?.iceConnectionState ?? "new";
+      if (!pc || ice === "new" || ice === "checking") {
+        const startedAt = this.callStartedAt.get(peerId) ?? Date.now();
+        if (!this.callStartedAt.has(peerId)) this.callStartedAt.set(peerId, startedAt);
+        if (Date.now() - startedAt > 12_000) {
+          this.mediaWatch.delete(peerId);
+          this.callStartedAt.delete(peerId);
+          try {
+            call.close();
+          } catch {
+            /* noop */
+          }
+          this.forgetCall(peerId, call);
+        }
+        continue;
+      }
       if (!member || member.hasMic === false) continue;
       if (this.silentCalls.has(peerId)) continue;
       // 他闭着麦：包的来源是对端行为，别和它死磕
@@ -603,13 +666,16 @@ export class GameMesh {
       }
       // 我在队伍、对方在待分队：按设计就该收不到他（他发的是静音流）
       if (this.lastTeam !== "unassigned" && member.team === "unassigned") continue;
-      const pc = (call as unknown as { peerConnection?: RTCPeerConnection }).peerConnection;
-      if (!pc) continue;
-      const ice = pc.iceConnectionState;
       if (ice !== "connected" && ice !== "completed") {
         this.mediaWatch.delete(peerId);
         continue;
       }
+      /*
+       * 自动播放被拦 / 元素被系统暂停时兜底重播：
+       * game 侧没有别的地方会重新调 play（语音房那边 playStream 会重试）。
+       */
+      const audio = this.audios.get(peerId);
+      if (audio && audio.paused && audio.srcObject) void audio.play().catch(() => undefined);
       let packets = 0;
       try {
         const stats = await pc.getStats();
@@ -624,7 +690,10 @@ export class GameMesh {
       }
       const prev = this.mediaWatch.get(peerId);
       const grew = packets > (prev?.packets ?? 0) && packets > 0;
-      if (grew) this.onewayHeals.delete(peerId); // 通了：把"单向重连"次数清零
+      if (grew) {
+        this.onewayHeals.delete(peerId); // 通了：把"单向重连"次数清零
+        this.redialBackoff.delete(peerId); // 重拨退避也清零
+      }
       const hits = grew ? 0 : (prev?.hits ?? 0) + 1;
       this.mediaWatch.set(peerId, { packets, hits });
       // 从没收到过：3 次（≈15 秒）；收到过又停了：5 次（≈25 秒）
@@ -735,14 +804,19 @@ export class GameMesh {
     this.calls.delete(peerId);
     this.silentCalls.delete(peerId);
     this.mediaWatch.delete(peerId);
+    this.callStartedAt.delete(peerId);
     this.dropAudio(peerId);
     /*
      * 队友换队时会挂断我的连接（他不再和我同组），而我这边什么都不做就会"没声音"。
      * 稍等一拍重新对账：如果我现在是待分队，会以"只收不听"的静音通道重新连上他。
      */
+    const fails = (this.redialBackoff.get(peerId) ?? 0) + 1;
+    this.redialBackoff.set(peerId, fails);
+    // 300ms → 600 → 1.2s → … 封顶 30 秒
+    const delay = Math.min(30_000, 300 * 2 ** Math.min(fails - 1, 7));
     window.setTimeout(() => {
       if (!this.destroyed && this.joined) this.reconcileAudio();
-    }, 300);
+    }, delay);
   }
 
   private setSpeaking(id: string, speaking: boolean): void {
@@ -1141,6 +1215,7 @@ export class GameMesh {
           call.on("close", () => this.forgetCall(call.peer, call));
           call.on("error", () => this.forgetCall(call.peer, call));
           this.calls.set(call.peer, call);
+          this.callStartedAt.set(call.peer, Date.now());
           this.watchCallHealth(call, call.peer);
         });
         peer.on("disconnected", () => {
@@ -1277,6 +1352,11 @@ export class GameMesh {
         for (const v of buffer) sum += v * v;
         const speaking = Math.sqrt(sum / buffer.length) > 0.02 && !this.localMuted;
         this.setSpeaking(this.myId, speaking);
+        // 自己的发言时长也要累计（原来只给远端累加，小结里"我"恒为 0 秒）
+        if (speaking) {
+          const stat = this.memberStats.get(this.myId);
+          if (stat) stat.speak += 160;
+        }
       }, 160);
     } catch {
       /* 检测失败不影响通话 */
@@ -1344,18 +1424,29 @@ export class GameMesh {
 
   /** 切麦克风：重开采集 → 重建发送链 → 替换所有已建立连接上的音轨。 */
   async setMicDevice(deviceId: string): Promise<void> {
-    this.micDeviceId = deviceId;
     const old = this.localStream;
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-        channelCount: 1,
-        ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
-      },
-      video: false,
-    });
+    let stream: MediaStream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          channelCount: 1,
+          ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
+        },
+        video: false,
+      });
+    } catch (error) {
+      /*
+       * 打不开就别记这个 id。原来先写 micDeviceId、再取流，一旦设备被拔/被占用，
+       * 坏 id 会永久留在本地，之后每次进房都带 {deviceId:{exact:坏id}} 失败，
+       * 而房内设备下拉只在进房后可见 —— 等于再也进不去。
+       */
+      this.events.status("error", "这个麦克风打不开（可能被占用或已拔出），仍在用原来的设备");
+      throw error;
+    }
+    this.micDeviceId = deviceId; // 确认可用才记住
     for (const track of stream.getAudioTracks()) track.enabled = !this.localMuted;
     this.localStream = stream;
     await this.buildOutgoing(); // 内部已把新轨推到所有已有连接（静音通道除外）

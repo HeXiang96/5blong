@@ -219,11 +219,21 @@ export function useGame() {
           setError(reason);
           setRoom(null);
           setMembers([]);
+          /*
+           * 必须真的销毁实例。只清界面的话：麦克风一直开着（标签页红点常亮）、
+           * PeerJS 连接与定时器都还活着，而且下次进房 ensureMesh 会**复用**
+           * 这个脏实例（旧 calls 占位、旧 AudioContext 已关），出现"有几个人
+           * 怎么都连不上"。房主关房 / 房主掉线都会走到这里。
+           */
+          meshRef.current?.destroy();
+          meshRef.current = null;
         },
         kicked: () => {
           setKicked(true);
           setRoom(null);
           setMembers([]);
+          meshRef.current?.destroy();
+          meshRef.current = null;
         },
         speaking: (ids) => setSpeaking(new Set(ids)),
       });
@@ -373,9 +383,23 @@ export function useGame() {
   }, []);
 
   const setMicDevice = useCallback((id: string) => {
-    setMicDeviceState(id);
-    saveMicDevice(id);
-    void meshRef.current?.setMicDevice(id);
+    /*
+     * 只有真开起来了才落盘 + 更新 UI：mesh.setMicDevice 会先试开这个设备，
+     * 打不开就抛错。把坏设备写进 localStorage 会导致"以后每次进房都失败、
+     * 又没有任何入口改回来"（设备下拉只在房内可见）。
+     */
+    const pending = meshRef.current?.setMicDevice(id);
+    if (!pending) {
+      setMicDeviceState(id);
+      saveMicDevice(id);
+      return;
+    }
+    void pending
+      .then(() => {
+        setMicDeviceState(id);
+        saveMicDevice(id);
+      })
+      .catch(() => undefined);
   }, []);
 
   const setOutputDevice = useCallback((id: string) => {

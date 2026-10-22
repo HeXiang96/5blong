@@ -102,7 +102,15 @@ export async function openMic(
       audio: { ...base, deviceId: { exact: settings.micDeviceId } },
       video: false,
     });
-  } catch {
+  } catch (error) {
+    const name = (error as { name?: string } | null)?.name ?? "";
+    /*
+     * 只有"这个设备打不开"才回退默认设备。
+     * 权限被拒（NotAllowedError / SecurityError）回退也是白搭：会再弹一次授权、
+     * 还会先给出"已改用系统默认设备"这种假消息，把用户引到错误的方向
+     * （真实原因是权限，不是设备选错了）。
+     */
+    if (name === "NotAllowedError" || name === "SecurityError") throw error;
     onFallback?.("所选麦克风不可用，已改用系统默认设备");
     return navigator.mediaDevices.getUserMedia({ audio: base, video: false });
   }
