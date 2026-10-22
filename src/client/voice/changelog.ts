@@ -20,6 +20,14 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.8.3",
+    date: "2026-10-22",
+    lines: [
+      "客户端窗口默认调宽，公告栏完整显示",
+      "小猪的帽子戴正了（雪原/万圣夜/春节）",
+    ],
+  },
+  {
     version: "1.8.2",
     date: "2026-10-22",
     lines: [

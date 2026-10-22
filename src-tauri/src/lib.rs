@@ -319,7 +319,9 @@ pub fn run() {
             //      以便通过 additional_browser_args 传入防后台节流参数（见 run() 顶部说明）----
             tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::default())
                 .title("5blong")
-                .inner_size(1080.0, 760.0)
+                // 1200×800：首页公告栏的右下角布局需要 ≥1100px（窄于 1100 会回落
+                // 到主列末尾、窗口矮时被裁），默认宽度留出余量（2026-10-22 业主反馈）。
+                .inner_size(1200.0, 800.0)
                 .min_inner_size(820.0, 600.0)
                 .resizable(true)
                 .center()

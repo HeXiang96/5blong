@@ -200,12 +200,12 @@ html[data-scene="snow"] .vx-pen-frame[data-daypart="night"] .vx-scene-decor-snow
 }
 
 /* 猪的雪原装扮：红毛线帽 + 白绒球。
-   （原方案是红围巾，但铭牌正好压住胸口——围巾永远被挡成一块红补丁，改戴帽子。）
-   视觉坐标（同女巫帽，见万圣夜段落注释）：头顶在视觉右侧 x≈75%、y≈10%（站立）/ 25%（趴卧）。 */
+   坐标按**原始素材**（.vx-pig-sprite 恒有 scaleX(-1) 镜像显示）：素材里头部
+   居中（冠部 21–79%，与耳机装饰同基准），帽子中心对准 50%。 */
 .vx-pig-beanie {
   display: none;
   position: absolute;
-  left: 62%;
+  left: 38%;
   top: 1%;
   width: 24%;
   height: 15%;
@@ -238,7 +238,7 @@ html[data-scene="snow"] .vx-pig-walking .vx-pig-beanie {
 html[data-scene="snow"] .vx-pig-sleeping .vx-pig-beanie,
 html[data-scene="snow"] .vx-pig-watching .vx-pig-beanie {
   top: 16%;
-  left: 63%;
+  left: 39%;
 }
 
 /* ================================================================ 万圣夜 */
@@ -425,14 +425,13 @@ html[data-scene="halloween"] .vx-empty span:not(.vx-empty-pigs) {
   }
 }
 
-/* 猪的万圣夜装扮：小女巫帽。
-   视觉坐标（同围巾注释）：头顶在视觉右侧 x≈75–80%、y≈10%（站立/趴卧接近）。
-   帽檐中心 ≈ (76%, 12%)，帽身向上延伸。 */
+/* 猪的万圣夜装扮：小女巫帽。坐标同雪原帽：原始素材头部居中（冠部 21–79%），
+   帽子中心对准 50%，帽檐落在冠顶 y≈13%。 */
 .vx-pig-witch {
   display: none;
   position: absolute;
-  left: 66%;
-  top: -4%;
+  left: 37%;
+  top: -10%;
   width: 26%;
   height: 24%;
   transform: rotate(-5deg);
@@ -465,13 +464,13 @@ html[data-scene="halloween"] .vx-pig-witch {
 }
 /* 走路：头更低一点 */
 html[data-scene="halloween"] .vx-pig-walking .vx-pig-witch {
-  top: 1%;
+  top: -5%;
 }
 /* 趴卧（睡觉 / 看投影）：微调 */
 html[data-scene="halloween"] .vx-pig-sleeping .vx-pig-witch,
 html[data-scene="halloween"] .vx-pig-watching .vx-pig-witch {
   top: 7%;
-  left: 67%;
+  left: 38%;
 }
 
 /* 万圣夜：深紫场景上，浅色主题的深色文字几乎不可读 —— 首页英雄区与说明文字强制奶油白。
@@ -688,7 +687,7 @@ html[data-scene="spring"] .vx-lantern-2 {
 .vx-pig-tang {
   display: none;
   position: absolute;
-  left: 62%;
+  left: 38%;
   top: 1%;
   width: 24%;
   height: 15%;
@@ -719,7 +718,7 @@ html[data-scene="spring"] .vx-pig-walking .vx-pig-tang {
 html[data-scene="spring"] .vx-pig-sleeping .vx-pig-tang,
 html[data-scene="spring"] .vx-pig-watching .vx-pig-tang {
   top: 16%;
-  left: 63%;
+  left: 39%;
 }
 
 /* ---------------- 猪装扮增强（雪原 / 万圣夜） ---------------- */
@@ -735,7 +734,7 @@ html[data-scene="spring"] .vx-pig-watching .vx-pig-tang {
 .vx-pig-earmuffs::after {
   content: "";
   position: absolute;
-  top: 4%;
+  top: 5%;
   width: 13%;
   height: 13%;
   border-radius: 50%;
@@ -743,30 +742,30 @@ html[data-scene="spring"] .vx-pig-watching .vx-pig-tang {
   box-shadow: 0 1px 2px rgba(60, 50, 40, 0.3);
 }
 .vx-pig-earmuffs::before {
-  left: 55%;
+  left: 26%;
 }
 .vx-pig-earmuffs::after {
-  left: 81%;
+  left: 62%;
 }
 html[data-scene="snow"] .vx-pig-earmuffs {
   display: block;
 }
 html[data-scene="snow"] .vx-pig-walking .vx-pig-earmuffs::before,
 html[data-scene="snow"] .vx-pig-walking .vx-pig-earmuffs::after {
-  top: 9%;
+  top: 10%;
 }
 html[data-scene="snow"] .vx-pig-sleeping .vx-pig-earmuffs::before,
 html[data-scene="snow"] .vx-pig-sleeping .vx-pig-earmuffs::after,
 html[data-scene="snow"] .vx-pig-watching .vx-pig-earmuffs::before,
 html[data-scene="snow"] .vx-pig-watching .vx-pig-earmuffs::after {
-  top: 19%;
+  top: 20%;
 }
 
 /* 雪原：红围脖（帽子正下方一小圈，露在铭牌上方） */
 .vx-pig-muffler {
   display: none;
   position: absolute;
-  left: 60%;
+  left: 37%;
   top: 15%;
   width: 26%;
   height: 7%;
@@ -784,14 +783,14 @@ html[data-scene="snow"] .vx-pig-walking .vx-pig-muffler {
 html[data-scene="snow"] .vx-pig-sleeping .vx-pig-muffler,
 html[data-scene="snow"] .vx-pig-watching .vx-pig-muffler {
   top: 29%;
-  left: 61%;
+  left: 38%;
 }
 
 /* 万圣夜：紫色小斗篷（披在身后，从肩部垂下，锯齿下摆） */
 .vx-pig-cape {
   display: none;
   position: absolute;
-  left: 56%;
+  left: 32%;
   top: 14%;
   width: 36%;
   height: 34%;
@@ -809,5 +808,5 @@ html[data-scene="halloween"] .vx-pig-walking .vx-pig-cape {
 html[data-scene="halloween"] .vx-pig-sleeping .vx-pig-cape,
 html[data-scene="halloween"] .vx-pig-watching .vx-pig-cape {
   top: 26%;
-  left: 58%;
+  left: 34%;
 }
