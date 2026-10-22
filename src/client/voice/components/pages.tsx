@@ -184,15 +184,57 @@ export function LandingView({
           5blong
           {appVersion ? <span className="vx-version-badge">v{appVersion}</span> : null}
         </span>
-        <button
-          type="button"
-          className="vx-icon-btn"
-          onClick={onSettings}
-          aria-label="设置"
-          title="设置"
-        >
-          <SettingsIcon size={18} />
-        </button>
+        <div className="vx-top-right">
+          {/* 身份收在右上角：头像 + 昵称（点击改名）+ 复制 ID。
+              原来是主区域里一整条木牌，把「创建语音房」往下推了 60px。 */}
+          <div className="vx-id-chip">
+            <Avatar avatar={identity.avatar} color={identity.color} name={identity.name} size={24} />
+            {editing ? (
+              <input
+                className="vx-id-input"
+                value={draftName}
+                maxLength={24}
+                autoFocus
+                onChange={(event) => setDraftName(event.target.value)}
+                onBlur={commitName}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") commitName();
+                  if (event.key === "Escape") setEditing(false);
+                }}
+              />
+            ) : (
+              <button
+                type="button"
+                className="vx-id-name"
+                onClick={() => {
+                  setDraftName(identity.name);
+                  setEditing(true);
+                }}
+                title="点击修改昵称"
+              >
+                {identity.name}
+              </button>
+            )}
+            <button
+              type="button"
+              className="vx-id-copy"
+              onClick={onCopyId}
+              title={`复制个人 ID（${identity.personId}）`}
+              aria-label="复制个人 ID"
+            >
+              <Copy size={12} />
+            </button>
+          </div>
+          <button
+            type="button"
+            className="vx-icon-btn"
+            onClick={onSettings}
+            aria-label="设置"
+            title="设置"
+          >
+            <SettingsIcon size={18} />
+          </button>
+        </div>
       </header>
 
       <main className="vx-landing-main">
@@ -231,7 +273,7 @@ export function LandingView({
                 onKeyDown={(event) => {
                   if (event.key === "Enter") joinByCode();
                 }}
-                placeholder={CODE_PLACEHOLDER}
+                placeholder="输入 4 位房间码"
                 inputMode="numeric"
                 autoComplete="off"
                 aria-label="房间码"
@@ -252,14 +294,15 @@ export function LandingView({
                 {parseError}
               </p>
             ) : null}
-            {/* 内联输入只吃纯数字；收到完整邀请链接的人走原来那个弹窗（能解析链接）。 */}
-            <button type="button" className="vx-link-btn vx-channel-invite" onClick={() => setJoinOpen(true)}>
-              有邀请链接？
-            </button>
             <button type="button" className="vx-btn vx-btn-primary" onClick={onCreate} disabled={joining}>
               <Plus size={18} /> 创建语音房
             </button>
-            {lastRoom && !joining ? (
+            <div className="vx-channel-foot">
+              {/* 内联输入只吃数字；收到完整邀请链接的人走原弹窗（能解析链接）。 */}
+              <button type="button" className="vx-link-btn vx-channel-invite" onClick={() => setJoinOpen(true)}>
+                有邀请链接？
+              </button>
+              {lastRoom && !joining ? (
               <button
                 type="button"
                 className="vx-link-btn vx-channel-link"
@@ -278,7 +321,8 @@ export function LandingView({
                 <History size={14} /> 上次房间 {lastRoom.code} ·{" "}
                 {lastRoom.role === "host" ? "重新开房" : "一键重进"}
               </button>
-            ) : null}
+              ) : null}
+            </div>
           </section>
 
           {/* 低频频道：保留名字与两个动作，体量约为上面的三分之一 */}
@@ -306,45 +350,6 @@ export function LandingView({
               </button>
             </div>
           </section>
-        </div>
-
-        <div className="vx-identity">
-          <Avatar
-            avatar={identity.avatar}
-            color={identity.color}
-            name={identity.name}
-            size={44}
-          />
-          {editing ? (
-            <input
-              className="vx-name-input"
-              value={draftName}
-              maxLength={24}
-              autoFocus
-              onChange={(event) => setDraftName(event.target.value)}
-              onBlur={commitName}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") commitName();
-                if (event.key === "Escape") setEditing(false);
-              }}
-            />
-          ) : (
-            <button
-              type="button"
-              className="vx-identity-name"
-              onClick={() => {
-                setDraftName(identity.name);
-                setEditing(true);
-              }}
-              title="点击修改昵称"
-            >
-              {identity.name}
-            </button>
-          )}
-          <button type="button" className="vx-link-btn" onClick={onCopyId} title="复制个人 ID">
-            ID {identity.personId}
-            <Copy size={12} />
-          </button>
         </div>
 
 

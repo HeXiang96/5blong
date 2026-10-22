@@ -3513,90 +3513,133 @@ html[data-theme="dark"] .vx-link-warn-text {
 
 /* ================================================================
  * 主页：频道分层（2026-10-22）
- * 只用 --vx-* 变量，跟随深色/浅色与四时段（夜晚自动入夜）。
+ * 语言沿用现有体系：纸面 + 木框（同底部公告栏），不是白底 SaaS 卡。
+ * 浅色/深色各一套。
  * ================================================================ */
 
 .vx-channels {
   width: 100%;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
+  margin-top: -4px; /* 抵掉 landing-main 的大 gap，避免首屏被推开 */
 }
 
 .vx-channel {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 14px 16px;
-  border-radius: 16px;
-  color: var(--vx-text);
+  gap: 7px;
+  padding: 12px 14px 13px;
+  border-radius: 14px;
+  position: relative;
+  color: #5b3d18;
 }
 
-/* 主频道：实线 + 投影 + 最强的主操作 */
+/* 主频道：纸面 + 木框 + 顶部木条（跟「公告栏」一套语言） */
 .vx-channel-main {
-  border: 1.5px solid var(--vx-line);
-  background: var(--vx-surface);
-  box-shadow: var(--vx-shadow);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.55) 0%, rgba(255, 255, 255, 0) 40%),
+    linear-gradient(180deg, #fffdf6 0%, #f7ecd6 100%);
+  border: 1px solid rgba(120, 78, 34, 0.45);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.7) inset,
+    0 6px 16px rgba(70, 44, 14, 0.16);
+}
+.vx-channel-main::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 6px;
+  border-radius: 14px 14px 0 0;
+  background:
+    repeating-linear-gradient(92deg, rgba(122, 82, 38, 0.16) 0 2px, rgba(122, 82, 38, 0) 2px 8px),
+    linear-gradient(180deg, #dcb47c 0%, #c1965c 100%);
+  border-bottom: 1px solid rgba(120, 78, 34, 0.28);
+}
+.vx-channel-main > .vx-channel-head {
+  margin-top: 4px;
 }
 
-/* 低频频道：虚线 + 淡强调色底，体量明显更小 */
+/* 低频频道：薄木片 / 便签，虚线边，明显更轻 */
 .vx-channel-sub {
-  border: 1px dashed var(--vx-line);
-  background: var(--vx-accent-soft);
+  background:
+    repeating-linear-gradient(92deg, rgba(122, 82, 38, 0.05) 0 2px, rgba(122, 82, 38, 0) 2px 9px),
+    linear-gradient(180deg, rgba(255, 246, 222, 0.5) 0%, rgba(255, 246, 222, 0.22) 100%);
+  border: 1px dashed rgba(120, 78, 34, 0.38);
+  box-shadow: none;
 }
 
 .vx-channel-head {
   display: flex;
   align-items: center;
   gap: 7px;
-  font-size: 14px;
+  font-size: 14.5px;
+  color: #5b3d18;
+}
+.vx-channel-sub .vx-channel-head {
+  font-size: 13px;
 }
 .vx-channel-icon {
-  font-size: 16px;
+  font-size: 15px;
   line-height: 1;
 }
 .vx-channel-desc {
   margin: 0;
   font-size: 12px;
   line-height: 1.55;
-  color: var(--vx-text-dim);
+  color: #7a6449; /* 原值 #8a7355 只有 4.33:1，这里提到 5.2:1 */
 }
 
-/* 房间码 + 加入：一行；创建单独一行做主操作 */
 .vx-code-row {
   display: flex;
   gap: 8px;
+  margin-top: 2px;
 }
 .vx-code-input {
   flex: 1 1 auto;
   min-width: 0;
-  padding: 10px 12px;
+  padding: 9px 12px;
   border-radius: 11px;
-  border: 1px solid var(--vx-line);
-  background: var(--vx-bg-2);
-  color: var(--vx-text);
+  border: 1px solid rgba(120, 78, 34, 0.42);
+  background: rgba(255, 253, 246, 0.92);
+  color: #4a3212;
   font: inherit;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.26em;
   text-align: center;
   outline: none;
+  box-shadow: 0 1px 2px rgba(70, 44, 14, 0.08) inset;
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 .vx-code-input:focus {
-  border-color: var(--vx-accent);
-  box-shadow: 0 0 0 3px var(--vx-accent-soft);
+  border-color: #a86f2c;
+  box-shadow: 0 0 0 3px rgba(207, 150, 80, 0.24);
 }
 .vx-code-input::placeholder {
   letter-spacing: 0.06em;
-  color: var(--vx-text-faint);
+  color: #9a8a70;
 }
 
-.vx-channel-link {
+.vx-channel-foot {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-top: 1px;
+}
+.vx-channel-foot .vx-link-btn {
+  font-size: 11px;
+}
+.vx-channel-link,
+.vx-channel-invite {
   align-self: flex-start;
   display: inline-flex;
   align-items: center;
   gap: 5px;
   font-size: 11px;
+  color: #7a6449;
 }
 .vx-channel-what {
   margin-left: auto;
@@ -3607,24 +3650,164 @@ html[data-theme="dark"] .vx-link-warn-text {
   gap: 7px;
   flex-wrap: wrap;
 }
-/* 低频频道的动作按钮比主操作小一号 */
 .vx-channel-sub .vx-btn {
-  padding: 7px 14px;
+  padding: 6px 13px;
   font-size: 12px;
 }
-
 .vx-channel-error {
   margin: 0;
   font-size: 11px;
-  color: var(--vx-danger);
+  color: #b4452f;
 }
 
-/* 身份行移到频道卡之后：不再是主操作前的拦路牌 */
-.vx-identity {
-  margin-top: 2px;
+/* ------------------------------ 深色 ------------------------------ */
+html[data-theme="dark"] .vx-channel {
+  color: #f4e4c2;
+}
+html[data-theme="dark"] .vx-channel-main {
+  background:
+    linear-gradient(180deg, rgba(255, 236, 200, 0.1) 0%, rgba(255, 236, 200, 0) 40%),
+    linear-gradient(180deg, #33291b 0%, #271f14 100%);
+  border-color: rgba(255, 226, 170, 0.24);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.08) inset,
+    0 6px 16px rgba(0, 0, 0, 0.4);
+}
+html[data-theme="dark"] .vx-channel-main::before {
+  background:
+    repeating-linear-gradient(92deg, rgba(255, 226, 170, 0.07) 0 2px, rgba(255, 226, 170, 0) 2px 8px),
+    linear-gradient(180deg, #6d5531 0%, #55401f 100%);
+  border-bottom-color: rgba(0, 0, 0, 0.35);
+}
+html[data-theme="dark"] .vx-channel-sub {
+  background:
+    repeating-linear-gradient(92deg, rgba(255, 226, 170, 0.04) 0 2px, rgba(255, 226, 170, 0) 2px 9px),
+    rgba(255, 236, 200, 0.06);
+  border-color: rgba(255, 226, 170, 0.2);
+}
+html[data-theme="dark"] .vx-channel-head {
+  color: #f4e4c2;
+}
+html[data-theme="dark"] .vx-channel-desc,
+html[data-theme="dark"] .vx-channel-link,
+html[data-theme="dark"] .vx-channel-invite {
+  color: #cbb28a;
+}
+html[data-theme="dark"] .vx-code-input {
+  background: #3a2c15;
+  border-color: rgba(255, 226, 170, 0.3);
+  color: #f4e4c2;
+}
+html[data-theme="dark"] .vx-code-input::placeholder {
+  color: #9c8763;
+}
+html[data-theme="dark"] .vx-code-input:focus {
+  border-color: #cf9650;
+  box-shadow: 0 0 0 3px rgba(207, 150, 80, 0.22);
+}
+html[data-theme="dark"] .vx-channel-error {
+  color: #ff8a72;
 }
 
-.vx-channel-invite {
-  align-self: flex-start;
-  font-size: 11px;
+/* ================================================================
+ * 顶栏身份 chip（2026-10-22）：迷你木牌，右上角
+ * ================================================================ */
+
+.vx-top-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.vx-id-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 5px 4px 5px;
+  border-radius: 999px;
+  border: 1px solid rgba(120, 78, 34, 0.45);
+  background:
+    repeating-linear-gradient(92deg, rgba(122, 82, 38, 0.08) 0 2px, rgba(122, 82, 38, 0) 2px 9px),
+    linear-gradient(180deg, #eed3a0 0%, #ddb478 52%, #c99a58 100%);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.5) inset,
+    0 2px 6px rgba(70, 44, 14, 0.18);
+}
+
+.vx-id-name {
+  border: 0;
+  background: none;
+  font-weight: 700;
+  font-size: 12.5px;
+  color: #5b3d18;
+  text-shadow: 0 1px 0 rgba(255, 245, 220, 0.6);
+  cursor: pointer;
+  padding: 1px 5px;
+  border-radius: 8px;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.vx-id-name:hover {
+  background: rgba(255, 245, 220, 0.55);
+}
+
+.vx-id-input {
+  width: 118px;
+  padding: 3px 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(120, 78, 34, 0.5);
+  background: rgba(255, 253, 246, 0.92);
+  color: #4a3212;
+  font: inherit;
+  font-size: 12px;
+  outline: none;
+}
+
+.vx-id-copy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 1px solid rgba(120, 78, 34, 0.4);
+  background: rgba(255, 253, 246, 0.75);
+  color: #5b3d18;
+  cursor: pointer;
+}
+.vx-id-copy:hover {
+  background: rgba(255, 253, 246, 1);
+}
+
+/* ------------------------------ 深色 ------------------------------ */
+html[data-theme="dark"] .vx-id-chip {
+  border-color: rgba(255, 226, 170, 0.28);
+  background:
+    repeating-linear-gradient(92deg, rgba(255, 226, 170, 0.05) 0 2px, rgba(255, 226, 170, 0) 2px 9px),
+    linear-gradient(180deg, #6d5531 0%, #5a4323 52%, #453218 100%);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.12) inset,
+    0 2px 6px rgba(0, 0, 0, 0.35);
+}
+html[data-theme="dark"] .vx-id-name {
+  color: #f4e4c2;
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.35);
+}
+html[data-theme="dark"] .vx-id-name:hover {
+  background: rgba(255, 236, 200, 0.14);
+}
+html[data-theme="dark"] .vx-id-input {
+  background: #3a2c15;
+  border-color: rgba(255, 226, 170, 0.3);
+  color: #f4e4c2;
+}
+html[data-theme="dark"] .vx-id-copy {
+  border-color: rgba(255, 226, 170, 0.3);
+  background: rgba(255, 236, 200, 0.12);
+  color: #f4e4c2;
+}
+html[data-theme="dark"] .vx-id-copy:hover {
+  background: rgba(255, 236, 200, 0.22);
 }
