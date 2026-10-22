@@ -24,6 +24,7 @@ import rnnoiseWasmUrl from "@sapphi-red/web-noise-suppressor/rnnoise.wasm?url";
 import rnnoiseSimdWasmUrl from "@sapphi-red/web-noise-suppressor/rnnoise_simd.wasm?url";
 
 import { SIGNAL_ROUTES } from "../voice/signal-routes";
+import { startBackgroundInterval, stopBackgroundInterval } from "../voice/background-ticker";
 import { ensureIceServers, iceServers } from "../voice/ice";
 import {
   guestPeerId,
@@ -429,9 +430,9 @@ export class GameMesh {
       }
     }
     this.calls.clear();
-    if (this.localSpeakTimer) window.clearInterval(this.localSpeakTimer);
+    if (this.localSpeakTimer) stopBackgroundInterval(this.localSpeakTimer);
     this.localSpeakTimer = 0;
-    if (this.mediaWatchTimer) window.clearInterval(this.mediaWatchTimer);
+    if (this.mediaWatchTimer) stopBackgroundInterval(this.mediaWatchTimer);
     this.mediaWatchTimer = 0;
     this.mediaWatch.clear();
     this.onewayHeals.clear();
@@ -611,8 +612,9 @@ export class GameMesh {
   /** 启动单向链路看门狗（幂等；进房后随 reconcile 一起拉起）。 */
   private startMediaWatch(): void {
     if (this.mediaWatchTimer || this.destroyed) return;
-    this.mediaWatchTimer = window.setInterval(() => void this.pollInbound(), 5000);
-    this.timers.add(this.mediaWatchTimer);
+    // 走 Worker 计时：窗口最小化/切到游戏时，主线程定时器会被节流到 1 秒乃至 1 分钟一次，
+    // 单向无声就要等一分钟才发现（这个循环是语音健康的核心）
+    this.mediaWatchTimer = startBackgroundInterval(5000, () => void this.pollInbound());
   }
 
   /**
@@ -1343,9 +1345,9 @@ export class GameMesh {
       const sink = this.getSilentSink();
       if (sink) analyser.connect(sink);
       this.localAnalyser = analyser;
-      if (this.localSpeakTimer) window.clearInterval(this.localSpeakTimer);
+      if (this.localSpeakTimer) stopBackgroundInterval(this.localSpeakTimer);
       const buffer = new Float32Array(analyser.fftSize);
-      this.localSpeakTimer = window.setInterval(() => {
+      this.localSpeakTimer = startBackgroundInterval(160, () => {
         if (!this.localAnalyser) return;
         this.localAnalyser.getFloatTimeDomainData(buffer);
         let sum = 0;
@@ -1357,7 +1359,7 @@ export class GameMesh {
           const stat = this.memberStats.get(this.myId);
           if (stat) stat.speak += 160;
         }
-      }, 160);
+      });
     } catch {
       /* 检测失败不影响通话 */
     }

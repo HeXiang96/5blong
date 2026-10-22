@@ -44,6 +44,7 @@ import {
   type WireMember,
 } from "./protocol";
 import { applyAudioProfile, opusSdpTransform } from "./audio-profile";
+import { backgroundTimerMode } from "./background-ticker";
 import { sessionScopedId, type Identity } from "./identity";
 import {
   RESOLUTION_LADDER_LABEL,
@@ -901,7 +902,8 @@ export class VoiceMesh {
     this.stats = new SessionStatsRecorder();
     this.stats.begin();
     this.sampleSessionStats();
-    this.statsTimer = this.timers.every(STATS_SAMPLE_SEC * 1000, () => this.sampleSessionStats());
+    // 小结采样同样走 Worker：被节流会让统计粒度从 2 秒变成 1 分钟
+    this.statsTimer = this.timers.everyBackground(STATS_SAMPLE_SEC * 1000, () => this.sampleSessionStats());
   }
 
   private sampleSessionStats(): void {
@@ -2621,10 +2623,12 @@ export class VoiceMesh {
     this.heartbeatTimer = 1; // 标记已启动（实际计时由 Worker 承担）
     startHeartbeatTicker(() => this.tickLiveness());
     if (!this.mediaFlowTimer) {
-      this.mediaFlowTimer = this.timers.every(MEDIA_FLOW_POLL_MS, () => void this.checkMediaFlow());
+      // 后台不节流：媒体看门狗被压到 1 分钟一次，单向无声就要一分钟后才发现
+      this.mediaFlowTimer = this.timers.everyBackground(MEDIA_FLOW_POLL_MS, () => void this.checkMediaFlow());
     }
     if (!this.dialWatchTimer) {
-      this.dialWatchTimer = this.timers.every(3000, () => this.ensureCalls());
+      // 同上：兜底补拨被节流，卡住的人就一直卡着
+      this.dialWatchTimer = this.timers.everyBackground(3000, () => this.ensureCalls());
     }
   }
 
@@ -2765,6 +2769,8 @@ export class VoiceMesh {
       app: { version: appVersion },
       env: {
         ua: navigator.userAgent,
+        // 计时器跑在 Worker 还是主线程：排"后台被节流"类问题时一眼就能确认
+        timerMode: backgroundTimerMode(),
         desktop: typeof window !== "undefined" && "__TAURI_INTERNALS__" in window,
         hidden: document.hidden,
         online: navigator.onLine,
@@ -2966,7 +2972,8 @@ export class VoiceMesh {
 
   private startSpeakingLoop(): void {
     if (this.speakingTimer) return;
-    this.speakingTimer = this.timers.every(SPEAKING_POLL_MS, () => this.pollSpeaking());
+    // 说话高亮：被节流会让"谁在说话"在后台时几乎停更
+    this.speakingTimer = this.timers.everyBackground(SPEAKING_POLL_MS, () => this.pollSpeaking());
   }
 
   private pollSpeaking(): void {
@@ -3287,13 +3294,25 @@ export class VoiceMesh {
     // 与房主的媒体立即建立；访客间逐个错峰，避免信令风暴把公共云队列打爆
     // （人越多越明显：这正是"前两个人能进、后面的人卡在加入"的诱因之一）。
     let delay = 0;
+    /*
+     * 大房间把错峰间隔压窄：13 人房里每个客户端要向 6 个人发起呼叫，
+     * 固定 1.2 秒要 7 秒才拨完，进房后长时间"还有人没声音"。
+     */
+    const stagger = this.members.size > 8 ? 700 : MEDIA_STAGGER_MS;
     for (const member of this.members.values()) {
       if (member.local || !this.shouldCall(member.id)) continue;
       if (member.id === this.hostId) {
         this.callPeer(member.id);
       } else {
-        delay += MEDIA_STAGGER_MS;
-        this.timers.after(delay, () => this.callPeer(member.id));
+        delay += stagger;
+        /*
+         * 定时器到点时**再确认人还在**：roster 每次变动都会重排一批定时器，
+         * 期间有人离开时，原来的实现仍会拿着旧 id 去拨一次（白打信令）。
+         */
+        this.timers.after(delay, () => {
+          if (this.destroyed || !this.members.has(member.id)) return;
+          this.callPeer(member.id);
+        });
       }
     }
   }
@@ -3302,6 +3321,8 @@ export class VoiceMesh {
     // 没有麦克风就不发起：对方仍然会 call 我（纯收听者因此能听到所有人）。
     const stream = this.outgoingStream ?? this.localStream;
     if (!this.peer || !stream || this.calls.has(peerId)) return;
+    // 已经不在名册里的人不拨（自愈/错峰定时器都可能比"他离开"晚一拍）
+    if (!this.members.has(peerId)) return;
     const call = this.peer.call(peerId, stream, {
       // 语音参数显式化：关 DTX（静音段停发会让恢复时的起音发虚），码率 40k
       sdpTransform: opusSdpTransform("voice"),

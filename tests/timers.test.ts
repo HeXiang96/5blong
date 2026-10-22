@@ -117,4 +117,22 @@ describe("定时器登记表", () => {
     expect(fake.clearedIntervals).toContain(id);
     expect(timers.size.intervals).toBe(0);
   });
+
+  it("everyBackground 在没有 Worker 的环境里退回主线程 interval，且能正常停", () => {
+    // node 环境没有 Worker：这正是"老内核/受限环境"的等价情形
+    vi.stubGlobal("Worker", undefined);
+    const timers = new Timers();
+    const fn = vi.fn();
+    const id = timers.everyBackground(10, fn);
+    expect(timers.size.intervals).toBe(1);
+
+    // 退回主线程后，回调仍由 window.setInterval 驱动
+    const run = [...live.values()][0]!;
+    run();
+    expect(fn).toHaveBeenCalledTimes(1);
+
+    timers.cancel(id);
+    expect(live.size).toBe(0);
+    expect(timers.size.intervals).toBe(0);
+  });
 });

@@ -269,11 +269,24 @@ pub fn run() {
      * wry 总是显式调用 CreateCoreWebView2EnvironmentWithOptions，
      * 而 WebView2 规则是 API 参数**覆盖**该环境变量（实测 1.5.4/1.5.5 未生效）。
      * 显式传参会替换 wry 默认参数串，所以必须把 wry 默认的三项合并进来。
+     *
+     * 每一项都在治一个真实故障（2026-10-22 补最后两项）：
+     *   CalculateNativeWinOcclusion       窗口被别的游戏全屏盖住时，不当成"不可见"
+     *   IntensiveWakeUpThrottling         隐藏超 5 分钟后，定时器从 1 秒被压到**1 分钟一次**
+     *                                     ——语音看门狗/自愈/心跳全靠定时器，被压一次就全哑
+     *   disable-background-timer-throttling 隐藏页定时器最小间隔 1 秒的限制
+     *   disable-backgrounding-occluded-windows / disable-renderer-backgrounding
+     *                                     被遮挡窗口的渲染与进程优先级降级
+     *   autoplay-policy=no-user-gesture-required
+     *                                     没有用户手势也允许出声，消掉"元素被拦→听不到"
+     * 网页版做不到这些（浏览器策略改不了），所以网页端的等价方案是
+     * 关键循环走 Worker 计时（src/client/voice/background-ticker.ts）。
      */
-    let browser_args = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,CalculateNativeWinOcclusion \
+    let browser_args = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,CalculateNativeWinOcclusion,IntensiveWakeUpThrottling \
          --disable-backgrounding-occluded-windows \
          --disable-background-timer-throttling \
-         --disable-renderer-backgrounding";
+         --disable-renderer-backgrounding \
+         --autoplay-policy=no-user-gesture-required";
     tauri::Builder::default()
         .manage(UpdaterState { pending: Mutex::new(None) })
         .manage(loopback::LoopbackState::default())
