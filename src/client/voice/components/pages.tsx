@@ -390,7 +390,7 @@ export function LandingView({
         ) : null}
 
         <ul className="vx-facts">
-          <li>建议 2–6 人，最多 8 人</li>
+          <li>建议 2–6 人，最多 13 人（含房主）</li>
           <li>房主离开即结束房间</li>
           <li>少数严格网络下可能连不通</li>
         </ul>

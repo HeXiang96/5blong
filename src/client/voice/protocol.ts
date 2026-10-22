@@ -882,8 +882,18 @@ function parseMember(value: unknown): WireMember | null {
 // 准入裁决（房主侧，纯函数，便于单测）
 // ---------------------------------------------------------------------------
 
-/** 单房人数上限。全互联 mesh 的边数是 n(n-1)/2，8 人即 28 条媒体连接。 */
-export const MAX_MEMBERS = 8;
+/**
+ * 单房人数上限（**含房主**：房主 + 12 位访客 = 13 人）。
+ *
+ * 全互联 mesh 的边数是 n(n-1)/2，13 人即 78 条媒体连接，平均每个客户端
+ * 上行 12 路 Opus（每路 40kbps，合计约 0.5Mbps）——带宽不是瓶颈，
+ * 瓶颈是"每人都要给 12 个人编码"，弱机/弱网时更容易出现单腿劣化。
+ * 所以单向链路看门狗（engine.checkMediaFlow）在 10 人以上尤其重要。
+ *
+ * 注意：这个数只用于**准入**（含房主）与名册上界（MAX_MEMBERS + 1 的
+ * 防御性上限，见 parseRoster）。改这里要一起看页面上的容量文案。
+ */
+export const MAX_MEMBERS = 13;
 
 export const HEARTBEAT_MS = 2000;
 /**
