@@ -3510,3 +3510,121 @@ html[data-theme="dark"] .vx-link-warn-text {
 .vx-chat[aria-hidden="true"] {
   visibility: hidden;
 }
+
+/* ================================================================
+ * 主页：频道分层（2026-10-22）
+ * 只用 --vx-* 变量，跟随深色/浅色与四时段（夜晚自动入夜）。
+ * ================================================================ */
+
+.vx-channels {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.vx-channel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px;
+  border-radius: 16px;
+  color: var(--vx-text);
+}
+
+/* 主频道：实线 + 投影 + 最强的主操作 */
+.vx-channel-main {
+  border: 1.5px solid var(--vx-line);
+  background: var(--vx-surface);
+  box-shadow: var(--vx-shadow);
+}
+
+/* 低频频道：虚线 + 淡强调色底，体量明显更小 */
+.vx-channel-sub {
+  border: 1px dashed var(--vx-line);
+  background: var(--vx-accent-soft);
+}
+
+.vx-channel-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 14px;
+}
+.vx-channel-icon {
+  font-size: 16px;
+  line-height: 1;
+}
+.vx-channel-desc {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--vx-text-dim);
+}
+
+/* 房间码 + 加入：一行；创建单独一行做主操作 */
+.vx-code-row {
+  display: flex;
+  gap: 8px;
+}
+.vx-code-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 10px 12px;
+  border-radius: 11px;
+  border: 1px solid var(--vx-line);
+  background: var(--vx-bg-2);
+  color: var(--vx-text);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.26em;
+  text-align: center;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.vx-code-input:focus {
+  border-color: var(--vx-accent);
+  box-shadow: 0 0 0 3px var(--vx-accent-soft);
+}
+.vx-code-input::placeholder {
+  letter-spacing: 0.06em;
+  color: var(--vx-text-faint);
+}
+
+.vx-channel-link {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+}
+.vx-channel-what {
+  margin-left: auto;
+  font-size: 11px;
+}
+.vx-channel-acts {
+  display: flex;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+/* 低频频道的动作按钮比主操作小一号 */
+.vx-channel-sub .vx-btn {
+  padding: 7px 14px;
+  font-size: 12px;
+}
+
+.vx-channel-error {
+  margin: 0;
+  font-size: 11px;
+  color: var(--vx-danger);
+}
+
+/* 身份行移到频道卡之后：不再是主操作前的拦路牌 */
+.vx-identity {
+  margin-top: 2px;
+}
+
+.vx-channel-invite {
+  align-self: flex-start;
+  font-size: 11px;
+}

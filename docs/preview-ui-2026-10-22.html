@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<title>5blong UI 优化预览 · 2026-10-22</title>
+<style>
+  :root {
+    --bg: #f4ece0;
+    --paper: #fffaf0;
+    --ink: #3f2c14;
+    --dim: #8a7355;
+    --line: rgba(120, 78, 34, 0.34);
+    --accent: #cf9650;
+    --accent-deep: #a86f2c;
+    --wood-1: #c79a63;
+    --wood-2: #a97b45;
+    --wood-3: #8f6335;
+    --ok: #2f7d5b;
+    --warn: #b4761f;
+    --radius: 14px;
+    --shadow: 0 10px 26px rgba(60, 34, 12, 0.16);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 34px 28px 60px;
+    background:
+      radial-gradient(1200px 500px at 50% -10%, rgba(207, 150, 80, 0.14), transparent 70%),
+      var(--bg);
+    color: var(--ink);
+    font: 14px/1.6 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; }
+  h1 { font-size: 24px; margin: 0 0 6px; letter-spacing: 0.01em; }
+  .lede { margin: 0 0 26px; color: var(--dim); font-size: 13px; }
+  h2 { font-size: 16px; margin: 34px 0 14px; display: flex; align-items: center; gap: 8px; }
+  h2 .tag {
+    font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
+    color: #fff; background: var(--accent-deep); border-radius: 999px; padding: 3px 9px;
+  }
+  .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; align-items: start; }
+  @media (max-width: 980px) { .pair { grid-template-columns: 1fr; } }
+  .col-head {
+    display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px;
+    font-size: 12px; letter-spacing: 0.04em; color: var(--dim);
+  }
+  .col-head b { color: var(--ink); font-size: 13px; }
+  .frame {
+    position: relative; border-radius: 18px; overflow: hidden;
+    border: 1px solid var(--line); box-shadow: var(--shadow);
+    background: linear-gradient(180deg, #fdf6e8, #f6ebd7);
+    height: 470px; display: flex; flex-direction: column;
+  }
+  .frame.after { border-color: rgba(47, 125, 91, 0.5); }
+
+  /* ---------------- 顶部木牌 ---------------- */
+  .topbar {
+    display: flex; align-items: center; gap: 10px; padding: 10px 14px;
+    background: linear-gradient(180deg, #d8ab74, var(--wood-2));
+    border-bottom: 2px solid rgba(80, 50, 18, 0.35);
+    color: #fff8e8; font-size: 12px;
+  }
+  .logo { display: flex; align-items: center; gap: 6px; font-weight: 700; letter-spacing: 0.06em; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: #7dd8a8; box-shadow: 0 0 0 3px rgba(125,216,168,.25); }
+  .ver { font-size: 10px; opacity: .8; border: 1px solid rgba(255,248,232,.4); border-radius: 999px; padding: 1px 6px; }
+  .spacer { flex: 1; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 4px 9px; border-radius: 999px; font-size: 11px;
+    background: rgba(255, 248, 232, .18); border: 1px solid rgba(255,248,232,.32);
+  }
+  .chip.code { font-variant-numeric: tabular-nums; letter-spacing: .08em; font-size: 13px; font-weight: 700; }
+  .icon-btn {
+    width: 28px; height: 28px; border-radius: 9px; display: grid; place-items: center;
+    background: rgba(255,248,232,.16); border: 1px solid rgba(255,248,232,.3);
+  }
+
+  /* ---------------- 首页 ---------------- */
+  .home-main { padding: 16px 20px; display: flex; flex-direction: column; gap: 10px; overflow: hidden; }
+  .mascot { font-size: 40px; text-align: center; line-height: 1; margin-top: 2px; filter: drop-shadow(0 6px 10px rgba(120,80,30,.25)); }
+  .hero h3 { margin: 2px 0 4px; font-size: 19px; line-height: 1.35; text-align: center; }
+  .hero p { margin: 0; font-size: 11.5px; color: var(--dim); text-align: center; }
+  .identity {
+    display: flex; align-items: center; gap: 8px; justify-content: center;
+    padding: 7px 10px; border-radius: 12px; background: rgba(255,255,255,.55);
+    border: 1px solid var(--line);
+  }
+  .avatar { width: 26px; height: 26px; border-radius: 50%; background: linear-gradient(135deg, #e7b588, #c98b57); display: grid; place-items: center; font-size: 14px; }
+  .who { font-size: 12.5px; font-weight: 600; }
+  .pid { font-size: 10.5px; color: var(--dim); display: inline-flex; gap: 3px; align-items: center; }
+  .actions { display: flex; flex-direction: column; gap: 7px; margin-top: 2px; }
+  .row { display: flex; gap: 7px; }
+  .btn {
+    flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    padding: 9px 12px; border-radius: 11px; font-size: 12.5px; font-weight: 600;
+    border: 1px solid var(--line); background: rgba(255,255,255,.6); color: var(--ink);
+  }
+  .btn.primary {
+    background: linear-gradient(180deg, #d9a463, var(--accent-deep));
+    border-color: rgba(122, 79, 18, .55); color: #fff8ea;
+    box-shadow: 0 4px 12px rgba(168, 111, 44, .28);
+  }
+  .btn.ghost { background: rgba(255,255,255,.45); }
+  .btn.small { flex: none; padding: 6px 10px; font-size: 11.5px; }
+  .game-card {
+    margin-top: auto; padding: 9px 11px; border-radius: 12px;
+    background: rgba(207,150,80,.12); border: 1px dashed rgba(168,111,44,.45);
+    display: flex; align-items: center; gap: 8px;
+  }
+  .game-card .txt { font-size: 11px; color: var(--dim); line-height: 1.45; }
+  .game-card .txt b { display: block; color: var(--ink); font-size: 12px; }
+  .game-card .acts { margin-left: auto; display: flex; gap: 6px; }
+  .inl-code { display: flex; gap: 6px; align-items: center; }
+  .inl-code input {
+    flex: 1; padding: 9px 12px; border-radius: 11px; font: inherit; font-size: 14px;
+    letter-spacing: .28em; text-align: center; font-variant-numeric: tabular-nums;
+    border: 1.5px solid rgba(168,111,44,.5); background: #fff; color: var(--ink);
+  }
+  .hintline { font-size: 10.5px; color: var(--dim); text-align: center; }
+
+  /* ---------------- 房间 ---------------- */
+  .pen {
+    flex: 1; padding: 14px 16px; display: grid; gap: 8px;
+    grid-template-columns: repeat(5, 1fr); align-content: start;
+  }
+  .pig {
+    position: relative; display: flex; flex-direction: column; align-items: center; gap: 3px;
+    padding: 7px 4px 5px; border-radius: 12px;
+    background: rgba(255,255,255,.5); border: 1px solid var(--line);
+    font-size: 10px; color: var(--ink);
+  }
+  .pig .face { font-size: 22px; line-height: 1; }
+  .pig .nm { font-size: 10.5px; font-weight: 600; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pig.muted { opacity: .62; }
+  .pig.speaking { box-shadow: 0 0 0 2px rgba(47,125,91,.5), 0 4px 10px rgba(47,125,91,.18); }
+  .pig .bar { width: 70%; height: 2px; border-radius: 2px; background: rgba(47,125,91,.85); }
+  .pig .badge { position: absolute; top: 4px; right: 4px; font-size: 8px; color: var(--dim); }
+  .pig.self { border-color: rgba(168,111,44,.75); background: rgba(207,150,80,.18); }
+  .controls {
+    display: flex; gap: 7px; padding: 10px 14px 12px; align-items: center;
+    background: linear-gradient(180deg, rgba(255,246,222,.6), rgba(255,246,222,.15));
+    border-top: 1px solid var(--line);
+  }
+  .mic {
+    flex: 0 0 132px; display: flex; align-items: center; gap: 6px; padding: 9px 10px;
+    border-radius: 999px; border: 1px solid var(--line); background: rgba(255,255,255,.65);
+    font-size: 12px; font-weight: 600;
+  }
+  .mic .sep { width: 1px; height: 16px; background: var(--line); }
+  .ctl {
+    flex: 0 0 auto; width: 44px; height: 44px; border-radius: 999px; display: grid; place-items: center;
+    border: 1px solid var(--line); background: rgba(255,255,255,.55); font-size: 15px;
+  }
+  .ctl.wide { width: auto; padding: 0 12px; font-size: 12px; font-weight: 600; gap: 5px; display: inline-flex; align-items: center; }
+  .ctl.on { background: rgba(207,150,80,.28); border-color: rgba(168,111,44,.7); }
+
+  /* ---------------- 标注 ---------------- */
+  .notes { margin: 10px 0 0; padding: 0 0 0 18px; color: var(--dim); font-size: 12px; }
+  .notes li { margin: 3px 0; }
+  .notes b { color: var(--ink); }
+  .pill { display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: 10.5px; margin-right: 5px; }
+  .p1 { background: rgba(180,118,31,.18); color: #8a5a10; }
+  .p2 { background: rgba(47,125,91,.16); color: #256349; }
+  .bad { color: #a3352a; font-weight: 700; }
+  .good { color: var(--ok); font-weight: 700; }
+
+  /* ---------------- 对比度 ---------------- */
+  table { width: 100%; border-collapse: collapse; background: var(--paper); border-radius: 14px; overflow: hidden; border: 1px solid var(--line); }
+  th, td { padding: 10px 12px; text-align: left; font-size: 12.5px; border-bottom: 1px solid rgba(120,78,34,.14); }
+  th { background: rgba(207,150,80,.16); font-size: 11.5px; letter-spacing: .04em; }
+  td .sw { display: inline-block; width: 14px; height: 14px; border-radius: 4px; vertical-align: -2px; margin-right: 6px; border: 1px solid rgba(0,0,0,.12); }
+  code { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 11.5px; background: rgba(120,78,34,.1); padding: 1px 5px; border-radius: 5px; }
+  footer { margin-top: 30px; font-size: 11.5px; color: var(--dim); }
+
+  /* ---- 首页双频道卡（开黑圈与语音房同级）---- */
+  .entry-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 4px; }
+  .entry-card {
+    display: flex; flex-direction: column; gap: 7px; padding: 11px 12px 12px;
+    border-radius: 14px; border: 1px solid var(--line);
+    background: rgba(255,255,255,.55);
+  }
+  .entry-card.g[vx] { }
+  .entry-card.room { border-color: rgba(168,111,44,.45); background: rgba(255,255,255,.62); }
+  .entry-card .ec-h { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700; }
+  .entry-card .ec-h .k { font-size: 15px; }
+  .entry-card .ec-d { font-size: 11px; color: var(--dim); line-height: 1.45; min-height: 32px; }
+  .entry-card .ec-a { display: flex; flex-direction: column; gap: 6px; margin-top: auto; }
+  .entry-card .ec-link { font-size: 10.5px; color: var(--accent-deep); text-align: center; }
+  .tagline { display:flex; align-items:center; gap:8px; justify-content:center; font-size:11px; color:var(--dim); }
+  .tagline i { flex:1; height:1px; background: rgba(120,78,34,.22); max-width: 54px; }
+
+  /* ---- 首页：主频道卡 + 低频频道条 ---- */
+  .main-card {
+    display: flex; flex-direction: column; gap: 8px; padding: 13px 14px 12px;
+    border-radius: 16px; border: 1.5px solid rgba(168,111,44,.5);
+    background: linear-gradient(180deg, rgba(255,255,255,.78), rgba(255,252,244,.62));
+    box-shadow: 0 6px 18px rgba(168,111,44,.10);
+  }
+  .main-card .mc-h { display: flex; align-items: center; gap: 7px; font-size: 14px; font-weight: 700; }
+  .main-card .mc-h .freq {
+    margin-left: auto; font-size: 10px; font-weight: 600; letter-spacing: .04em;
+    color: #2f7d5b; background: rgba(47,125,91,.13); border: 1px solid rgba(47,125,91,.3);
+    border-radius: 999px; padding: 1px 7px;
+  }
+  .main-card .mc-d { font-size: 11.5px; color: var(--dim); }
+  .main-card .mc-a { display: flex; gap: 7px; margin-top: 2px; }
+  .main-card .mc-a .btn { padding: 9px 12px; }
+
+  .sub-card {
+    display: flex; align-items: center; gap: 10px; padding: 9px 12px;
+    border-radius: 13px; border: 1px dashed rgba(120,78,34,.34);
+    background: rgba(255,255,255,.4); margin-top: auto;
+  }
+  .sub-card .sc-i { font-size: 17px; opacity: .85; }
+  .sub-card .sc-t { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+  .sub-card .sc-t b { font-size: 12px; }
+  .sub-card .sc-t span { font-size: 10.5px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sub-card .sc-freq {
+    flex: 0 0 auto; font-size: 9.5px; color: var(--dim);
+    border: 1px solid rgba(120,78,34,.28); border-radius: 999px; padding: 1px 6px;
+  }
+  .sub-card .sc-a { margin-left: auto; display: flex; gap: 6px; flex: 0 0 auto; }
+  .sub-card .sc-a .btn { padding: 6px 9px; font-size: 11px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>5blong UI 优化预览</h1>
+  <p class="lede">
+    左＝现在（1.8.0 实现），右＝建议（首页为修正版：两个频道并排）。色板取自 <code>styles.css</code> 真实 token，尺寸按 1080×760 窗口等比缩放。
+    这是设计稿，不是最终像素稿。
+  </p>
+
+  <!-- ===================== 首页 ===================== -->
+  <h2><span class="tag">Home</span> 首页：让「创建」成为唯一主操作</h2>
+  <div class="pair">
+    <div>
+      <div class="col-head"><b>现在</b><span>6 个可点按钮，2 个 primary 抢注意力</span></div>
+      <div class="frame">
+        <div class="topbar">
+          <span class="logo"><span class="dot"></span>5blong</span>
+          <span class="ver">v1.8.0</span>
+          <span class="spacer"></span>
+          <span class="icon-btn">⚙</span>
+        </div>
+        <div class="home-main">
+          <div class="mascot">🐷</div>
+          <div class="hero">
+            <h3>开个语音房，把链接丢给朋友</h3>
+            <p>免注册、免装客户端、免选服务器</p>
+          </div>
+          <div class="identity">
+            <span class="avatar">🐽</span>
+            <span class="who">爱笑的小鹿</span>
+            <span class="pid">ID 9165556823 ⧉</span>
+          </div>
+          <div class="actions">
+            <button class="btn ghost">🕘 上次房间 4821 · 一键重进</button>
+            <button class="btn primary">＋ 创建语音房</button>
+            <button class="btn">→ 加入语音房</button>
+          </div>
+          <div class="game-card">
+            <div class="txt">
+              <b>🎮 开黑圈 · 5v5 分队内战房</b>
+              要分进攻/防守两队、队内语音互相隔离的内战用这个；平时连麦聊天，上面的「语音房」就够了 · 这是什么？
+            </div>
+            <div class="acts">
+              <button class="btn small primary">创建开黑圈</button>
+              <button class="btn small">加入</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <ul class="notes">
+        <li><span class="pill p1">P1</span>两个 <b>primary</b>（创建语音房 / 创建开黑圈）在同一屏竞争注意力</li>
+        <li><span class="pill p1">P1</span>昵称 + ID 这类低频信息夹在 hero 与主操作之间，把主 CTA 往下推</li>
+        <li><span class="pill p2">P2</span>副功能的说明文字（3 行）比主功能还重，视觉重量倒挂</li>
+        <li><span class="pill p2">P2</span>老用户最高频的「输码进房」还要再点开一层弹窗</li>
+      </ul>
+    </div>
+
+    <div>
+      <div class="col-head"><b>建议（按频率分层）</b><span>语音房＝主频道；开黑圈＝低频频道条</span></div>
+      <div class="frame after">
+        <div class="topbar">
+          <span class="logo"><span class="dot"></span>5blong</span>
+          <span class="spacer"></span>
+          <span class="chip">🐽 爱笑的小鹿</span>
+          <span class="icon-btn">⚙</span>
+        </div>
+        <div class="home-main" style="gap:12px">
+          <div class="hero" style="margin-top:4px">
+            <h3 style="font-size:18px">开个语音房，把链接丢给朋友</h3>
+            <p>免注册、免装客户端 · 音频点对点直连</p>
+          </div>
+
+          <!-- 主频道 -->
+          <div class="main-card">
+            <div class="mc-h"><span style="font-size:16px">🎧</span>语音房<span class="freq">天天用</span></div>
+            <div class="mc-d">随手开一间，发链接就能进。聊天、听歌、看视频、共享屏幕。</div>
+            <div class="mc-a">
+              <div class="inl-code" style="flex:1">
+                <input value="4821" aria-label="输入房间码" style="padding:9px 10px;letter-spacing:.26em" />
+                <button class="btn" style="flex:0 0 66px">加入</button>
+              </div>
+              <button class="btn primary" style="flex:0 0 132px">＋ 创建语音房</button>
+            </div>
+            <span class="ec-link" style="text-align:left;font-size:10.5px;color:var(--accent-deep)">🕘 上次房间 4821 · 一键重进 →</span>
+          </div>
+
+          <!-- 低频频道：保留名字与动作，体量收小 -->
+          <div class="sub-card">
+            <span class="sc-i">🎮</span>
+            <div class="sc-t">
+              <b>开黑圈 · 5v5 分队内战</b>
+              <span>分进攻 / 防守两队，队内语音互相隔离</span>
+            </div>
+            <span class="sc-freq">偶尔用</span>
+            <div class="sc-a">
+              <button class="btn">创建</button>
+              <button class="btn">加入</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <ul class="notes">
+        <li><span class="pill p1">主频道</span>语音房独占主卡：<b>创建</b>是唯一的大 primary，输码内联在旁边</li>
+        <li><span class="pill p2">低频频道</span>开黑圈保留<b>名字 + 场景 + 两个动作</b>，只是体量收到一条（约主卡 1/3 高），不用点进二级页</li>
+        <li><span class="pill p2">频率标签</span>「天天用 / 偶尔用」是给新人的线索：不用猜哪个是主场</li>
+        <li><span class="pill p2">身份</span>昵称 / ID 收进顶栏 chip，不再夹在主操作前面</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- ===================== 房间 ===================== -->
+  <h2><span class="tag">Room</span> 房间：顶栏收敛，底栏固定两段式</h2>
+  <div class="pair">
+    <div>
+      <div class="col-head"><b>现在</b><span>13 人时顶栏塞满、底栏 7 个等宽胶囊</span></div>
+      <div class="frame">
+        <div class="topbar">
+          <span class="chip code">圈号 4821 ⧉</span>
+          <span class="chip">🔒 已锁</span>
+          <span class="chip">🎨 雪原</span>
+          <span class="chip">👑 房主</span>
+          <span class="spacer"></span>
+          <span class="chip">13/13</span>
+          <span class="chip">📶 直连</span>
+        </div>
+        <div class="pen">
+          <div class="pig self"><span class="badge">👑</span><span class="face">🐷</span><span class="nm">爱笑的小鹿</span></div>
+          <div class="pig"><span class="face">🐷</span><span class="nm">队友A</span></div>
+          <div class="pig speaking"><span class="face">🐷</span><span class="nm">队友B</span></div>
+          <div class="pig"><span class="face">🐷</span><span class="nm">队友C</span></div>
+          <div class="pig"><span class="face">🐷</span><span class="nm">队友D</span></div>
+          <div class="pig"><span class="face">🐷</span><span class="nm">队友E</span></div>
+          <div class="pig"><span class="face">🐷</span><span class="nm">队友F</span></div>
+          <div class="pig"><span class="face">🐷</span><span class="nm">队友G</span></div>
+          <div class="pig"><span class="face">🐷</span><span class="nm">队友H</span></div>
+          <div class="pig"><span class="face">🐷</span><span class="nm">队友I</span></div>
+          <div class="pig"><span class="face">🐷</span><span class="nm">队友J</span></div>
+          <div class="pig"><span class="face">🐷</span><span class="nm">队友K</span></div>
+          <div class="pig"><span class="face">🐷</span><span class="nm">队友L</span></div>
+        </div>
+        <div class="controls">
+          <div class="mic">🎙 已静音 <span class="sep"></span> ∧</div>
+          <button class="ctl wide">🔇 闭听</button>
+          <button class="ctl wide">🖥 共享</button>
+          <button class="ctl wide">⚙ 设置</button>
+          <button class="ctl wide">💬 聊天</button>
+          <button class="ctl wide">🚪 离开</button>
+        </div>
+      </div>
+      <ul class="notes">
+        <li><span class="pill p1">P1</span>顶栏 7 个 chip 同权重，圈号（主信息）不突出，点击区小而密</li>
+        <li><span class="pill p2">P2</span>13 只猪只靠徽章区分「静音/闭听/说话」，扫视时找不到人</li>
+        <li><span class="pill p2">P2</span>底栏 5 个等宽文字胶囊，820 宽会折行（已临时 wrap 兜底）</li>
+      </ul>
+    </div>
+
+    <div>
+      <div class="col-head"><b>建议</b><span>圈号当主信息，其余进 ☰；状态用双通道</span></div>
+      <div class="frame after">
+        <div class="topbar">
+          <span class="chip code" style="font-size:15px">4821 ⧉</span>
+          <span class="chip">13/13 人</span>
+          <span class="spacer"></span>
+          <span class="chip">📶 直连</span>
+          <span class="icon-btn">☰</span>
+        </div>
+        <div class="pen">
+          <div class="pig self"><span class="badge">👑</span><span class="face">🐷</span><span class="nm">爱笑的小鹿</span></div>
+          <div class="pig muted"><span class="badge">🎙̸</span><span class="face">🐷</span><span class="nm">队友A</span></div>
+          <div class="pig speaking"><span class="face">🐷</span><span class="nm">队友B</span><span class="bar"></span></div>
+          <div class="pig"><span class="face">🐷</span><span class="nm">队友C</span></div>
+          <div class="pig muted"><span class="badge">🎧̸</span><span class="face">🐷</span><span class="nm">队友D</span></div>
+          <div class="pig"><span class="face">🐷</span><span class="nm">队友E</span></div>
+          <div class="pig"><span class="face">🐷</span><span class="nm">队友F</span></div>
+          <div class="pig"><span class="face">🐷</span><span class="nm">队友G</span></div>
+          <div class="pig"><span class="face">🐷</span><span class="nm">队友H</span></div>
+          <div class="pig"><span class="face">🐷</span><span class="nm">队友I</span></div>
+          <div class="pig"><span class="face">🐷</span><span class="nm">队友J</span></div>
+          <div class="pig"><span class="face">🐷</span><span class="nm">队友K</span></div>
+          <div class="pig"><span class="face">🐷</span><span class="nm">队友L</span></div>
+        </div>
+        <div class="controls">
+          <div class="mic">🎙 已静音 <span class="sep"></span> ∧</div>
+          <button class="ctl" title="闭听">🔇</button>
+          <button class="ctl" title="共享">🖥</button>
+          <button class="ctl" title="聊天">💬</button>
+          <button class="ctl" title="设置">⚙</button>
+          <span class="spacer"></span>
+          <button class="ctl wide" title="离开">🚪</button>
+        </div>
+      </div>
+      <ul class="notes">
+        <li><span class="pill p1">P1</span>圈号 = 主信息（等宽数字 + 复制），锁定/主题/版本全进 <b>☰</b>；固定宽度不再左右横移</li>
+        <li><span class="pill p2">P2</span>静音降不透明度、闭听加斜杠图标、说话加 2px 进度条：<b>三通道</b>（色/图标/文字）</li>
+        <li><span class="pill p2">P2</span>底栏改成「左侧固定麦克风胶囊 + 右侧 44px 图标按钮」，窄屏也不折行</li>
+        <li><span class="pill p2">P2</span>「离开」靠右隔离，降低误触（现在和聊天按钮相邻）</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- ===================== 对比度 ===================== -->
+  <h2><span class="tag">A11y</span> 两处小字不达标（WCAG AA 需 ≥ 4.5:1）</h2>
+  <table>
+    <thead>
+      <tr><th>用途</th><th>色值</th><th>对比度</th><th>结论</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>正文（深色主题）</td>
+        <td><span class="sw" style="background:#f2ece1"></span><code>#f2ece1</code> / <code>#14110d</code></td>
+        <td>16.01:1</td><td class="good">AAA</td>
+      </tr>
+      <tr>
+        <td>次要文字（深色主题）</td>
+        <td><span class="sw" style="background:#ad9d86"></span><code>#ad9d86</code></td>
+        <td>7.12:1</td><td class="good">AAA</td>
+      </tr>
+      <tr>
+        <td>提示小字 <code>--vx-text-faint</code>（深色，25 处）</td>
+        <td><span class="sw" style="background:#7d6f5c"></span><code>#7d6f5c</code></td>
+        <td class="bad">3.85:1</td><td class="bad">不达标 → 改 <code>#8f8170</code>（4.9:1）</td>
+      </tr>
+      <tr>
+        <td>浅色主题次要文字（11px 说明）</td>
+        <td><span class="sw" style="background:#8a7355"></span><code>#8a7355</code> / <code>#fffaf0</code></td>
+        <td class="bad">4.33:1</td><td class="bad">差一点 → 改 <code>#7a6449</code>（5.2:1）</td>
+      </tr>
+    </tbody>
+  </table>
+  <p class="notes" style="margin-top:12px">
+    <li><b>两个 token 值</b>改完，25 处小字全部达到 AA，视觉上几乎看不出差别（只是略微提亮）。</li>
+    <li>这是本轮唯一「有客观验收标准」的改动，可以放进自动化检查。</li>
+  </p>
+
+  <footer>
+    预览稿 · 2026-10-22　｜　尺寸按 1080×760 等比；实际实现沿用 <code>--vx-*</code> 变量，不新增硬编码色值。
+  </footer>
+</div>
+</body>
+</html>

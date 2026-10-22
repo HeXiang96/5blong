@@ -94,6 +94,20 @@ export function LandingView({
    * 进不去时一个字都不显示：弹窗一关就什么都没有（实测就是这个现象）。
    */
   const [parseError, setParseError] = useState<string | null>(null);
+  /** 首页内联房间码（不再弹一层窗：输码是最高频动作）。 */
+  const [codeDraft, setCodeDraft] = useState("");
+
+  /** 内联房间码 → 直接进房；格式不对就地提示，不打断。 */
+  const joinByCode = () => {
+    const code = codeDraft.trim();
+    if (code.length !== ROOM_CODE_LEN) {
+      setParseError(CODE_HINT);
+      return;
+    }
+    onDismissError?.();
+    const ok = onJoin(code);
+    setParseError(ok ? null : JOIN_PARSE_ERROR);
+  };
   const [editing, setEditing] = useState(false);
   const [draftName, setDraftName] = useState(identity.name);
   const viewWidth = typeof window !== "undefined" ? window.innerWidth : 1000;
@@ -190,6 +204,110 @@ export function LandingView({
           <p>免注册、免装客户端、免选服务器。音频在彼此之间点对点直连。</p>
         </div>
 
+        {/*
+          主页按**使用频率**分层（2026-10-22）：
+          语音房是主频道（天天用），开黑圈是低频频道（一周一次）。
+          两者都是"频道"，所以开黑圈保留名字、场景与两个动作，只是体量收小；
+          主频道承载唯一的大主操作 + 内联房间码，不再点一层弹窗。
+          配色只走 --vx-* 变量，自动跟随深色/浅色与四时段（夜晚自动入夜）。
+        */}
+        <div className="vx-channels">
+          <section className="vx-channel vx-channel-main" aria-label="语音房">
+            <div className="vx-channel-head">
+              <span className="vx-channel-icon" aria-hidden="true">
+                🎧
+              </span>
+              <strong>语音房</strong>
+            </div>
+            <p className="vx-channel-desc">随手开一间，发链接就能进。聊天、听歌、看视频、共享屏幕。</p>
+            <div className="vx-code-row">
+              <input
+                className="vx-code-input"
+                value={codeDraft}
+                onChange={(event) => {
+                  setCodeDraft(event.target.value.replace(/\D/g, "").slice(0, ROOM_CODE_LEN));
+                  setParseError(null);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") joinByCode();
+                }}
+                placeholder={CODE_PLACEHOLDER}
+                inputMode="numeric"
+                autoComplete="off"
+                aria-label="房间码"
+                disabled={joining}
+              />
+              <button
+                type="button"
+                className="vx-btn vx-btn-ghost"
+                onClick={joinByCode}
+                disabled={joining || codeDraft.length < ROOM_CODE_LEN}
+                title={CODE_HINT}
+              >
+                <LogIn size={16} /> 加入
+              </button>
+            </div>
+            {parseError ? (
+              <p className="vx-channel-error" role="alert">
+                {parseError}
+              </p>
+            ) : null}
+            {/* 内联输入只吃纯数字；收到完整邀请链接的人走原来那个弹窗（能解析链接）。 */}
+            <button type="button" className="vx-link-btn vx-channel-invite" onClick={() => setJoinOpen(true)}>
+              有邀请链接？
+            </button>
+            <button type="button" className="vx-btn vx-btn-primary" onClick={onCreate} disabled={joining}>
+              <Plus size={18} /> 创建语音房
+            </button>
+            {lastRoom && !joining ? (
+              <button
+                type="button"
+                className="vx-link-btn vx-channel-link"
+                onClick={() => {
+                  setParseError(null);
+                  onDismissError?.();
+                  if (onResumeLastRoom) onResumeLastRoom();
+                  else onJoin(lastRoom.code);
+                }}
+                title={
+                  lastRoom.role === "host"
+                    ? "用原房号重新开房（访客的老邀请链接继续有效）"
+                    : "回到你上次的房间（房主在线才能进）"
+                }
+              >
+                <History size={14} /> 上次房间 {lastRoom.code} ·{" "}
+                {lastRoom.role === "host" ? "重新开房" : "一键重进"}
+              </button>
+            ) : null}
+          </section>
+
+          {/* 低频频道：保留名字与两个动作，体量约为上面的三分之一 */}
+          <section className="vx-channel vx-channel-sub" aria-label="开黑圈">
+            <div className="vx-channel-head">
+              <span className="vx-channel-icon" aria-hidden="true">
+                🎮
+              </span>
+              <strong>开黑圈 · 5v5 分队内战</strong>
+              <button
+                type="button"
+                className="vx-link-btn vx-channel-what"
+                onClick={() => setTeaseOpen(true)}
+              >
+                这是什么？
+              </button>
+            </div>
+            <p className="vx-channel-desc">分进攻 / 防守两队，队内语音互相隔离。</p>
+            <div className="vx-channel-acts">
+              <button type="button" className="vx-btn vx-btn-small vx-btn-ghost" onClick={onCreateGame}>
+                创建
+              </button>
+              <button type="button" className="vx-btn vx-btn-small vx-btn-ghost" onClick={onJoinGame}>
+                加入
+              </button>
+            </div>
+          </section>
+        </div>
+
         <div className="vx-identity">
           <Avatar
             avatar={identity.avatar}
@@ -229,76 +347,6 @@ export function LandingView({
           </button>
         </div>
 
-        <div className="vx-actions">
-          {/*
-            进房中禁用这两个按钮：重复点"加入"会再跑一次 joinRoom，
-            把 welcome 超时重置掉（等于自己把进房越拖越久）。
-          */}
-          {lastRoom && !joining ? (
-            <button
-              type="button"
-              className="vx-btn vx-btn-ghost vx-last-room"
-              onClick={() => {
-                setParseError(null);
-                onDismissError?.();
-                if (onResumeLastRoom) onResumeLastRoom();
-                else onJoin(lastRoom.code);
-              }}
-              title={
-                lastRoom.role === "host"
-                  ? "用原房号重新开房（访客的老邀请链接继续有效）"
-                  : "回到你上次的房间（房主在线才能进）"
-              }
-            >
-              <History size={18} />{" "}
-              {lastRoom.role === "host"
-                ? `我的房间 ${lastRoom.code} · 重新开房`
-                : `上次房间 ${lastRoom.code} · 一键重进`}
-            </button>
-          ) : null}
-          <button
-            type="button"
-            className="vx-btn vx-btn-primary"
-            disabled={joining}
-            onClick={onCreate}
-          >
-            <Plus size={18} /> 创建语音房
-          </button>
-          <button
-            type="button"
-            className="vx-btn vx-btn-ghost"
-            disabled={joining}
-            onClick={() => {
-              setParseError(null);
-              onDismissError?.();
-              setJoinOpen(true);
-            }}
-          >
-            <LogIn size={18} /> 加入语音房
-          </button>
-        </div>
-
-        {/*
-          开黑圈入口：与语音房**明确分区**（业主反馈"三个按钮没用过软件的会搞混"）。
-          文案直接说清"打游戏的用这个"，创建/加入两个动作直接摆出来，不用再进一层。
-        */}
-        <div className="vx-game-entry">
-          <div className="vx-game-entry-text">
-            <strong>🎮 开黑圈 · 5v5 分队内战房</strong>
-            <span>要分进攻/防守两队、队内语音互相隔离的内战用这个；平时连麦聊天，上面的「语音房」就够了</span>
-            <button type="button" className="vx-link-btn vx-game-entry-what" onClick={() => setTeaseOpen(true)}>
-              这是什么？
-            </button>
-          </div>
-          <div className="vx-game-entry-actions">
-            <button type="button" className="vx-btn vx-btn-small vx-btn-primary" onClick={onCreateGame}>
-              创建开黑圈
-            </button>
-            <button type="button" className="vx-btn vx-btn-small vx-btn-ghost" onClick={onJoinGame}>
-              加入开黑圈
-            </button>
-          </div>
-        </div>
 
         {teaseOpen ? (
           <div className="vx-modal-backdrop" onClick={() => setTeaseOpen(false)}>
