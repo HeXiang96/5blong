@@ -161,7 +161,8 @@ export function loadSettings(): VoiceSettings {
     speakerDeviceId:
       typeof stored.speakerDeviceId === "string" ? stored.speakerDeviceId : fallback.speakerDeviceId,
     // 进房默认静音（2026-10-13 业主决定）；此字段暂无 UI，留作后续开关
-    joinMuted: stored.joinMuted === true,
+    // 缺字段时要回到默认值（true），不能因为"不是 true"就变成 false
+    joinMuted: typeof stored.joinMuted === "boolean" ? stored.joinMuted : fallback.joinMuted,
     micVolume,
     peerVolumes:
       stored.peerVolumes && typeof stored.peerVolumes === "object" ? stored.peerVolumes : {},

@@ -1012,7 +1012,8 @@ export function useVoice() {
     setInvite(null);
     setView("room");
     const engine = startEngine();
-    await engine.host(identityRef.current, settings, true);
+    // 尊重"进房默认静音"开关（评审 #2：原来三处全硬编码 true，开关是死的）
+    await engine.host(identityRef.current, settings, settings.joinMuted);
     const mine = engine.invite;
     // 记下"我的房间"：房主关掉客户端后，首页可以用同一房号+钥匙重建，
     // 访客不用重新加（房号推导出的房主 peer id 断开后会被释放）。
@@ -1264,6 +1265,8 @@ export function useVoice() {
     const url = buildInviteUrl(current);
     try {
       await navigator.clipboard.writeText(url);
+      // 成功也要有反馈：这个按钮在空圈页是唯一的主操作，点了没反应会被当成坏了
+      setNotice({ kind: "info", text: "邀请链接已复制，发给朋友即可" });
       return true;
     } catch {
       setNotice({ kind: "error", text: "复制失败，请手动选中房间码分享" });
@@ -1386,7 +1389,7 @@ export function useVoice() {
         return true;
       }
       // 只输房间码：房主 ID 由房间码推导，直接进房。
-      void joinRoom(target, true);
+      void joinRoom(target, settings.joinMuted);
       return true;
     },
     [joinRoom, settings.joinMuted],

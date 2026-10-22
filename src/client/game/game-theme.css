@@ -1011,3 +1011,24 @@ html[data-daypart="night"] .vx-game-root {
   0%, 100% { transform: scaleY(0.55); }
   50% { transform: scaleY(1); }
 }
+
+/* 评审修复：错误条可关闭（自愈恢复后不该一直挂着） */
+.vx-game-error-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.vx-game-error-close {
+  margin-left: auto;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.7;
+  padding: 0 2px;
+}
+.vx-game-error-close:hover {
+  opacity: 1;
+}

@@ -77,8 +77,11 @@ function Fixture() {
       { id: "guest", personId: "1000000002", sessionId: "guest", name: "测试成员", avatar: "", color: "#e05f8a", muted: false, hasMic: true, isHost: !host, local: false, serverMuted: params.get("muted") === "1" },
     ],
     speaking: params.get("speak") ? ["guest"] : [], messages: [], invite: { code: "123456", hostId: "self", roomKey: "fixture" }, notice: null,
-    chatOpen, unread: 0, displayNames: new Map(), isHost: host, maxMembers: 8,
-    onCopyCode: () => record("copy-code"), onCopyInvite: async () => { record("copy-invite"); return true; },
+    chatOpen, unread: 0, displayNames: new Map(), isHost: host, maxMembers: 13,
+    onCopyCode: async () => {
+      record("copy-code");
+      return true;
+    }, onCopyInvite: async () => { record("copy-invite"); return true; },
     onToggleMute: () => record("mic-toggle"), onToggleChat: () => setChatOpen((value) => !value),
     onLeave: () => record("leave"), onSettings: () => record("settings"), onSend: (text) => record("send", text),
     onDismissNotice: () => {}, onOpenFeedback: () => {}, micVolume: volume,

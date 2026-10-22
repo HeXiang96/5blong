@@ -442,6 +442,7 @@ export function PenTvLightbox({
       ref={rootRef}
       className={`vx-tv-lightbox${big ? " vx-tv-max" : ""}`}
       role="dialog"
+      aria-modal="true"
       aria-label="共享屏幕（放大）"
     >
       <div className="vx-tv-stagebig" onClick={(event) => event.stopPropagation()}>
@@ -517,6 +518,7 @@ export function PenTvLightbox({
                   aria-label="画质偏好"
                   title="按你的观感调：清晰优先保文字清楚，流畅优先保不卡"
                 >
+                  <span className="vx-tv-pref-label">画质</span>
                   {(
                     [
                       { key: "auto", name: "自动" },
@@ -550,6 +552,7 @@ export function PenTvLightbox({
                   aria-label="延迟档位"
                   title="卡就把延迟调大：多等一会儿换画面不卡（画面与声音一起延迟）"
                 >
+                  <span className="vx-tv-pref-label">延迟</span>
                   {(
                     [
                       { key: "low", name: "跟手", tip: "最低延迟（≤0.5 秒）：看操作最跟手，网络抖一下会花屏" },

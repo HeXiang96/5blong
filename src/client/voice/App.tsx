@@ -236,9 +236,9 @@ export function App() {
         isHost={voice.invite !== null}
         maxMembers={voice.maxMembers}
         onCopyCode={() => {
-          if (voice.invite) {
-            void voice.copyText(voice.invite.code, `房间码 ${voice.invite.code} 已复制`);
-          }
+          // 把真实结果交回给界面：只有复制成功才打勾（评审 #6）
+          if (!voice.invite) return Promise.resolve(false);
+          return voice.copyText(voice.invite.code, `房间码 ${voice.invite.code} 已复制`);
         }}
         onCopyInvite={voice.copyInvite}
         onToggleMute={voice.toggleMute}

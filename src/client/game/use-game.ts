@@ -420,6 +420,8 @@ export function useGame() {
     room,
     muted,
     kicked,
+    /** 关掉"已被移出开黑圈"的提示（提示卡上的"知道了"）。 */
+    dismissKicked: () => setKicked(false),
     me,
     isHost,
     myTeam,

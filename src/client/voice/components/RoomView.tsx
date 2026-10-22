@@ -59,7 +59,7 @@ const IDLE_MOOD_MS = 180_000;
 import { SCENE_THEMES, type SceneThemeId } from "../scene-theme";
 import type { LucideIcon } from "lucide-react";
 import { MonitorUp } from "lucide-react";
-import { SHARE_QUALITY_PRESETS, autoTransportFor } from "../screen-share";
+import { SHARE_QUALITY_PRESETS, autoTransportFor, perViewerBitrate } from "../screen-share";
 import { isTauriRuntime, listLoopbackTargets, listShareWindows } from "../loopback";
 
 /**
@@ -198,7 +198,7 @@ export function RoomView({
   displayNames: Map<string, string>;
   isHost: boolean;
   maxMembers: number;
-  onCopyCode: () => void;
+  onCopyCode: () => Promise<boolean>;
   onCopyInvite: () => Promise<boolean>;
   onToggleMute: () => void;
   onToggleChat: () => void;
@@ -905,8 +905,10 @@ export function RoomView({
               type="button"
               className="vx-sign-code"
               onClick={() => {
-                onCopyCode();
-                flash("code");
+                // copyText 里已经有成功/失败两条提示；这里只按真实结果决定要不要打勾
+                void onCopyCode().then((ok) => {
+                  if (ok) flash("code");
+                });
               }}
               title="点击复制房间码"
             >
@@ -1275,7 +1277,8 @@ export function RoomView({
               type="button"
               className="vx-mic-main"
               onClick={onToggleMute}
-              disabled={self?.serverMuted ?? false}
+              // 没检测到麦时点它什么也不会发生，禁用比骗人好（评审 #1）
+              disabled={(self?.serverMuted ?? false) || self?.hasMic === false}
               aria-pressed={!muted}
               title={
                 self?.serverMuted
@@ -1287,8 +1290,16 @@ export function RoomView({
                     : "没有可用的麦克风"
               }
             >
-              {muted ? <MicOff size={20} /> : <Mic size={20} />}
-              <span>{muted ? "已静音" : "麦克风开"}</span>
+              {muted || self?.hasMic === false ? <MicOff size={20} /> : <Mic size={20} />}
+              <span>
+                {self?.serverMuted
+                  ? "已禁言"
+                  : self?.hasMic === false
+                    ? "未接麦"
+                    : muted
+                      ? "已静音"
+                      : "麦克风开"}
+              </span>
             </button>
             <span className="vx-mic-sep" />
             <button
@@ -1404,6 +1415,8 @@ export function RoomView({
           }}
           disabled={tvOccupied}
           aria-pressed={selfSharing}
+          aria-haspopup="menu"
+          aria-expanded={selfSharing ? undefined : shareMenuOpen}
           title={
             selfSharing
               ? "停止共享屏幕"
@@ -1449,7 +1462,7 @@ export function RoomView({
               <>
                 {/* 三选一做成一行小胶囊：两列网格放三项会剩一个单独换行，
                     菜单也被撑高到看不见顶（业主实拍反馈） */}
-                <div className="vx-share-tri" role="group" aria-label="共享声音来源">
+                <div className="vx-share-tri" role="radiogroup" aria-label="共享声音来源">
                   {(
                     [
                       { key: "off", name: "不带", tip: "只共享画面，不采集任何声音" },
@@ -1465,6 +1478,8 @@ export function RoomView({
                       <button
                         key={item.key}
                         type="button"
+                        role="radio"
+                        aria-checked={on}
                         title={item.tip}
                         className={`vx-share-quality${on ? " vx-share-quality-on" : ""}`}
                         onClick={() => {
@@ -1526,34 +1541,28 @@ export function RoomView({
                 ) : null}
               </select>
             ) : null}
-            <p className="vx-share-menu-title">
-              共享方式
-              <span className="vx-share-help" tabIndex={0} aria-label="两种共享方式的优缺点说明">
-                ?
-                <span className="vx-share-tip" role="tooltip">
-                  <b>自动（推荐）</b>：观众 ≤4 人走直连（画质最好、延迟最低）；
-                  5 位观众及以上自动切 SFU 转发——直连的上行是"每路码率 × 观众数"，
-                  人再多就会把自家宽带上行打爆。
-                  <br />
-                  <b>P2P 直连</b>：画面在成员间直接传输，不绕服务器，
-                  同网/国内延迟低、画质最好；双方网络都打不通直连时可能连不上。
-                  <br />
-                  <b>SFU 转发</b>：画面经服务器中转（国内会绕境外节点，实测画质
-                  通常不如直连），连接成功率高、更稳定，且能给 5 人以上省上行。
-                </span>
-              </span>
+            <p className="vx-share-menu-title">共享方式</p>
+            {/*
+              原来这段话挂在"?"气泡里：一是读不到（菜单可滚动后气泡被裁），
+              二是写的是"观众 ≤4 走直连"，与 autoTransportFor 的 ≤2 不符（业主评审确认）。
+              改成常显一行，并只讲取舍不复述阈值——阈值由下面那句"将走…"按真实人数给出。
+            */}
+            <p className="vx-share-menu-hint">
+              自动：观众多时改走转发，省自家上行；直连画质最好但吃上行
             </p>
-            <div className="vx-share-tri" role="group" aria-label="共享方式">
+            <div className="vx-share-tri" role="radiogroup" aria-label="共享方式">
               {(
                 [
                   { key: "auto", name: "自动", tip: "按观众数选直连/转发" },
-                  { key: "p2p", name: "直连", tip: "P2P 直连：画质最好、延迟最低" },
-                  { key: "sfu", name: "转发", tip: "SFU 转发：连接成功率高，多人更省上行" },
+                  { key: "p2p", name: "直连", tip: "直连：画质最好、延迟最低" },
+                  { key: "sfu", name: "转发", tip: "转发：连接成功率高，多人更省上行" },
                 ] as const
               ).map((item) => (
                 <button
                   key={item.key}
                   type="button"
+                  role="radio"
+                  aria-checked={shareTransport === item.key}
                   title={item.tip}
                   className={`vx-share-quality${shareTransport === item.key ? " vx-share-quality-on" : ""}`}
                   onClick={() => onSetShareTransport(item.key)}
@@ -1563,8 +1572,15 @@ export function RoomView({
               ))}
             </div>
             <p className="vx-share-menu-hint">
-              本次将用{autoTransportFor(shareTransport, members.length).transport === "sfu" ? "SFU 转发" : "P2P 直连"}
-              ：{autoTransportFor(shareTransport, members.length).reason}
+              {(() => {
+                const decision = autoTransportFor(shareTransport, members.length);
+                const viewers = Math.max(0, members.length - 1);
+                if (decision.transport === "sfu") {
+                  return `将走转发 · ${viewers} 位观众 · 不占你家上行（由服务器分发）`;
+                }
+                const perViewer = Math.round(perViewerBitrate(shareQuality, viewers) / 1000);
+                return `将走直连 · ${viewers} 位观众 · 每人约 ${perViewer} Mbps（合计约 ${perViewer * Math.max(1, viewers)} Mbps 上行）`;
+              })()}
             </p>
             <button
               type="button"
@@ -1647,7 +1663,8 @@ export function RoomView({
         </div>
       </footer>
 
-      <aside className={`vx-chat${chatOpen ? " vx-chat-open" : ""}`} aria-hidden={!chatOpen}>
+      <aside className={`vx-chat${chatOpen ? " vx-chat-open" : ""}`} aria-hidden={!chatOpen}
+          inert={!chatOpen}>
         <div className="vx-chat-head">
           <span>房间聊天</span>
           <button type="button" className="vx-icon-btn" onClick={onToggleChat} aria-label="关闭聊天">

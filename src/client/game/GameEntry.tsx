@@ -64,6 +64,7 @@ export function GameEntry({
         isHost={game.isHost}
         myTeam={game.myTeam}
         error={game.error}
+        onDismissError={game.clearError}
         onToggleMute={game.toggleMuted}
         onClaim={game.setMyTeam}
         onAssign={game.hostAssign}
@@ -88,6 +89,39 @@ export function GameEntry({
         onSetOutputDevice={game.setOutputDevice}
         speaking={game.speaking}
       />
+    );
+  }
+
+  /*
+   * 被踢 / 房主关房：不进房、也没弹窗时，原来直接 return null —— 界面凭空消失，
+   * 玩家不知道自己是被踢了还是房主关了（评审 P1）。给一张明确的结束卡。
+   * 只在没有弹窗（!prompt）时接管，避免把建房/加入弹窗里的错误也顶掉。
+   */
+  if (!prompt && !game.room && (game.kicked || game.error)) {
+    return (
+      <div className="vx-modal-backdrop">
+        <div className="vx-modal" role="alertdialog" aria-label="开黑圈已结束">
+          <h3>{game.kicked ? "你已被移出开黑圈" : "开黑圈已结束"}</h3>
+          <p className="vx-modal-note">
+            {game.kicked
+              ? "房主把你移出了这一局。可以让队友重新邀请你进来。"
+              : (game.error ?? "房主关闭了开黑圈。")}
+          </p>
+          <div className="vx-modal-actions">
+            <button
+              type="button"
+              className="vx-btn vx-btn-primary"
+              onClick={() => {
+                game.dismissKicked();
+                game.clearError();
+                onPromptConsumed();
+              }}
+            >
+              知道了
+            </button>
+          </div>
+        </div>
+      </div>
     );
   }
 

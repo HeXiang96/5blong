@@ -17,6 +17,7 @@ import {
   type GameRoomInfo,
   type GameScores,
   type Team,
+  teamCap,
 } from "./game-types";
 import { activateEntitlement, loadEntitlement, markTutorialSeen, tutorialSeen, type GameEntitlement } from "./use-game";
 
@@ -318,6 +319,7 @@ export function GameRoomView({
   isHost,
   myTeam,
   error,
+  onDismissError,
   onToggleMute,
   onClaim,
   onAssign,
@@ -348,6 +350,8 @@ export function GameRoomView({
   isHost: boolean;
   myTeam: Team;
   error: string | null;
+  /** 关掉错误条：自愈恢复后不该一直挂着一条红字。 */
+  onDismissError: () => void;
   onToggleMute: () => void;
   onClaim: (team: Team) => void;
   onAssign: (peerId: string, team: Team) => void;
@@ -456,7 +460,14 @@ export function GameRoomView({
         ) : null}
       </div>
 
-      {error ? <div className="vx-game-error-bar">{error}</div> : null}
+      {error ? (
+        <div className="vx-game-error-bar" role="status">
+          <span>{error}</span>
+          <button type="button" className="vx-game-error-close" aria-label="关闭提示" onClick={onDismissError}>
+            ×
+          </button>
+        </div>
+      ) : null}
 
       <div className="vx-game-board">
         {groups.map((group) => {
@@ -590,7 +601,7 @@ export function GameRoomView({
                 ))}
                 {/* 空位占位：把版面撑起来（业主嫌三栏太空），也直观看到还差几个人 */}
                 {group.team !== "unassigned"
-                  ? Array.from({ length: Math.max(0, (unlocked ? 8 : 5) - group.members.length) }).map((_, index) => (
+                  ? Array.from({ length: Math.max(0, teamCap(unlocked) - group.members.length) }).map((_, index) => (
                       <div key={`slot-${index}`} className="vx-game-slot" aria-hidden="true">
                         <span className="vx-game-slot-ring" />
                         <span>虚位以待</span>

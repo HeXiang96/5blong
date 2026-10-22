@@ -3467,3 +3467,46 @@ html[data-theme="dark"] .vx-link-warn-text {
 .vx-feedback-check span {
   opacity: 0.82;
 }
+
+/* ================================================================
+ * 评审修复（2026-10-22）：响应式与可访问性兜底
+ * 说明：这里只做"覆盖"，不改上面的既有视觉；顺序在文件末尾即生效。
+ * ================================================================ */
+
+/* 底部托盘：窄窗口允许换行，别把两字标签挤成竖排（820×600 实测会挤） */
+.vx-controls-tray {
+  flex-wrap: wrap;
+  justify-content: center;
+  row-gap: 8px;
+}
+
+/* 单个控件不许被压缩、标签不许折行 */
+.vx-ctl {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+/*
+ * 更窄时只留图标：两字标签在这个宽度下必然折行或被裁。
+ * 图标仍带 title / aria-label，功能不受影响，只是省掉重复文字。
+ */
+@media (max-width: 900px) {
+  .vx-ctl > span:not(.vx-ctl-icon) {
+    display: none;
+  }
+  .vx-ctl {
+    padding: 11px 14px;
+  }
+}
+
+/* 弹层统一兜底：再长的内容也不许把按钮顶出屏幕 */
+.vx-modal {
+  max-height: 86vh;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+/* 关闭的聊天栏：视觉上移出屏幕，但不该还能被 Tab 到（见 RoomView 的 inert） */
+.vx-chat[aria-hidden="true"] {
+  visibility: hidden;
+}

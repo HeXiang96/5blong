@@ -883,3 +883,30 @@ html.vx-lightbox-open .vx-stage * {
   aspect-ratio: auto;
   min-height: 0;
 }
+
+/* ================================================================
+ * 评审修复（2026-10-22）
+ * ================================================================ */
+
+/* 灯箱在"超宽矮"窗口（1920×760、1080p 屏窗口化）会把底部音量/画质按钮切掉：
+   限高并按比例缩，而不是只锁宽度。 */
+.vx-tv-stagebig {
+  max-height: calc(100vh - 96px);
+}
+.vx-tv-bigscreen {
+  max-height: calc(100vh - 220px);
+}
+
+/* 灯箱两组胶囊的可见标题（原来并排 6 个按钮，用户不知道哪三个是画质） */
+.vx-tv-pref-label {
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  opacity: 0.7;
+  margin-right: 2px;
+  white-space: nowrap;
+}
+
+/* 共享菜单滚动条走细样式，别在 230px 宽的卡片里插一条 Windows 粗条 */
+.vx-share-menu {
+  scrollbar-width: thin;
+}
