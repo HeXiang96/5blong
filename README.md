@@ -569,6 +569,8 @@ npm run feedback:admin list 20   # 终端查看最近反馈（url / list / rm �
 <!-- AUTO-LOG:START -->
 ### 近期提交（自动生成）
 
+- `3f0d576` fix(build): windows 0.62 里 BOOL 在 windows::core，修正 import（10-22 11:06）
+- `2663fa8` fix(voice): 直连/中继按"真正在用的候选对"判定（10-22 10:58）
 - `634f46d` release: v1.7.6（10-22 10:49）
 - `a9ec227` feat(screen-share): 只采被共享应用的声音（Oopz 式）+ 延迟三档 + 上行预算（10-22 10:43）
 - `091e895` perf(voice): 关键循环改 Worker 计时，桌面端关掉睡眠节流（10-22 09:17）
@@ -576,7 +578,6 @@ npm run feedback:admin list 20   # 终端查看最近反馈（url / list / rm �
 - `1f09f0c` fix(voice,game): 全量审查语音代码，修掉 15 处真实缺陷（10-22 09:07）
 - `3f6e9b0` fix(game,voice): 单向无声音——判据改看包/播放链，并堵住三处丢声通道（10-22 08:42）
 - `e367c29` release: v1.7.5（10-21 18:24）
-- `4d4bd03` ci: checkout/setup-node 升到 v7，消除 GitHub 的 Node 20 弃用警告（10-21 12:05）
 <!-- AUTO-LOG:END -->
 
 ## 怎么用
