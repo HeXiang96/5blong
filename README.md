@@ -569,6 +569,7 @@ npm run feedback:admin list 20   # 终端查看最近反馈（url / list / rm �
 <!-- AUTO-LOG:START -->
 ### 近期提交（自动生成）
 
+- `f18d810` release: v1.8.1（10-22 16:37）
 - `10ca253` chore(telemetry): 新增房间问题归因分析脚本（rooms-attribution）（10-22 16:33）
 - `9517351` feat(room): 蹦迪/烟花挪进成员互动菜单；公告栏锚定主列右缘不再随视窗漂移（10-22 16:12）
 - `60da63e` fix(home): 公告栏改挂主列右侧（宽屏），低频条去框压扁；首页卡片去描边（10-22 16:03）
@@ -576,7 +577,6 @@ npm run feedback:admin list 20   # 终端查看最近反馈（url / list / rm �
 - `f69aa73` feat(home): 主页按使用频率分层——语音房主卡 + 开黑圈低频频道条（10-22 15:46）
 - `6f58eeb` release: v1.8.0（10-22 11:46）
 - `6e295f2` docs(changelog): 补 1.8.0 更新摘要（共享声音/延迟档/13 人/后台不节流）（10-22 11:45）
-- `afebc53` feat(ui): 按评审方案优化——反馈真实性、信息架构、响应式与可访问性（10-22 11:43）
 <!-- AUTO-LOG:END -->
 
 ## 怎么用
