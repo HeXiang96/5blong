@@ -498,8 +498,8 @@ export function LandingView({
         <span className="vx-landing-board-post vx-landing-board-post-r" aria-hidden="true" />
       </aside>
 
-      {/* 公告栏（最新更新）：原来贴在场景右下角，几乎没人看到（业主反馈"太靠下面"）。
-          挪进主列、紧跟频道卡，作为"看完能做什么"之后的"最近变了什么"。 */}
+      {/* 公告栏（最新更新）：宽屏锚视窗右下角（业主 2026-10-22 口径），
+          窄窗口回落主列末尾；定位与场景配色见 styles.css 的 .vx-landing-board-side 一节。 */}
       {joinOpen ? (
         <div className="vx-modal-backdrop" onClick={() => setJoinOpen(false)}>
           <form className="vx-modal" onClick={(event) => event.stopPropagation()} onSubmit={submit}>

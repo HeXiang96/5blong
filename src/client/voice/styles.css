@@ -669,7 +669,7 @@ html[data-theme="dark"] .vx-landing-board li::before {
   background: rgba(246, 227, 189, 0.55);
 }
 
-html[data-theme="dark"] /* 公告栏标题旁的小版本号：标明"最新更新"是哪一版 */
+/* 公告栏标题旁的小版本号：标明"最新更新"是哪一版 */
 .vx-landing-board-ver {
   margin-left: 6px;
   font-size: 10.5px;
@@ -678,7 +678,7 @@ html[data-theme="dark"] /* 公告栏标题旁的小版本号：标明"最新更�
   opacity: 0.6;
 }
 
-.vx-landing-board-title {
+html[data-theme="dark"] .vx-landing-board-title {
   border-bottom-color: rgba(246, 227, 189, 0.3);
 }
 
@@ -3708,25 +3708,27 @@ html[data-theme="dark"] .vx-channel-error {
 }
 
 /* ================================================================
- * 公告栏（最新更新）挂主列右侧（宽屏 ≥1060px）
+ * 公告栏（最新更新）挂视窗右下角（宽屏 ≥1100px）
  * 业主反馈"太靠下面"——原来是主列末尾的 flex 子项，翻到底才看得见。
  * 窄窗口侧面放不下，回落到主列末尾原位。
  * ================================================================ */
 
 /*
- * 锚定到**主列右缘**（calc(50% + 286px)），不锚视窗右缘：
+ * 业主口径（2026-10-22）：放视窗右下角，不再锚主列右缘：
  * 原来用 right: 3vw，拖窗口时公告栏会跟着视窗边缘滑动；
- * 现在它永远贴在 520px 主列右边 22px 处，只随内容走。
- * 窗口宽度不足以在侧面放下（<1068px）时，回落到主列末尾原位。
+ * 绝对定位贴视窗右下角，随内容滚动；
+ * 窄于 1100px 时回落到主列末尾原位。
  */
 .vx-landing-board-side {
   position: absolute;
-  top: 150px;
-  left: calc(50% + 286px);
+  top: auto;
+  left: auto;
+  right: clamp(16px, 4vw, 48px);
+  bottom: 40px;
   margin: 0;
   width: min(248px, calc(100vw - 44px));
 }
-@media (max-width: 1067px) {
+@media (max-width: 1099px) {
   .vx-landing-board-side {
     position: relative;
     left: auto;
@@ -3837,4 +3839,199 @@ html[data-theme="dark"] .vx-id-copy {
 }
 html[data-theme="dark"] .vx-id-copy:hover {
   background: rgba(255, 236, 200, 0.22);
+}
+
+
+/* ================================================================
+ * 场景主题（雪原 / 万圣夜）下的首页配色适配（2026-10-22 业主反馈）
+ * 背景天空/山丘随 html[data-scene] 换色，但首页卡片/按钮/文字是固定的
+ * 暖木色，压在雪原淡紫、万圣夜深紫上不搭。这里各给一套：
+ * - 雪原白天：冰白卡片 + 冰蓝主按钮
+ * - 雪原夜晚：夜航蓝卡片 + 奶油文字
+ * - 万圣夜：深紫卡片 + 奶油文字 + 南瓜橙主按钮 + 深色木牌
+ * 只作用在 .vx-landing 范围，房间内 UI 不受影响。
+ * ================================================================ */
+
+/* ---------------- 雪原 · 白天（浅冷背景，文字保持深色） ---------------- */
+html[data-scene="snow"] .vx-landing {
+  --vx-accent: #4f7fc7;
+  --vx-accent-strong: #6b98d9;
+  --vx-accent-soft: rgba(79, 127, 199, 0.16);
+}
+html[data-scene="snow"] .vx-channel {
+  color: #2e3f58;
+}
+html[data-scene="snow"] .vx-channel-main {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.72) 0%, rgba(255, 255, 255, 0) 34%),
+    linear-gradient(180deg, #ffffff 0%, #e9f1fa 100%);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.85) inset,
+    0 8px 20px rgba(64, 86, 122, 0.16);
+}
+html[data-scene="snow"] .vx-channel-sub {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.5) 0%, rgba(255, 255, 255, 0.24) 100%);
+}
+html[data-scene="snow"] .vx-channel-head {
+  color: #2e3f58;
+}
+html[data-scene="snow"] .vx-channel-desc,
+html[data-scene="snow"] .vx-channel-link,
+html[data-scene="snow"] .vx-channel-invite {
+  color: #56698a;
+}
+html[data-scene="snow"] .vx-channel .vx-btn {
+  background: rgba(255, 255, 255, 0.78);
+  border-color: rgba(120, 140, 170, 0.38);
+  color: #2e3f58;
+}
+html[data-scene="snow"] .vx-code-input {
+  background: rgba(255, 255, 255, 0.92);
+  color: #2c3c55;
+}
+html[data-scene="snow"] .vx-code-input::placeholder {
+  color: #8296b0;
+}
+html[data-scene="snow"] .vx-code-input:focus {
+  box-shadow:
+    0 1px 2px rgba(64, 86, 122, 0.12) inset,
+    0 0 0 3px rgba(79, 127, 199, 0.32);
+}
+
+/* ---------------- 雪原 · 夜晚（深蓝背景，文字翻亮） ---------------- */
+html[data-scene="snow"][data-daypart="night"] .vx-landing .vx-hero h1,
+html[data-scene="snow"][data-daypart="night"] .vx-landing .vx-hero p,
+html[data-scene="snow"][data-daypart="night"] .vx-landing .vx-facts,
+html[data-scene="snow"][data-daypart="night"] .vx-landing .vx-landing-top {
+  color: #e8f0fa;
+  text-shadow: 0 1px 3px rgba(8, 12, 22, 0.6);
+}
+html[data-scene="snow"][data-daypart="night"] .vx-channel {
+  color: #e8f0fa;
+}
+html[data-scene="snow"][data-daypart="night"] .vx-channel-main {
+  background:
+    linear-gradient(180deg, rgba(232, 240, 250, 0.08) 0%, rgba(232, 240, 250, 0) 34%),
+    linear-gradient(180deg, #263a54 0%, #1a2940 100%);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.08) inset,
+    0 8px 20px rgba(4, 8, 16, 0.45);
+}
+html[data-scene="snow"][data-daypart="night"] .vx-channel-sub {
+  background: rgba(232, 240, 250, 0.08);
+}
+html[data-scene="snow"][data-daypart="night"] .vx-channel-head {
+  color: #e8f0fa;
+}
+html[data-scene="snow"][data-daypart="night"] .vx-channel-desc,
+html[data-scene="snow"][data-daypart="night"] .vx-channel-link,
+html[data-scene="snow"][data-daypart="night"] .vx-channel-invite {
+  color: #a8bcd4;
+}
+html[data-scene="snow"][data-daypart="night"] .vx-channel .vx-btn {
+  background: rgba(232, 240, 250, 0.12);
+  border-color: rgba(232, 240, 250, 0.3);
+  color: #e8f0fa;
+}
+html[data-scene="snow"][data-daypart="night"] .vx-code-input {
+  background: rgba(8, 14, 26, 0.5);
+  color: #e8f0fa;
+}
+html[data-scene="snow"][data-daypart="night"] .vx-code-input::placeholder {
+  color: rgba(232, 240, 250, 0.45);
+}
+html[data-scene="snow"][data-daypart="night"] .vx-code-input:focus {
+  box-shadow:
+    0 1px 2px rgba(4, 8, 16, 0.25) inset,
+    0 0 0 3px rgba(79, 127, 199, 0.4);
+}
+html[data-scene="snow"][data-daypart="night"] .vx-landing .vx-btn-ghost {
+  color: #e8f0fa;
+  border-color: rgba(232, 240, 250, 0.4);
+  background: rgba(16, 24, 40, 0.4);
+}
+
+/* ---------------- 万圣夜（各时段背景都偏暗，整体翻夜色） ---------------- */
+html[data-scene="halloween"] .vx-landing {
+  --vx-accent: #e0812c;
+  --vx-accent-strong: #f0913a;
+  --vx-accent-soft: rgba(224, 129, 44, 0.18);
+}
+html[data-scene="halloween"] .vx-landing .vx-hero h1,
+html[data-scene="halloween"] .vx-landing .vx-hero p,
+html[data-scene="halloween"] .vx-landing .vx-facts,
+html[data-scene="halloween"] .vx-landing .vx-landing-top {
+  color: #f8efff;
+  text-shadow: 0 1px 3px rgba(20, 8, 30, 0.6);
+}
+html[data-scene="halloween"] .vx-channel {
+  color: #f2e7d4;
+}
+html[data-scene="halloween"] .vx-channel-main {
+  background:
+    linear-gradient(180deg, rgba(248, 239, 255, 0.09) 0%, rgba(248, 239, 255, 0) 34%),
+    linear-gradient(180deg, #4a3563 0%, #34224c 100%);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.08) inset,
+    0 8px 20px rgba(10, 4, 20, 0.45);
+}
+html[data-scene="halloween"] .vx-channel-sub {
+  background: rgba(248, 239, 255, 0.08);
+}
+html[data-scene="halloween"] .vx-channel-head {
+  color: #f2e7d4;
+}
+html[data-scene="halloween"] .vx-channel-desc,
+html[data-scene="halloween"] .vx-channel-link,
+html[data-scene="halloween"] .vx-channel-invite {
+  color: #c9b8a4;
+}
+html[data-scene="halloween"] .vx-channel .vx-btn {
+  background: rgba(248, 239, 255, 0.12);
+  border-color: rgba(248, 239, 255, 0.3);
+  color: #f2e7d4;
+}
+html[data-scene="halloween"] .vx-channel .vx-btn:hover {
+  background: rgba(248, 239, 255, 0.2);
+}
+html[data-scene="halloween"] .vx-code-input {
+  background: rgba(16, 8, 30, 0.45);
+  color: #f2e7d4;
+}
+html[data-scene="halloween"] .vx-code-input::placeholder {
+  color: rgba(242, 231, 212, 0.45);
+}
+html[data-scene="halloween"] .vx-code-input:focus {
+  box-shadow:
+    0 1px 2px rgba(10, 4, 20, 0.3) inset,
+    0 0 0 3px rgba(224, 129, 44, 0.4);
+}
+html[data-scene="halloween"] .vx-landing .vx-btn-ghost {
+  color: #f2e7d4;
+  border-color: rgba(242, 231, 212, 0.4);
+  background: rgba(20, 12, 34, 0.35);
+}
+html[data-scene="halloween"] .vx-channel-error {
+  color: #ff9d8a;
+}
+
+/* 万圣夜公告栏：深色风化木 + 奶油文字（同 data-theme=dark 的做法） */
+html[data-scene="halloween"] .vx-landing-board-face {
+  background:
+    linear-gradient(180deg, rgba(248, 239, 255, 0.1) 0%, rgba(248, 239, 255, 0) 30%),
+    repeating-linear-gradient(92deg, rgba(0, 0, 0, 0.14) 0 2px, rgba(0, 0, 0, 0) 2px 9px),
+    linear-gradient(180deg, #5c4a3a 0%, #4a382c 55%, #3a2a20 100%);
+  border-color: rgba(24, 14, 8, 0.7);
+}
+html[data-scene="halloween"] .vx-landing-board-title,
+html[data-scene="halloween"] .vx-landing-board li {
+  color: #f6e3bd;
+  text-shadow: 0 1px 0 rgba(30, 16, 8, 0.55);
+}
+html[data-scene="halloween"] .vx-landing-board li::before {
+  background: rgba(246, 227, 189, 0.55);
+}
+html[data-scene="halloween"] .vx-landing-board-post {
+  background: linear-gradient(180deg, #6e5138 0%, #553c28 60%, #422c1c 100%);
+  border-color: rgba(24, 14, 8, 0.55);
 }
