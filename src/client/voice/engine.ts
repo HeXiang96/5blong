@@ -80,7 +80,6 @@ import { ensureIceServers, iceServers } from "./ice";
 import { latestChangelog } from "./changelog";
 import { isTauriRuntime } from "./loopback";
 import { SessionStatsRecorder, STATS_SAMPLE_SEC, type SessionSummary } from "./session-stats";
-import { isSceneThemeId, type SceneThemeId } from "./scene-theme";
 
 /*
  * ICE 配置已迁到 ./ice.ts（STUN 兜底 + 由服务端 /ice 签发 Cloudflare TURN 短期凭据）。
@@ -276,8 +275,6 @@ export interface EngineEvents {
   mediaState: (peerId: string, state: MediaLinkState) => void;
   /** 房主铭牌公告变化（房主本地修改与访客收到广播都会触发；空串 = 清除）。 */
   topic?: (text: string) => void;
-  /** 场景主题变化（房主切换 / 访客收到广播；空串 = 回到默认，只有时段光照）。 */
-  theme?: (id: SceneThemeId | "") => void;
   /**
    * 屏幕共享状态变化（房主权威广播；null = 停播，电视回雪花）。
    * **与语音链路完全隔离**：这条回调的实现里绝不允许碰音频/PeerJS 媒体。
@@ -944,19 +941,9 @@ export class VoiceMesh {
   private topic = "";
 
   // ------------------------------------------------------- 场景主题
+  // 2026-10-22 起主题改为**个人偏好**（本地设置 + 落盘，见 use-voice/settings），
+  // 引擎不再同步：不广播、不接收、不进名册。协议里的 theme 字段仅为老客户端保留。
 
-  /** 当前场景主题（"" = 默认，只有时段光照）。房主权威，随 welcome / theme 消息同步。 */
-  private sceneTheme: SceneThemeId | "" = "";
-
-  /** 房主切换场景主题（"" = 回到默认）。广播给全房并通知本机界面。 */
-  setSceneTheme(id: SceneThemeId | ""): void {
-    if (!this.hosting || this.destroyed) return;
-    const next = id === "" ? "" : isSceneThemeId(id) ? id : "";
-    if (next === this.sceneTheme) return;
-    this.sceneTheme = next;
-    this.events.theme?.(next);
-    this.broadcastHost({ t: "theme", id: next });
-  }
 
   /** 房主设置公告（≤60 字）。广播 roster（捎带 topic）并通知本机界面。 */
   setTopic(text: string): void {
@@ -1596,8 +1583,6 @@ export class VoiceMesh {
       screenShare: this.screenShareState ?? undefined,
       // 房主铭牌公告（空串不上报，向后兼容老客户端）。
       topic: this.topic || undefined,
-      // 房主选择的场景主题（空 = 默认主题；老客户端忽略）。
-      theme: this.sceneTheme || undefined,
     });
   }
 
@@ -2395,14 +2380,7 @@ export class VoiceMesh {
         this.topic = message.topic;
         this.events.topic?.(this.topic);
       }
-      // 场景主题同 welcome 捎带（缺席 = 默认主题）。
-      {
-        const theme = isSceneThemeId(message.theme) ? message.theme : "";
-        if (theme !== this.sceneTheme) {
-          this.sceneTheme = theme;
-          this.events.theme?.(theme);
-        }
-      }
+      // 场景主题：2026-10-22 起改为个人偏好，不再随 welcome 同步（老字段直接忽略）。
       this.startSessionStats();
       // 中途进房：把"电视亮没亮"一并接管（缺席 = 没在共享）。
       if (message.screenShare && !this.screenShareState) {
@@ -2436,11 +2414,7 @@ export class VoiceMesh {
         break;
       }
       case "theme": {
-        // 房主切换场景主题（白名单已在协议层校验过）。
-        if (message.id !== this.sceneTheme) {
-          this.sceneTheme = isSceneThemeId(message.id) ? message.id : "";
-          this.events.theme?.(this.sceneTheme);
-        }
+        // 主题已是个人偏好（2026-10-22）：老版本房主仍会广播，直接忽略。
         break;
       }
       case "roster": {

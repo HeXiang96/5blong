@@ -35,7 +35,6 @@ import {
   Mic,
   MicOff,
   Megaphone,
-  Palette,
   MousePointer2,
   PartyPopper,
   PhoneOff,
@@ -47,6 +46,7 @@ import {
   Volume2,
   VolumeX,
   X,
+  Gift,
 } from "lucide-react";
 
 import type { ChatMessage, EngineStatus, MediaLinkState, Member } from "../engine";
@@ -56,7 +56,7 @@ import { GROUP_INTERACT_COOLDOWN_MS } from "../protocol";
 
 /** 多久没被互动就算"发呆"（头顶冒 z z）。 */
 const IDLE_MOOD_MS = 180_000;
-import { SCENE_THEMES, type SceneThemeId } from "../scene-theme";
+import type { SceneThemeId } from "../scene-theme";
 import type { LucideIcon } from "lucide-react";
 import { MonitorUp } from "lucide-react";
 import { SHARE_QUALITY_PRESETS, autoTransportFor, perViewerBitrate } from "../screen-share";
@@ -166,7 +166,6 @@ export function RoomView({
   topic,
   onSetTopic,
   sceneTheme,
-  onSetSceneTheme,
   screenShare,
   shareStream,
   sharePc,
@@ -251,10 +250,8 @@ export function RoomView({
   topic: string;
   /** 房主修改公告（访客端不触发）。 */
   onSetTopic: (text: string) => void;
-  /** 当前场景主题（"" = 默认，只有时段光照）。 */
+  /** 当前场景主题（个人偏好，随首页设置走；仅用于互动动作换皮）。 */
   sceneTheme: SceneThemeId | "";
-  /** 房主切换场景主题（访客端不触发）。 */
-  onSetSceneTheme: (id: SceneThemeId | "") => void;
   /** 屏幕共享状态（房主权威广播；null = 电视不在场）。 */
   screenShare: ScreenShareState | null;
   /** 电视正在播的画面流（观看端订阅 / 共享者本机采集）。 */
@@ -289,13 +286,6 @@ export function RoomView({
   /** 房主铭牌公告的行内编辑态。 */
   const [topicEditing, setTopicEditing] = useState(false);
   const [topicDraft, setTopicDraft] = useState("");
-  /** 房主主题选择弹层。 */
-  const [themeMenuOpen, setThemeMenuOpen] = useState(false);
-  const pickTheme = (id: SceneThemeId | ""): void => {
-    setThemeMenuOpen(false);
-    onSetSceneTheme(id);
-  };
-
   // ------------------------------------------------------------ 围炉看 TV
 
   /** 放大层开关。 */
@@ -564,13 +554,16 @@ export function RoomView({
     return latest.kind === "party" ? "🎉 全场蹦迪！" : "🎆 烟花绽放！";
   }, [interactions]);
 
-  /** 场景换皮：雪原＝扔雪球，万圣夜＝丢南瓜（同位置同动作，只换标签与图标）。 */
+  /** 场景换皮：雪原＝扔雪球，万圣夜＝丢南瓜，春节＝发红包（同位置同动作，只换标签与图标）。 */
   const interactActions = useMemo(() => {
     if (sceneTheme === "snow") {
       return INTERACT_ACTIONS.map((a) => (a.kind === "wave" ? { ...a, label: "扔雪球", Icon: Snowflake } : a));
     }
     if (sceneTheme === "halloween") {
       return INTERACT_ACTIONS.map((a) => (a.kind === "wave" ? { ...a, label: "丢南瓜", Icon: Ghost } : a));
+    }
+    if (sceneTheme === "spring") {
+      return INTERACT_ACTIONS.map((a) => (a.kind === "wave" ? { ...a, label: "发红包", Icon: Gift } : a));
     }
     return INTERACT_ACTIONS;
   }, [sceneTheme]);
@@ -1036,51 +1029,8 @@ export function RoomView({
           </span>
 
           {/*
-            场景主题（仅房主可切）：一个胶囊展示当前主题，点开弹出三选项。
-            切换后经引擎广播给全房（访客只读跟随）。
+            场景主题：个人偏好（首页右上角调色板切换），房内不再提供切换入口。
           */}
-          {isHost ? (
-            <span className="vx-scene-picker">
-              <button
-                type="button"
-                className={`vx-topic${themeMenuOpen ? " vx-topic-open" : ""}`}
-                onClick={() => setThemeMenuOpen((open) => !open)}
-                aria-expanded={themeMenuOpen}
-                title="切换房间主题（全房同步）"
-              >
-                <Palette size={13} />
-                <span className="vx-topic-text">
-                  {sceneTheme === "snow"
-                    ? "❄️ 雪原"
-                    : sceneTheme === "halloween"
-                      ? "🎃 万圣夜"
-                      : "主题"}
-                </span>
-              </button>
-              {themeMenuOpen ? (
-                <span className="vx-scene-menu" role="menu">
-                  <button type="button" role="menuitem" onClick={() => pickTheme("")}>
-                    默认（按时段）
-                  </button>
-                  {SCENE_THEMES.map((theme) => (
-                    <button
-                      key={theme.id}
-                      type="button"
-                      role="menuitem"
-                      aria-pressed={sceneTheme === theme.id}
-                      onClick={() => pickTheme(theme.id)}
-                    >
-                      {theme.emoji} {theme.label}
-                    </button>
-                  ))}
-                </span>
-              ) : null}
-            </span>
-          ) : sceneTheme ? (
-            <span className="vx-topic" title="房主选择的本房主题">
-              {sceneTheme === "snow" ? "❄️ 雪原" : "🎃 万圣夜"}
-            </span>
-          ) : null}
 
           <span className="vx-sign-count" title={`房间人数上限 ${maxMembers} 人`}>
             <Users size={14} /> {members.length}/{maxMembers}

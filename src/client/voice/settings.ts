@@ -5,6 +5,7 @@
  */
 
 import { readJson, writeJson } from "./storage";
+import { parseSceneTheme, type SceneThemeId } from "./scene-theme";
 
 export interface AudioProcessing {
   echoCancellation: boolean;
@@ -84,6 +85,11 @@ export interface VoiceSettings {
    */
   shareLatency: "low" | "balanced" | "smooth";
   /**
+   * 我的场景主题（个人偏好：只影响自己的画面，本地落盘，不在房内广播）。
+   * 空串 = 跟随默认（只有时段光照）。
+   */
+  sceneTheme: SceneThemeId | "";
+  /**
    * 设置结构版本（用于迁移）。
    * v2 起把"传输方式"的缺省从 p2p 改成 auto——旧配置里的 p2p 是当年的**默认值**
    * 而不是用户主动选择，所以无版本号时按 auto 迁移；用户之后手动选过就保留。
@@ -141,6 +147,7 @@ export function defaultSettings(): VoiceSettings {
     shareTransport: "auto",
     shareViewMode: "auto",
     shareLatency: "balanced",
+    sceneTheme: "",
     settingsVersion: 2,
   };
 }
@@ -198,6 +205,8 @@ export function loadSettings(): VoiceSettings {
       stored.shareLatency === "low" || stored.shareLatency === "smooth"
         ? stored.shareLatency
         : "balanced",
+    // 我的场景主题：个人偏好，白名单外一律回落默认
+    sceneTheme: parseSceneTheme(stored.sceneTheme),
     processing: {
       echoCancellation: processing.echoCancellation !== false,
       noiseSuppression: processing.noiseSuppression !== false,

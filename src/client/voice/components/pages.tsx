@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { Copy, Download, History, LogIn, Plus, Settings as SettingsIcon } from "lucide-react";
+import { Copy, Download, History, LogIn, Palette, Plus, Settings as SettingsIcon } from "lucide-react";
 import { boardEntries } from "../changelog";
+import { SCENE_THEMES, type SceneThemeId } from "../scene-theme";
 import type { LastRoom, SessionSummary } from "../session-stats";
 
 import { AVATAR_COLORS, initials, type Identity } from "../identity";
@@ -43,6 +44,8 @@ export function LandingView({
   onJoin,
   onSettings,
   onCopyId,
+  sceneTheme,
+  onSetSceneTheme,
   joining = false,
   retrying = false,
   error = null,
@@ -59,6 +62,9 @@ export function LandingView({
   onJoin: (raw: string) => boolean;
   onSettings: () => void;
   onCopyId: () => void;
+  /** 我的场景主题（个人偏好；空串 = 默认按时段）。 */
+  sceneTheme: SceneThemeId | "";
+  onSetSceneTheme: (id: SceneThemeId | "") => void;
   /** 已提交进房、正在连接（含超时后的自动重拨）。 */
   joining?: boolean;
   /** 处于自动重拨阶段（换新线路重试），文案要说清"还在努力"。 */
@@ -110,6 +116,7 @@ export function LandingView({
   };
   const [editing, setEditing] = useState(false);
   const [draftName, setDraftName] = useState(identity.name);
+  const [themeMenuOpen, setThemeMenuOpen] = useState(false);
   const viewWidth = typeof window !== "undefined" ? window.innerWidth : 1000;
 
   // 桌面端显示当前版本号（网页版始终是最新部署，不显示）。
@@ -225,6 +232,47 @@ export function LandingView({
               <Copy size={12} />
             </button>
           </div>
+          <span className="vx-scene-wrap">
+            <button
+              type="button"
+              className="vx-icon-btn"
+              onClick={() => setThemeMenuOpen((open) => !open)}
+              aria-expanded={themeMenuOpen}
+              aria-label="切换我的主题"
+              title="切换我的主题（只影响自己）"
+            >
+              <Palette size={18} />
+            </button>
+            {themeMenuOpen ? (
+              <span className="vx-scene-menu vx-scene-menu-end" role="menu">
+                <button
+                  type="button"
+                  role="menuitem"
+                  aria-pressed={sceneTheme === ""}
+                  onClick={() => {
+                    onSetSceneTheme("");
+                    setThemeMenuOpen(false);
+                  }}
+                >
+                  默认（按时段）
+                </button>
+                {SCENE_THEMES.map((theme) => (
+                  <button
+                    key={theme.id}
+                    type="button"
+                    role="menuitem"
+                    aria-pressed={sceneTheme === theme.id}
+                    onClick={() => {
+                      onSetSceneTheme(theme.id);
+                      setThemeMenuOpen(false);
+                    }}
+                  >
+                    {theme.emoji} {theme.label}
+                  </button>
+                ))}
+              </span>
+            ) : null}
+          </span>
           <button
             type="button"
             className="vx-icon-btn"

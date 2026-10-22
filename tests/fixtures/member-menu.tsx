@@ -1,15 +1,18 @@
-/** 本地浏览器回归场景：真实 RoomView + 模拟成员，不连接信令也不采集麦克风。 */
+/** 本地浏览器回归场景：真实 RoomView + 模拟成员，不连接信令也不采集麦克风。
+ *  ?scene=snow|halloween|spring 可强制场景主题（目检猪装扮与场景装饰）。 */
 import { StrictMode, useEffect, useRef, useState, type ComponentProps } from "react";
 
 import { setLatestPenPoses } from "../../src/client/voice/pen-follow";
 import { createRoot } from "react-dom/client";
 import { RoomView } from "../../src/client/voice/components/RoomView";
 import type { InteractKind } from "../../src/client/voice/protocol";
+import { parseSceneTheme } from "../../src/client/voice/scene-theme";
 import "../../src/client/voice/styles.css";
 import "../../src/client/voice/pen-scene.css";
 import "../../src/client/voice/pen-life.css";
 import "../../src/client/voice/pen-fence.css";
 import "../../src/client/voice/pen-tv.css";
+import "../../src/client/voice/pen-themes.css";
 
 const params = new URLSearchParams(location.search);
 document.documentElement.dataset.theme = params.get("theme") ?? "light";
@@ -99,7 +102,7 @@ function Fixture() {
     onToggleLock: () => record("lock"), onInteract: (...args) => record("interact", ...args),
     onRetryLink: (peerId: string) => record("retry-link", peerId),
     topic: "", onSetTopic: (text) => record("topic", text),
-    sceneTheme: "", onSetSceneTheme: (id) => record("scene-theme", id),
+    sceneTheme: parseSceneTheme(params.get("scene")),
     /*
      * ?tv=1：电视亮起（演示状态，无真实流 → 雪花待机）。
      * 目检掉落/聚集/散场动画与放大灯箱（sharer=guest，本机是观众视角）。

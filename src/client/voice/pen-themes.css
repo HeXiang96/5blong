@@ -431,8 +431,8 @@ html[data-scene="halloween"] .vx-empty span:not(.vx-empty-pigs) {
 .vx-pig-witch {
   display: none;
   position: absolute;
-  left: 63%;
-  top: -10%;
+  left: 66%;
+  top: -4%;
   width: 26%;
   height: 24%;
   transform: rotate(-5deg);
@@ -465,13 +465,13 @@ html[data-scene="halloween"] .vx-pig-witch {
 }
 /* 走路：头更低一点 */
 html[data-scene="halloween"] .vx-pig-walking .vx-pig-witch {
-  top: -6%;
+  top: 1%;
 }
 /* 趴卧（睡觉 / 看投影）：微调 */
 html[data-scene="halloween"] .vx-pig-sleeping .vx-pig-witch,
 html[data-scene="halloween"] .vx-pig-watching .vx-pig-witch {
-  top: 1%;
-  left: 64%;
+  top: 7%;
+  left: 67%;
 }
 
 /* 万圣夜：深紫场景上，浅色主题的深色文字几乎不可读 —— 首页英雄区与说明文字强制奶油白。
@@ -498,4 +498,316 @@ html[data-scene="halloween"] .vx-download-link {
 html[data-scene="halloween"] .vx-cloud {
   opacity: 0.35;
   filter: brightness(0.55) saturate(0.5) sepia(0.35) hue-rotate(230deg);
+}
+
+/* ================================================================ 春节 */
+
+html[data-scene="spring"] .vx-scene-decor-spring {
+  display: block;
+}
+
+/* 天空：暖红金（清晨薄金 → 白天暖粉金 → 傍晚深红霞 → 夜里红绒夜空） */
+html[data-scene="spring"] .vx-pen-frame[data-daypart="morning"] .vx-pen-frame-sky {
+  background: linear-gradient(180deg, #f6e7d0 0%, #f3d9c0 46%, #edc7ac 100%);
+}
+html[data-scene="spring"] .vx-pen-frame[data-daypart="day"] .vx-pen-frame-sky {
+  background: linear-gradient(180deg, #f7e0cd 0%, #f0cdb2 46%, #e9bc9d 100%);
+}
+html[data-scene="spring"] .vx-pen-frame[data-daypart="dusk"] .vx-pen-frame-sky {
+  background: linear-gradient(180deg, #e8b28c 0%, #d98a6a 46%, #c96f52 100%);
+}
+html[data-scene="spring"] .vx-pen-frame[data-daypart="night"] .vx-pen-frame-sky {
+  background: linear-gradient(180deg, #3a1620 0%, #521f26 48%, #6b2a2c 100%);
+}
+
+/* 山丘：暖沙金调，夜里转深枣红 */
+html[data-scene="spring"] .vx-pen-frame[data-daypart="morning"] .vx-hill-far {
+  fill: #e8cfb2;
+}
+html[data-scene="spring"] .vx-pen-frame[data-daypart="morning"] .vx-hill-mid {
+  fill: #f0dabf;
+}
+html[data-scene="spring"] .vx-pen-frame[data-daypart="morning"] .vx-hill-ground {
+  fill: #f7e6cd;
+}
+html[data-scene="spring"] .vx-pen-frame[data-daypart="day"] .vx-hill-far {
+  fill: #e5c6a4;
+}
+html[data-scene="spring"] .vx-pen-frame[data-daypart="day"] .vx-hill-mid {
+  fill: #eed6b4;
+}
+html[data-scene="spring"] .vx-pen-frame[data-daypart="day"] .vx-hill-ground {
+  fill: #f6e3c3;
+}
+html[data-scene="spring"] .vx-pen-frame[data-daypart="dusk"] .vx-hill-far {
+  fill: #d3a075;
+}
+html[data-scene="spring"] .vx-pen-frame[data-daypart="dusk"] .vx-hill-mid {
+  fill: #dfae83;
+}
+html[data-scene="spring"] .vx-pen-frame[data-daypart="dusk"] .vx-hill-ground {
+  fill: #ebbd90;
+}
+html[data-scene="spring"] .vx-pen-frame[data-daypart="night"] .vx-hill-far {
+  fill: #45222a;
+}
+html[data-scene="spring"] .vx-pen-frame[data-daypart="night"] .vx-hill-mid {
+  fill: #552c2e;
+}
+html[data-scene="spring"] .vx-pen-frame[data-daypart="night"] .vx-hill-ground {
+  fill: #663734;
+}
+
+/* 太阳/月亮：白天变金元宝日头，夜里换成暖月 */
+html[data-scene="spring"] .vx-sun {
+  background: radial-gradient(circle at 36% 34%, #ffe9b0 0%, #f4c25e 62%, #e0a03e 100%);
+  box-shadow: 0 0 0 16px rgba(244, 194, 94, 0.2), 0 0 44px 10px rgba(240, 170, 80, 0.3);
+}
+html[data-scene="spring"] .vx-moon {
+  filter: sepia(0.4) saturate(1.2);
+}
+
+/* 地面：暖金光晕盖住草色（像撒了层金红纸屑），夜里转深 */
+html[data-scene="spring"] .vx-scene-decor-spring::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 42%;
+  background: linear-gradient(180deg, rgba(216, 128, 70, 0) 0%, rgba(216, 128, 70, 0.22) 45%, rgba(196, 96, 52, 0.42) 100%);
+}
+html[data-scene="spring"] .vx-pen-frame[data-daypart="night"] .vx-scene-decor-spring::before {
+  background: linear-gradient(180deg, rgba(70, 24, 26, 0) 0%, rgba(84, 30, 30, 0.4) 45%, #5e2a28 100%);
+}
+
+/* 灯笼 ×2：挂在天空上沿，轻轻摇晃 */
+.vx-lantern {
+  position: absolute;
+  top: 0;
+  width: 36px;
+  height: 44px;
+  border-radius: 46% / 42%;
+  background: radial-gradient(circle at 50% 42%, #ff7a5c 0%, #e23a24 62%, #b82418 100%);
+  box-shadow:
+    inset 0 2px 0 rgba(255, 255, 255, 0.28),
+    0 0 20px 2px rgba(255, 96, 56, 0.5);
+  transform-origin: top center;
+  animation: vx-lantern-sway 4.5s ease-in-out infinite;
+}
+.vx-lantern::before {
+  /* 挂绳 + 金顶盖 */
+  content: "";
+  position: absolute;
+  top: -16px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 2px;
+  height: 16px;
+  background: rgba(120, 60, 30, 0.6);
+}
+.vx-lantern::after {
+  /* 金顶盖 + 流苏 */
+  content: "";
+  position: absolute;
+  top: -5px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 46%;
+  height: 6px;
+  border-radius: 2px;
+  background: linear-gradient(180deg, #f4c862, #d09a34);
+  box-shadow: 0 46px 0 -2px #d09a34, 0 52px 0 -1px rgba(216, 90, 40, 0.75);
+}
+.vx-lantern-1 {
+  left: 16%;
+}
+.vx-lantern-2 {
+  right: 17%;
+  top: 6%;
+  transform: scale(0.8);
+  animation-delay: -2.2s;
+}
+@keyframes vx-lantern-sway {
+  0%,
+  100% {
+    transform: rotate(-2.4deg);
+  }
+  50% {
+    transform: rotate(2.4deg);
+  }
+}
+html[data-scene="spring"] .vx-lantern-2 {
+  transform: scale(0.8);
+  animation: vx-lantern-sway-2 5.2s ease-in-out infinite;
+}
+@keyframes vx-lantern-sway-2 {
+  0%,
+  100% {
+    transform: scale(0.8) rotate(2deg);
+  }
+  50% {
+    transform: scale(0.8) rotate(-2deg);
+  }
+}
+
+/* 鞭炮串：地面左下角一小挂 */
+.vx-firecracker {
+  position: absolute;
+  left: 19%;
+  bottom: 9%;
+  width: 12px;
+  height: 34px;
+}
+.vx-firecracker::before,
+.vx-firecracker::after {
+  content: "";
+  position: absolute;
+  width: 12px;
+  height: 16px;
+  border-radius: 3px;
+  background: repeating-linear-gradient(
+    180deg,
+    #d0301f 0 6px,
+    #f4c862 6px 8px
+  );
+  box-shadow: 0 2px 5px rgba(90, 30, 20, 0.4);
+}
+.vx-firecracker::before {
+  top: 0;
+  left: 0;
+  transform: rotate(-8deg);
+}
+.vx-firecracker::after {
+  top: 13px;
+  left: 5px;
+  transform: rotate(6deg);
+}
+
+/* 猪的春节装扮：财神金帽（金帽身 + 红绒球 + 红帽箍，区别雪原的红毛线帽） */
+.vx-pig-tang {
+  display: none;
+  position: absolute;
+  left: 62%;
+  top: 1%;
+  width: 24%;
+  height: 15%;
+  border-radius: 50% 50% 46% 46%;
+  background: linear-gradient(180deg, #f6d372 0%, #e0a83c 58%, #c88c28 100%);
+  box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.4), 0 1px 3px rgba(80, 40, 10, 0.4);
+  transform: rotate(-4deg);
+}
+.vx-pig-tang::after {
+  /* 红绒球（金帽配红球，雪原是金帽配白雪球反着来） */
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: -56%;
+  width: 52%;
+  height: 68%;
+  transform: translateX(-50%);
+  border-radius: 50%;
+  background: radial-gradient(circle at 38% 32%, #ff8a6e, #d0301f 75%);
+  box-shadow: 0 1px 2px rgba(80, 30, 20, 0.35);
+}
+html[data-scene="spring"] .vx-pig-tang {
+  display: block;
+}
+html[data-scene="spring"] .vx-pig-walking .vx-pig-tang {
+  top: 6%;
+}
+html[data-scene="spring"] .vx-pig-sleeping .vx-pig-tang,
+html[data-scene="spring"] .vx-pig-watching .vx-pig-tang {
+  top: 16%;
+  left: 63%;
+}
+
+/* ---------------- 猪装扮增强（雪原 / 万圣夜） ---------------- */
+
+/* 雪原：白色绒耳罩（帽子两侧各一团） */
+.vx-pig-earmuffs {
+  display: none;
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.vx-pig-earmuffs::before,
+.vx-pig-earmuffs::after {
+  content: "";
+  position: absolute;
+  top: 4%;
+  width: 13%;
+  height: 13%;
+  border-radius: 50%;
+  background: radial-gradient(circle at 36% 30%, #ffffff, #e2ecf7 75%);
+  box-shadow: 0 1px 2px rgba(60, 50, 40, 0.3);
+}
+.vx-pig-earmuffs::before {
+  left: 55%;
+}
+.vx-pig-earmuffs::after {
+  left: 81%;
+}
+html[data-scene="snow"] .vx-pig-earmuffs {
+  display: block;
+}
+html[data-scene="snow"] .vx-pig-walking .vx-pig-earmuffs::before,
+html[data-scene="snow"] .vx-pig-walking .vx-pig-earmuffs::after {
+  top: 9%;
+}
+html[data-scene="snow"] .vx-pig-sleeping .vx-pig-earmuffs::before,
+html[data-scene="snow"] .vx-pig-sleeping .vx-pig-earmuffs::after,
+html[data-scene="snow"] .vx-pig-watching .vx-pig-earmuffs::before,
+html[data-scene="snow"] .vx-pig-watching .vx-pig-earmuffs::after {
+  top: 19%;
+}
+
+/* 雪原：红围脖（帽子正下方一小圈，露在铭牌上方） */
+.vx-pig-muffler {
+  display: none;
+  position: absolute;
+  left: 60%;
+  top: 15%;
+  width: 26%;
+  height: 7%;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #ef5b4d, #cf3a2f);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3);
+  transform: rotate(-3deg);
+}
+html[data-scene="snow"] .vx-pig-muffler {
+  display: block;
+}
+html[data-scene="snow"] .vx-pig-walking .vx-pig-muffler {
+  top: 20%;
+}
+html[data-scene="snow"] .vx-pig-sleeping .vx-pig-muffler,
+html[data-scene="snow"] .vx-pig-watching .vx-pig-muffler {
+  top: 29%;
+  left: 61%;
+}
+
+/* 万圣夜：紫色小斗篷（披在身后，从肩部垂下，锯齿下摆） */
+.vx-pig-cape {
+  display: none;
+  position: absolute;
+  left: 56%;
+  top: 14%;
+  width: 36%;
+  height: 34%;
+  z-index: -1;
+  background: linear-gradient(180deg, #3a2358 0%, #241631 100%);
+  clip-path: polygon(0 0, 100% 0, 96% 62%, 84% 100%, 70% 68%, 50% 100%, 30% 68%, 16% 100%, 4% 62%);
+  filter: drop-shadow(0 2px 3px rgba(10, 4, 20, 0.45));
+}
+html[data-scene="halloween"] .vx-pig-cape {
+  display: block;
+}
+html[data-scene="halloween"] .vx-pig-walking .vx-pig-cape {
+  top: 19%;
+}
+html[data-scene="halloween"] .vx-pig-sleeping .vx-pig-cape,
+html[data-scene="halloween"] .vx-pig-watching .vx-pig-cape {
+  top: 26%;
+  left: 58%;
 }

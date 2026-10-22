@@ -4035,3 +4035,252 @@ html[data-scene="halloween"] .vx-landing-board-post {
   background: linear-gradient(180deg, #6e5138 0%, #553c28 60%, #422c1c 100%);
   border-color: rgba(24, 14, 8, 0.55);
 }
+
+
+/* ================================================================
+ * 首页亮度与公告栏主题装饰（2026-10-22 业主二轮反馈）
+ * 1) 默认主题白天"太亮"：天空压一档、太阳光晕收敛（只作用首页，
+ *    房间内猪圈场景不受影响；雪原/万圣夜有自己的深色调，不需要压）。
+ * 2) 公告栏跟随场景加主题元素：雪原＝顶部积雪帽 + 木柱雪帽，
+ *    万圣夜＝橙色小灯串（三个南瓜灯点）。
+ * ================================================================ */
+
+/* ---------------- 默认主题 · 白天压亮度 ---------------- */
+html:not([data-theme="dark"]) .vx-landing .vx-pen-frame-sky {
+  background: linear-gradient(180deg, #f0e0c4 0%, #f4e8d2 44%, #ece0c8 100%);
+}
+html:not([data-theme="dark"]) .vx-landing .vx-pen-frame[data-daypart="morning"] .vx-pen-frame-sky {
+  background: linear-gradient(180deg, #f3e0d6 0%, #f5e7d0 42%, #eee1cb 100%);
+}
+html:not([data-theme="dark"]) .vx-landing .vx-sun {
+  box-shadow: 0 0 0 12px rgba(250, 220, 140, 0.12), 0 0 30px 6px rgba(250, 220, 140, 0.18);
+}
+
+/* ---------------- 雪原 · 公告栏积雪帽 + 木柱雪帽 ---------------- */
+html[data-scene="snow"] .vx-landing-board-face {
+  border-color: rgba(94, 116, 150, 0.45);
+}
+html[data-scene="snow"] .vx-landing-board-face::after {
+  content: "";
+  position: absolute;
+  top: -7px;
+  left: 10px;
+  right: 10px;
+  height: 12px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #ffffff 0%, #dfe9f5 90%);
+  box-shadow: 0 2px 4px rgba(64, 86, 122, 0.28);
+}
+html[data-scene="snow"] .vx-landing-board-post::before {
+  content: "";
+  position: absolute;
+  top: -5px;
+  left: -2px;
+  right: -2px;
+  height: 9px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #ffffff 0%, #e3ecf7 100%);
+  box-shadow: 0 2px 3px rgba(64, 86, 122, 0.22);
+}
+
+/* ---------------- 万圣夜 · 公告栏顶挂三个南瓜小灯 ---------------- */
+html[data-scene="halloween"] .vx-landing-board-face::after {
+  content: "";
+  position: absolute;
+  top: -4px;
+  left: 18px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 40% 35%, #ffd08a 0%, #f0913a 75%);
+  box-shadow:
+    13px 1px 0 0 #f0913a,
+    26px 2px 0 0 #d97a26,
+    0 0 8px 2px rgba(240, 145, 58, 0.55),
+    13px 1px 8px 2px rgba(240, 145, 58, 0.4),
+    26px 2px 8px 2px rgba(217, 122, 38, 0.35);
+}
+
+
+/* ---------------- 默认主题 · 傍晚压亮度（傍晚 16:30-19:30 才是截图/实测最常见时段） ---------------- */
+html:not([data-theme="dark"]) .vx-landing .vx-pen-frame[data-daypart="dusk"] .vx-pen-frame-sky {
+  background: linear-gradient(180deg, #f2d6b6 0%, #efc697 42%, #e5ac77 100%);
+}
+html:not([data-theme="dark"]) .vx-landing .vx-pen-frame[data-daypart="dusk"] .vx-sun {
+  box-shadow: 0 0 0 16px rgba(246, 178, 94, 0.16), 0 0 40px 10px rgba(240, 150, 70, 0.24);
+}
+
+
+/* ---------------- 春节（场景主题）：红金卡片 + 朱砂按钮 + 公告栏挂小灯笼 ---------------- */
+html[data-scene="spring"] .vx-landing {
+  --vx-accent: #d0402e;
+  --vx-accent-strong: #e85540;
+  --vx-accent-soft: rgba(208, 64, 46, 0.16);
+}
+html[data-scene="spring"] .vx-landing .vx-hero h1,
+html[data-scene="spring"] .vx-landing .vx-hero p,
+html[data-scene="spring"] .vx-landing .vx-facts,
+html[data-scene="spring"] .vx-landing .vx-landing-top {
+  color: #fff0dc;
+  text-shadow: 0 1px 3px rgba(70, 18, 12, 0.55);
+}
+html[data-scene="spring"] .vx-channel {
+  color: #ffe9c8;
+}
+html[data-scene="spring"] .vx-channel-main {
+  background:
+    linear-gradient(180deg, rgba(255, 220, 160, 0.12) 0%, rgba(255, 220, 160, 0) 34%),
+    linear-gradient(180deg, #9e2f22 0%, #7c1f16 100%);
+  box-shadow:
+    0 1px 0 rgba(255, 214, 150, 0.14) inset,
+    0 8px 20px rgba(60, 10, 6, 0.4);
+}
+html[data-scene="spring"] .vx-channel-sub {
+  background: rgba(255, 214, 160, 0.1);
+}
+html[data-scene="spring"] .vx-channel-head {
+  color: #ffe9c8;
+}
+html[data-scene="spring"] .vx-channel-desc,
+html[data-scene="spring"] .vx-channel-link,
+html[data-scene="spring"] .vx-channel-invite {
+  color: #e8c396;
+}
+html[data-scene="spring"] .vx-channel .vx-btn {
+  background: rgba(255, 224, 170, 0.14);
+  border-color: rgba(255, 224, 170, 0.34);
+  color: #ffe9c8;
+}
+html[data-scene="spring"] .vx-channel .vx-btn:hover {
+  background: rgba(255, 224, 170, 0.24);
+}
+html[data-scene="spring"] .vx-code-input {
+  background: rgba(60, 12, 8, 0.45);
+  color: #ffe9c8;
+}
+html[data-scene="spring"] .vx-code-input::placeholder {
+  color: rgba(255, 233, 200, 0.45);
+}
+html[data-scene="spring"] .vx-code-input:focus {
+  box-shadow:
+    0 1px 2px rgba(60, 10, 6, 0.3) inset,
+    0 0 0 3px rgba(232, 85, 64, 0.4);
+}
+html[data-scene="spring"] .vx-landing .vx-btn-ghost {
+  color: #ffe9c8;
+  border-color: rgba(255, 233, 200, 0.4);
+  background: rgba(70, 14, 10, 0.35);
+}
+html[data-scene="spring"] .vx-channel-error {
+  color: #ffb59e;
+}
+
+/* 春节公告栏：保持暖木色（本就喜庆），顶部挂两只小灯笼 */
+html[data-scene="spring"] .vx-landing-board-face::after {
+  content: "";
+  position: absolute;
+  top: -4px;
+  left: 14px;
+  width: 9px;
+  height: 11px;
+  border-radius: 46% / 42%;
+  background: radial-gradient(circle at 50% 40%, #ff7a5c 0%, #e23a24 62%, #b82418 100%);
+  box-shadow:
+    18px 2px 0 -1px #e23a24,
+    0 0 10px 2px rgba(255, 96, 56, 0.5),
+    18px 2px 8px 2px rgba(255, 96, 56, 0.4);
+}
+html[data-scene="spring"] .vx-landing-board-title,
+html[data-scene="spring"] .vx-landing-board li {
+  color: #6b2a14;
+}
+
+
+/* ---------------- 春节 · 白天/清晨可读性修正 ----------------
+ * 春节的白天/清晨天色是浅暖金，奶油色文字会糊掉（万圣夜/雪原夜全天深色没这个问题）。
+ * 白天：英雄区/说明文字翻深枣红、副卡加实底、下载按钮换浅底深字；
+ * 主按钮统一换金色（金底红字，在深红卡片上比红底白字醒目得多）。
+ * 夜里/傍晚维持奶油文字不变。 */
+html[data-scene="spring"][data-daypart="day"] .vx-landing .vx-hero h1,
+html[data-scene="spring"][data-daypart="day"] .vx-landing .vx-hero p,
+html[data-scene="spring"][data-daypart="day"] .vx-landing .vx-facts,
+html[data-scene="spring"][data-daypart="day"] .vx-landing .vx-landing-top,
+html[data-scene="spring"][data-daypart="morning"] .vx-landing .vx-hero h1,
+html[data-scene="spring"][data-daypart="morning"] .vx-landing .vx-hero p,
+html[data-scene="spring"][data-daypart="morning"] .vx-landing .vx-facts,
+html[data-scene="spring"][data-daypart="morning"] .vx-landing .vx-landing-top {
+  color: #6b2416;
+  text-shadow: 0 1px 0 rgba(255, 246, 230, 0.55);
+}
+html[data-scene="spring"][data-daypart="day"] .vx-landing .vx-download-note,
+html[data-scene="spring"][data-daypart="morning"] .vx-landing .vx-download-note {
+  color: #8a5238;
+}
+html[data-scene="spring"][data-daypart="day"] .vx-landing .vx-download-note b,
+html[data-scene="spring"][data-daypart="morning"] .vx-landing .vx-download-note b {
+  color: #6b3a24;
+}
+html[data-scene="spring"][data-daypart="day"] .vx-channel-sub,
+html[data-scene="spring"][data-daypart="morning"] .vx-channel-sub {
+  background: rgba(150, 42, 30, 0.82);
+}
+html[data-scene="spring"][data-daypart="day"] .vx-landing .vx-btn-ghost,
+html[data-scene="spring"][data-daypart="morning"] .vx-landing .vx-btn-ghost {
+  color: #8a3220;
+  border-color: rgba(138, 50, 32, 0.45);
+  background: rgba(255, 244, 226, 0.62);
+}
+
+/* 主按钮：金底红字（白天夜里都用金色，红卡片上更亮） */
+html[data-scene="spring"] .vx-landing {
+  --vx-accent: #f0b04a;
+  --vx-accent-strong: #f6c266;
+  --vx-accent-soft: rgba(240, 176, 74, 0.18);
+}
+html[data-scene="spring"] .vx-landing .vx-btn-primary {
+  color: #5c150e;
+}
+
+
+/* 首页顶栏的主题按钮 + 弹出菜单（个人偏好；菜单往左展开，别戳出视窗右缘） */
+.vx-scene-wrap {
+  position: relative;
+  display: inline-flex;
+}
+.vx-scene-wrap .vx-scene-menu {
+  top: calc(100% + 8px);
+  left: auto;
+  right: 0;
+}
+
+
+/* 主题菜单：文字不继承场景色（春节夜晚继承奶油字 → 米白面板上看不见），按主题色板走 */
+.vx-scene-menu {
+  color: var(--vx-text, #4a3212);
+}
+.vx-scene-menu button {
+  color: inherit;
+}
+
+/* 春节 · 傍晚（16:30-19:30）：天色中等偏浅，同白天一样翻深色文字 */
+html[data-scene="spring"][data-daypart="dusk"] .vx-landing .vx-hero h1,
+html[data-scene="spring"][data-daypart="dusk"] .vx-landing .vx-hero p,
+html[data-scene="spring"][data-daypart="dusk"] .vx-landing .vx-facts,
+html[data-scene="spring"][data-daypart="dusk"] .vx-landing .vx-landing-top {
+  color: #5c1d10;
+  text-shadow: 0 1px 0 rgba(255, 240, 220, 0.4);
+}
+html[data-scene="spring"][data-daypart="dusk"] .vx-landing .vx-download-note {
+  color: #8a5238;
+}
+html[data-scene="spring"][data-daypart="dusk"] .vx-landing .vx-download-note b {
+  color: #6b3a24;
+}
+html[data-scene="spring"][data-daypart="dusk"] .vx-channel-sub {
+  background: rgba(150, 42, 30, 0.82);
+}
+html[data-scene="spring"][data-daypart="dusk"] .vx-landing .vx-btn-ghost {
+  color: #8a3220;
+  border-color: rgba(138, 50, 32, 0.45);
+  background: rgba(255, 244, 226, 0.62);
+}

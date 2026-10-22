@@ -273,7 +273,6 @@ export function App() {
         topic={voice.topic}
         onSetTopic={voice.setRoomTopic}
         sceneTheme={voice.sceneTheme}
-        onSetSceneTheme={voice.setRoomSceneTheme}
         screenShare={voice.screenShare}
         shareStream={voice.shareStream}
         sharePc={voice.sharePc}
@@ -349,6 +348,8 @@ export function App() {
             onCreate={() => void voice.createRoom()}
             onJoin={voice.submitJoinInput}
             onSettings={voice.openSettings}
+            sceneTheme={voice.sceneTheme}
+            onSetSceneTheme={voice.setRoomSceneTheme}
             onCopyId={() => {
               void voice.copyText(voice.identity.personId, "个人 ID 已复制");
             }}

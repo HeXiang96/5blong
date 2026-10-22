@@ -167,6 +167,11 @@ export function PenFrame({ width: _width = 0 }: { width?: number }) {
         <span className="vx-bat vx-bat-3" />
         <span className="vx-halloween-fog" />
       </div>
+      <div className="vx-scene-decor vx-scene-decor-spring">
+        <span className="vx-lantern vx-lantern-1" />
+        <span className="vx-lantern vx-lantern-2" />
+        <span className="vx-firecracker" />
+      </div>
     </div>
   );
 }
@@ -1196,11 +1201,17 @@ export function PigActor({
               ) : null}
 
               {/*
-                主题装扮（雪原红毛线帽 / 万圣夜小女巫帽）：常驻渲染，
+                主题装扮（雪原红毛线帽 / 万圣夜小女巫帽 / 春节财神金帽）：常驻渲染，
                 由 CSS 按 html[data-scene] 显隐，不额外传 prop。
+                装扮增强：雪原耳罩+围脖、万圣夜小斗篷——让主题切换时猪的
+                变化更明显（2026-10-22 业主反馈"猪都没什么变化"）。
               */}
               <span className="vx-pig-beanie" aria-hidden="true" />
               <span className="vx-pig-witch" aria-hidden="true" />
+              <span className="vx-pig-tang" aria-hidden="true" />
+              <span className="vx-pig-earmuffs" aria-hidden="true" />
+              <span className="vx-pig-muffler" aria-hidden="true" />
+              <span className="vx-pig-cape" aria-hidden="true" />
 
               {sleeping && !watchingActive ? (
                 <span className="vx-pig-zzz" aria-hidden="true">

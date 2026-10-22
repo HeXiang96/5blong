@@ -95,7 +95,7 @@ export function useVoice() {
   /** 房主铭牌公告（房主本地编辑 / 访客收广播都会更新）。 */
   const [topic, setTopicState] = useState("");
   /** 场景主题（"" = 默认，只有时段光照）。 */
-  const [sceneTheme, setSceneThemeState] = useState<SceneThemeId | "">("");
+  const [sceneTheme, setSceneThemeState] = useState<SceneThemeId | "">(() => loadSettings().sceneTheme);
   /** 房间结束后的"今晚小结"（null = 没有可展示的）。 */
   const [lastSummary, setLastSummary] = useState<SessionSummary | null>(null);
   const [chatOpen, setChatOpen] = useState(false);
@@ -273,7 +273,6 @@ export function useVoice() {
       ended: (reason, detail) => setEnded({ reason, detail }),
       ready: setInvite,
       topic: (text) => setTopicState(text),
-      theme: (id) => setSceneThemeState(id),
       pen: (event) => {
         const now = Date.now();
         setPenEvents((prev) => [
@@ -1524,18 +1523,21 @@ export function useVoice() {
     engineRef.current?.setTopic(text);
   }, []);
 
-  /** 房主切换场景主题（乐观更新本地，引擎广播给全房）。 */
-  const setRoomSceneTheme = useCallback((id: SceneThemeId | "") => {
-    setSceneThemeState(id);
-    engineRef.current?.setSceneTheme(id);
-  }, []);
+  /** 切换我的场景主题（个人偏好：本地生效 + 落盘；不再经房主广播）。 */
+  const setRoomSceneTheme = useCallback(
+    (id: SceneThemeId | "") => {
+      setSceneThemeState(id);
+      persistSettings({ ...settings, sceneTheme: id });
+    },
+    [persistSettings, settings],
+  );
 
   /**
    * 主题落到 <html data-scene>：CSS 按它切换整套氛围（调色 + 地面装饰 + 猪的装扮）。
    * 开发/验收可用 ?scene=snow 强制预览（纯视觉覆盖）。
    */
   useEffect(() => {
-    // 房主/房内主题优先；?scene= 只是"没有会话主题时的调试默认值"。
+    // 我的主题优先；?scene= 只是"没设置过个人主题时的调试默认值"。
     const value = sceneTheme || sceneOverride(window.location.search);
     if (value) document.documentElement.dataset.scene = value;
     else delete document.documentElement.dataset.scene;

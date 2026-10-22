@@ -31,6 +31,7 @@ const settings = {
   shareTransport: "p2p" as const,
   shareViewMode: "auto" as const,
   shareLatency: "balanced" as const,
+  sceneTheme: "" as const,
 };
 
 createRoot(document.getElementById("root")!).render(

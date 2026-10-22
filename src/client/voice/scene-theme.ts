@@ -5,11 +5,11 @@
  * - daypart 决定光照/天色基线；
  * - 场景主题在此之上叠加一套完整氛围（调色 + 地面装饰 + 猪的小装扮）。
  *
- * 空串 = 跟随默认（只有时段）；"snow" 雪原 / "halloween" 万圣夜。
+ * 空串 = 跟随默认（只有时段）；"snow" 雪原 / "halloween" 万圣夜 / "spring" 春节。
  * 主题只在会话内有效（关房即散），符合"临时房间"的定位。
  */
 
-export type SceneThemeId = "snow" | "halloween";
+export type SceneThemeId = "snow" | "halloween" | "spring";
 
 export interface SceneThemeMeta {
   id: SceneThemeId;
@@ -22,11 +22,12 @@ export interface SceneThemeMeta {
 export const SCENE_THEMES: SceneThemeMeta[] = [
   { id: "snow", label: "雪原", emoji: "❄️", order: 1 },
   { id: "halloween", label: "万圣夜", emoji: "🎃", order: 2 },
+  { id: "spring", label: "春节", emoji: "🏮", order: 3 },
 ];
 
 /** 严格校验：协议里收到的主题 id 必须是白名单内的（防脏数据注入 DOM 属性）。 */
 export function isSceneThemeId(value: unknown): value is SceneThemeId {
-  return value === "snow" || value === "halloween";
+  return value === "snow" || value === "halloween" || value === "spring";
 }
 
 /** 解析协议字段："" / 非法值统一视为"默认主题"。 */
