@@ -569,6 +569,7 @@ npm run feedback:admin list 20   # 终端查看最近反馈（url / list / rm �
 <!-- AUTO-LOG:START -->
 ### 近期提交（自动生成）
 
+- `634f46d` release: v1.7.6（10-22 10:49）
 - `a9ec227` feat(screen-share): 只采被共享应用的声音（Oopz 式）+ 延迟三档 + 上行预算（10-22 10:43）
 - `091e895` perf(voice): 关键循环改 Worker 计时，桌面端关掉睡眠节流（10-22 09:17）
 - `b2f2b0f` feat(voice): 单房上限提到 13 人（12 位访客 + 房主）（10-22 09:16）
@@ -576,8 +577,6 @@ npm run feedback:admin list 20   # 终端查看最近反馈（url / list / rm �
 - `3f6e9b0` fix(game,voice): 单向无声音——判据改看包/播放链，并堵住三处丢声通道（10-22 08:42）
 - `e367c29` release: v1.7.5（10-21 18:24）
 - `4d4bd03` ci: checkout/setup-node 升到 v7，消除 GitHub 的 Node 20 弃用警告（10-21 12:05）
-- `456ad21` release: v1.7.3（10-21 11:47）
-- `1ecd696` fix(game): 开黑圈语音补上音频唤醒、语音参数与链路自愈（10-21 11:42）
 <!-- AUTO-LOG:END -->
 
 ## 怎么用
