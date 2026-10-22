@@ -20,6 +20,15 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.8.1",
+    date: "2026-10-22",
+    lines: [
+      "公告栏挪到首页右侧，宽屏不再挤在下面",
+      "首页卡片更清爽，去掉了生硬的框线",
+      "蹦迪烟花收进成员菜单，底栏不再拥挤",
+    ],
+  },
+  {
     version: "1.8.0",
     date: "2026-10-22",
     lines: [
