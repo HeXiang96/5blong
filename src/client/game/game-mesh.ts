@@ -88,6 +88,20 @@ export class GameMesh {
   private silentStream: MediaStream | null = null;
   /** 哪些 peer 是"待分队→队伍"的单向连接（只收不听）。 */
   private silentCalls = new Set<string>();
+  /**
+   * 单向链路看门狗：ICE 通了、但**一个音频包都收不到**（对方送不到我）。
+   * 以前这里只看 ICE 状态，这种"半条腿"永远是绿的，也不会自愈。
+   */
+  private mediaWatchTimer = 0;
+  private readonly mediaWatch = new Map<string, { packets: number; hits: number }>();
+  /**
+   * 每个 peer 已经因为"单向"重连过几次。
+   *
+   * 上限 3 次，且一旦重新收到包就清零：宁可最后停在"重连几次仍不通"，
+   * 也不能和无辜的连接死磕（比如对方浏览器在闭麦时真的停发了，
+   * 那属于对端行为，重连解决不了）。
+   */
+  private readonly onewayHeals = new Map<string, number>();
   /** 上一次所处的队伍：一变就整组重建连接（否则残留的静音通道会吞掉声音）。 */
   private lastTeam: Team | null = null;
   /** 正在说话的人（电平超过阈值）。 */
@@ -390,6 +404,10 @@ export class GameMesh {
     this.calls.clear();
     if (this.localSpeakTimer) window.clearInterval(this.localSpeakTimer);
     this.localSpeakTimer = 0;
+    if (this.mediaWatchTimer) window.clearInterval(this.mediaWatchTimer);
+    this.mediaWatchTimer = 0;
+    this.mediaWatch.clear();
+    this.onewayHeals.clear();
     for (const entry of this.analysers.values()) window.clearInterval(entry.timer);
     this.analysers.clear();
     for (const audio of this.audios.values()) {
@@ -467,6 +485,7 @@ export class GameMesh {
       return;
     }
     this.lastTeam = me.team;
+    this.startMediaWatch();
     const desired = new Set<string>();
     const unassigned = me.team === "unassigned";
     for (const member of this.members.values()) {
@@ -481,15 +500,22 @@ export class GameMesh {
     }
     // 挂断不再需要的人
     for (const [peerId, call] of this.calls) {
-      if (!desired.has(peerId)) {
-        try {
-          call.close();
-        } catch {
-          /* noop */
-        }
-        this.calls.delete(peerId);
-        this.dropAudio(peerId);
+      if (desired.has(peerId)) continue;
+      /*
+       * 队伍侧必须留住"待分队发来的连接"：那是待分队听全房（两队 + 待分队）
+       * 的唯一通路。以前这里按 desired 一律挂断，于是待分队刚连上就被拆、
+       * 300ms 后再连——来回抖，表现成"时有时无"。
+       */
+      const peerMember = this.members.get(peerId);
+      if (!unassigned && peerMember?.team === "unassigned") continue;
+      try {
+        call.close();
+      } catch {
+        /* noop */
       }
+      this.calls.delete(peerId);
+      this.silentCalls.delete(peerId);
+      this.dropAudio(peerId);
     }
     // 发起新连接：待分队→队伍 必须由待分队发起（队伍永远不会主动连待分队）
     for (const peerId of desired) {
@@ -517,8 +543,8 @@ export class GameMesh {
           this.calls.set(peerId, call);
           this.silentCalls.add(peerId);
           call.on("stream", (stream) => this.attachAudio(peerId, stream));
-          call.on("close", () => this.forgetCall(peerId));
-          call.on("error", () => this.forgetCall(peerId));
+          call.on("close", () => this.forgetCall(peerId, call));
+          call.on("error", () => this.forgetCall(peerId, call));
           this.watchCallHealth(call, peerId);
         } catch {
           /* 单个呼叫失败不影响其他人 */
@@ -533,12 +559,94 @@ export class GameMesh {
         if (!call) continue;
         this.calls.set(peerId, call);
         call.on("stream", (stream) => this.attachAudio(peerId, stream));
-        call.on("close", () => this.forgetCall(peerId));
-        call.on("error", () => this.forgetCall(peerId));
+        call.on("close", () => this.forgetCall(peerId, call));
+        call.on("error", () => this.forgetCall(peerId, call));
         this.watchCallHealth(call, peerId);
       } catch {
         /* 单个呼叫失败不影响其他人 */
       }
+    }
+  }
+
+  /** 启动单向链路看门狗（幂等；进房后随 reconcile 一起拉起）。 */
+  private startMediaWatch(): void {
+    if (this.mediaWatchTimer || this.destroyed) return;
+    this.mediaWatchTimer = window.setInterval(() => void this.pollInbound(), 5000);
+    this.timers.add(this.mediaWatchTimer);
+  }
+
+  /**
+   * 每 5 秒看一次"我到底有没有收到对方的声音"。
+   *
+   * 为什么要单独做：ICE 进入 connected 只证明候选打通了，**单向不通**时
+   * ICE 依然是 connected（RTCP 还在走），getStats 里 inbound 音频包恒为 0。
+   * 这就是"a 听不到 e、e 却听得到 a"的形态：两边都显示正常，谁也不会重连。
+   *
+   * 判据刻意收窄，避免误伤：
+   * - 看的是**包**，不是声音大小：SDP 里 usedtx=0（见 audio-profile），闭麦也只是
+   *   track.enabled=false——两种情况 RTP 都照常按 ~50 包/秒在发。FPS 蹲点几十秒
+   *   不说话，包数一样在涨，不会被误判；
+   * - 跳过没麦的人、闭麦的人、待分队发的静音通道（那是设计）；
+   * - 从没收到过连续 3 次（≈15 秒）、收到过又停 5 次（≈25 秒）才动手；
+   * - 每人最多重连 3 次，重新收到包就清零，不会和连接死磕。
+   */
+  private async pollInbound(): Promise<void> {
+    if (this.destroyed || !this.joined) return;
+    for (const [peerId, call] of [...this.calls]) {
+      const member = this.members.get(peerId);
+      if (!member || member.hasMic === false) continue;
+      if (this.silentCalls.has(peerId)) continue;
+      // 他闭着麦：包的来源是对端行为，别和它死磕
+      if (member.muted) {
+        this.mediaWatch.delete(peerId);
+        continue;
+      }
+      // 我在队伍、对方在待分队：按设计就该收不到他（他发的是静音流）
+      if (this.lastTeam !== "unassigned" && member.team === "unassigned") continue;
+      const pc = (call as unknown as { peerConnection?: RTCPeerConnection }).peerConnection;
+      if (!pc) continue;
+      const ice = pc.iceConnectionState;
+      if (ice !== "connected" && ice !== "completed") {
+        this.mediaWatch.delete(peerId);
+        continue;
+      }
+      let packets = 0;
+      try {
+        const stats = await pc.getStats();
+        stats.forEach((report) => {
+          if (report.type !== "inbound-rtp") return;
+          const r = report as RTCInboundRtpStreamStats & { kind?: string; mediaType?: string };
+          if ((r.kind ?? r.mediaType) !== "audio") return;
+          packets += r.packetsReceived ?? 0;
+        });
+      } catch {
+        continue;
+      }
+      const prev = this.mediaWatch.get(peerId);
+      const grew = packets > (prev?.packets ?? 0) && packets > 0;
+      if (grew) this.onewayHeals.delete(peerId); // 通了：把"单向重连"次数清零
+      const hits = grew ? 0 : (prev?.hits ?? 0) + 1;
+      this.mediaWatch.set(peerId, { packets, hits });
+      // 从没收到过：3 次（≈15 秒）；收到过又停了：5 次（≈25 秒）
+      const limit = packets === 0 ? 3 : 5;
+      if (grew || hits < limit) continue;
+      // 单向不通：拆掉这条腿，forgetCall 会重新对账补一条新连接
+      this.mediaWatch.delete(peerId);
+      const healed = (this.onewayHeals.get(peerId) ?? 0) + 1;
+      this.onewayHeals.set(peerId, healed);
+      const name = member.gameId || peerId.slice(0, 6);
+      if (healed > 3) {
+        // 重连三次仍单向：大概率是对端/线路的持久问题，别再拆了，免得来回抖
+        this.events.status("error", `与「${name}」的语音仍然只有单向，建议让他重进房`);
+        continue;
+      }
+      this.events.status("error", `与「${name}」的语音只有单向，正在重连（第 ${healed} 次）`);
+      try {
+        call.close();
+      } catch {
+        /* noop */
+      }
+      this.forgetCall(peerId, call);
     }
   }
 
@@ -568,7 +676,7 @@ export class GameMesh {
           } catch {
             /* noop */
           }
-          this.forgetCall(peerId);
+          this.forgetCall(peerId, call);
         };
         if (state === "failed") {
           drop();
@@ -585,9 +693,48 @@ export class GameMesh {
     attach();
   }
 
-  private forgetCall(peerId: string): void {
+  /** 这条 MediaConnection 是否已经不可用（底层 pc 关闭/失败/长期断开）。 */
+  private isCallDead(call: MediaConnection): boolean {
+    const pc = (call as unknown as { peerConnection?: RTCPeerConnection }).peerConnection;
+    if (!pc) return false; // 还没建好：先当活的
+    const state = pc.connectionState;
+    const ice = pc.iceConnectionState;
+    return (
+      state === "closed" ||
+      state === "failed" ||
+      ice === "closed" ||
+      ice === "failed" ||
+      ice === "disconnected"
+    );
+  }
+
+  /**
+   * 这个来电该不该接。
+   *
+   * 拓扑规则（见 game-types 注释）：同队互通；待分队听全房，队伍听不到待分队和对面。
+   * 所以：待分队接所有人；队伍只接同队 + 待分队发来的单向静音通道。
+   * 名册没同步到就先接，下一轮 reconcile 会按最新名册挂断。
+   */
+  private shouldAcceptCall(peerId: string): boolean {
+    const me = this.members.get(this.myId);
+    const peer = this.members.get(peerId);
+    if (!me || !peer) return true;
+    if (me.team === "unassigned") return true;
+    return peer.team === me.team || peer.team === "unassigned";
+  }
+
+  /**
+   * 只收拾"当前这一条"连接。
+   *
+   * ⚠️ 必须带身份校验：旧连接的 close 常常迟到，那时新连接已经在放声音了。
+   * 以前按 peerId 一把梭，会把新连接的映射和音频元素一起删掉——新流不会
+   * 再触发 stream 事件，于是这对人从此单向没声（2026-10-22 的现场症状）。
+   */
+  private forgetCall(peerId: string, call?: MediaConnection): void {
+    if (call && this.calls.get(peerId) !== call) return;
     this.calls.delete(peerId);
     this.silentCalls.delete(peerId);
+    this.mediaWatch.delete(peerId);
     this.dropAudio(peerId);
     /*
      * 队友换队时会挂断我的连接（他不再和我同组），而我这边什么都不做就会"没声音"。
@@ -638,7 +785,21 @@ export class GameMesh {
       const el = audio as HTMLAudioElement & { setSinkId?: (id: string) => Promise<void> };
       if (typeof el.setSinkId === "function") void el.setSinkId(this.outputDeviceId).catch(() => undefined);
     }
-    if (this.audioCtx && !this.analysers.has(peerId)) {
+    if (this.audioCtx) {
+      /*
+       * 换了流（自愈重拨 / 换队重建）必须换分析器：老分析器接的是老流的节点，
+       * 拿它算电平，说话高亮和发言统计会一直失真（甚至一直是 0）。
+       */
+      const prev = this.analysers.get(peerId);
+      if (prev) {
+        window.clearInterval(prev.timer);
+        try {
+          prev.node.disconnect();
+        } catch {
+          /* noop */
+        }
+        this.analysers.delete(peerId);
+      }
       try {
         const src = this.audioCtx.createMediaStreamSource(stream);
         const node = this.audioCtx.createAnalyser();
@@ -711,6 +872,17 @@ export class GameMesh {
   }
 
   private dropAudio(peerId: string): void {
+    const entry = this.analysers.get(peerId);
+    if (entry) {
+      window.clearInterval(entry.timer);
+      try {
+        entry.node.disconnect();
+      } catch {
+        /* noop */
+      }
+      this.analysers.delete(peerId);
+    }
+    this.setSpeaking(peerId, false);
     const audio = this.audios.get(peerId);
     if (!audio) return;
     audio.srcObject = null;
@@ -808,6 +980,8 @@ export class GameMesh {
         /* noop */
       }
       this.calls.delete(peerId);
+      this.silentCalls.delete(peerId);
+      this.mediaWatch.delete(peerId);
       this.dropAudio(peerId);
     }
     if (this.hosting) {
@@ -920,11 +1094,52 @@ export class GameMesh {
           }
         });
         peer.on("call", (call) => {
+          const existing = this.calls.get(call.peer);
+          /*
+           * 重复呼叫必须挡掉（2026-10-22 抓到的单向无声根因之一）。
+           *
+           * 以前这里是"来了就答、答完就 set"，同一个 peer 可能同时挂着两条
+           * MediaConnection。先关掉的那条 close 后会把**当前这条**的映射和
+           * 音频元素一起收走（forgetCall 只按 peerId 记账），而新流不会再触发
+           * stream 事件，于是这对人从此单向没声，只能重进房。
+           * 已有健康连接时，重复来的直接丢弃。
+           */
+          if (existing && existing !== call && !this.isCallDead(existing)) {
+            try {
+              call.close();
+            } catch {
+              /* noop */
+            }
+            return;
+          }
+          // 跨组不接（名册还没同步到时先接，下一轮 reconcile 会对账）
+          if (!this.shouldAcceptCall(call.peer)) {
+            try {
+              call.close();
+            } catch {
+              /* noop */
+            }
+            return;
+          }
+          if (existing && existing !== call) {
+            // 旧连接已经死了：先摘掉再接管，免得它的 close 迟到把新连接打掉
+            this.calls.delete(call.peer);
+            this.silentCalls.delete(call.peer);
+            this.dropAudio(call.peer);
+          }
+          /*
+           * 唤醒音频引擎：AudioContext 处于 suspended 时 MediaStreamDestination
+           * 产出的是**静音**——"对方听得到我、我听不到对方"的经典成因。
+           */
+          if (this.audioCtx && this.audioCtx.state !== "running") {
+            void this.audioCtx.resume().catch(() => undefined);
+          }
           call.answer(this.publishedStream ?? this.localStream ?? undefined, {
             sdpTransform: opusSdpTransform("voice"),
           });
           call.on("stream", (stream) => this.attachAudio(call.peer, stream));
-          call.on("close", () => this.forgetCall(call.peer));
+          call.on("close", () => this.forgetCall(call.peer, call));
+          call.on("error", () => this.forgetCall(call.peer, call));
           this.calls.set(call.peer, call);
           this.watchCallHealth(call, call.peer);
         });
@@ -1067,8 +1282,29 @@ export class GameMesh {
       /* 检测失败不影响通话 */
     }
     this.publishedStream = dest.stream;
+    /*
+     * 换流之后必须把新轨推到**已经建立**的连接上。
+     *
+     * 否则老连接还在发老 dest 的那条轨，而老链的 source/gain 刚刚被 disconnect——
+     * 那条轨从这一刻起永远是静音：**对方听不到你，你却还能听到他**。
+     * 开关"强降噪"、切麦都会走到这里，这正对上"有时候、有的人听不到我"。
+     */
+    this.replacePublishedTrack();
     // AGC 与手动增益互搏：>100% 挂起 AGC
     await this.applyAgcForBoost(this.micBoost > 1);
+  }
+
+  /** 把当前 publishedStream 的音轨替换到所有已建立的连接（静音通道保持静音）。 */
+  private replacePublishedTrack(): void {
+    const fresh = this.publishedStream?.getAudioTracks()[0];
+    if (!fresh) return;
+    for (const [peerId, call] of this.calls) {
+      // 待分队→队伍 的通道按设计就该发静音，不能换成麦克风
+      if (this.silentCalls.has(peerId)) continue;
+      const pc = (call as unknown as { peerConnection?: RTCPeerConnection }).peerConnection;
+      const sender = pc?.getSenders().find((s) => s.track?.kind === "audio");
+      if (sender) void sender.replaceTrack(fresh).catch(() => undefined);
+    }
   }
 
   private async applyAgcForBoost(boosted: boolean): Promise<void> {
@@ -1122,15 +1358,7 @@ export class GameMesh {
     });
     for (const track of stream.getAudioTracks()) track.enabled = !this.localMuted;
     this.localStream = stream;
-    await this.buildOutgoing();
-    const track = this.publishedStream?.getAudioTracks()[0];
-    if (track) {
-      for (const call of this.calls.values()) {
-        const pc = (call as unknown as { peerConnection?: RTCPeerConnection }).peerConnection;
-        const sender = pc?.getSenders().find((s) => s.track?.kind === "audio");
-        if (sender) void sender.replaceTrack(track).catch(() => undefined);
-      }
-    }
+    await this.buildOutgoing(); // 内部已把新轨推到所有已有连接（静音通道除外）
     if (old) for (const t of old.getTracks()) t.stop();
   }
 

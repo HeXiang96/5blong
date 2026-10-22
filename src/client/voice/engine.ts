@@ -422,6 +422,27 @@ export class VoiceMesh {
   private micEndedNotified = false;
   /** 每条腿最近一次"确实收到 RTP 音频"的时间，用于判活时豁免。 */
   private readonly lastMediaAt = new Map<string, number>();
+  /**
+   * 单向不通计数：ICE 通了、对方也有麦，但**累计收包恒为 0**。
+   *
+   * 为什么必须单独记（2026-10-22 业主现场）：ab/cd 都正常，
+   * "a 听不到 e、e 却听得到 a" —— 这是 typo 层面看不见的**半条腿**。
+   * 原来的判活规则是"任一方向有进展就算活"，而 e 收 a 正常时会持续回 RTCP，
+   * 于是 a 这边 acks 一直在涨 → 判成健康 → 永不重拨，一直没声音。
+   */
+  private readonly inboundZeroPolls = new Map<string, number>();
+  /**
+   * 播放链失效计数：**包还在到**，但我这边出不了声。
+   *
+   * 现场症状："突然某一个人没声音了，可别人都听得见他。"
+   * RTP 一直在到（getStats 里 inbound 包在涨），所以任何"看包"的判据都判它健康；
+   * 真正坏的是本机的播放链——<audio> 被浏览器暂停/清空 srcObject（换音频设备、
+   * 系统睡眠恢复、输出设备被拔出都会这样），而 srcObject 只在 stream 事件里设一次，
+   * 不会自己恢复。这里靠"元素是否还在播"来发现并重建。
+   */
+  private readonly playbackMisses = new Map<string, number>();
+  /** 每一路最近一次收到的远端流（播放链重建时要重新接一遍）。 */
+  private readonly remoteStreams = new Map<string, MediaStream>();
   /** 兜底补拨的节流时间戳（每成员 5 秒最多一次）。 */
   private readonly lastDialAt = new Map<string, number>();
   /** 本地诊断事件环形缓冲（最多 300 条，导出诊断包时带上）。 */
@@ -2729,6 +2750,65 @@ export class VoiceMesh {
         continue;
       }
       const prev = this.flowSamples.get(peerId);
+      const watcher = this.members.get(peerId);
+      const iceOk = pc.iceConnectionState === "connected" || pc.iceConnectionState === "completed";
+      const grewInbound = packets > (prev?.packets ?? 0) && packets > 0;
+      /*
+       * ① 包还在到，但我这边没出声 → 本机播放链断了（见 playbackMisses 注释）。
+       *    连续两次（≈12 秒）确认才重建，避免和 play() 的异步握手抢跑。
+       */
+      if (grewInbound) {
+        if (this.isPlaying(peerId)) {
+          this.playbackMisses.delete(peerId);
+        } else {
+          const miss = (this.playbackMisses.get(peerId) ?? 0) + 1;
+          this.playbackMisses.set(peerId, miss);
+          if (miss >= 2) {
+            this.playbackMisses.delete(peerId);
+            const stream = this.remoteStreams.get(peerId);
+            if (stream) {
+              const who = watcher?.name ?? peerId.slice(0, 6);
+              this.pushRoomEvent("error", `与「${who}」的播放通道断了（包还在到），已重建`);
+              this.playStream(peerId, stream);
+            }
+          }
+        }
+      }
+      /*
+       * ② 单向不通（见 inboundZeroPolls 注释）。
+       *
+       * 下面对"链路是否活着"用的是**双向合并**口径（任一方向有进展即活），
+       * 好处是静默期不误判，坏处是**半条腿判不出来**：a 听不到 e、e 听得到 a 时，
+       * e 持续回 RTCP，a 这边的 acks 一直在涨 → 判成健康 → 永不重拨。
+       * 所以这里单独看"我到底有没有收到他的声音"：
+       *   有麦 + 没闭麦 + ICE 已通，但入向包数一直不涨 →
+       *   从没收到过（0 包）连续 3 次（≈18 秒）、
+       *   收到过又停、但他还在回 RTCP 连续 2 次（≈12 秒）、
+       *   收到过又停且连 RTCP 也没了连续 5 次（≈30 秒）→ 重拨。
+       * 静默期照样发包（usedtx=0），所以"不涨"不是安静，是没到。
+       */
+      if (watcher && watcher.hasMic !== false && !watcher.muted && iceOk) {
+        if (grewInbound) {
+          this.inboundZeroPolls.delete(peerId);
+        } else {
+          const misses = (this.inboundZeroPolls.get(peerId) ?? 0) + 1;
+          this.inboundZeroPolls.set(peerId, misses);
+          const acksAlive = prev ? acks > prev.acks : false;
+          const limit = packets === 0 ? 3 : acksAlive ? 2 : 5;
+          if (misses >= limit) {
+            this.inboundZeroPolls.delete(peerId);
+            this.flowSamples.delete(peerId);
+            const who = watcher.name ?? peerId.slice(0, 6);
+            this.pushRoomEvent("error", `与「${who}」的语音只有单向（收不到对方的包），自动重拨`);
+            this.roomLinkState.set(peerId, "failed");
+            this.events.mediaState(peerId, "failed");
+            this.scheduleVoiceHeal(peerId, call, 0);
+            continue;
+          }
+        }
+      } else {
+        this.inboundZeroPolls.delete(peerId);
+      }
       if (!prev) {
         this.flowSamples.set(peerId, { packets, acks, stalls: 0, sawPackets: packets > 0 });
         continue;
@@ -3539,6 +3619,7 @@ export class VoiceMesh {
   }
 
   private playStream(peerId: string, stream: MediaStream): void {
+    this.remoteStreams.set(peerId, stream);
     let element = this.audio.get(peerId);
     if (!element) {
       element = document.createElement("audio");
@@ -3572,6 +3653,22 @@ export class VoiceMesh {
     });
   }
 
+  /**
+   * 这一路的播放链还会不会出声（元素在、有源、没被暂停）。
+   *
+   * 只看"元素状态"，不看音频电平——静音期电平本来就接近 0，不能拿它判死活。
+   */
+  private isPlaying(peerId: string): boolean {
+    const element = this.audio.get(peerId);
+    if (!element) return false;
+    if (!element.srcObject) return false;
+    if (element.paused) return false;
+    if (!this.ctx) return true;
+    if (this.peerChains.has(peerId)) return true;
+    // 没有增益链时只有一种合法形态：元素直接播原始远端流（建链失败时的兜底）
+    return element.srcObject === this.remoteStreams.get(peerId);
+  }
+
   private dropMedia(peerId: string): void {
     const call = this.calls.get(peerId);
     if (call) {
@@ -3587,14 +3684,18 @@ export class VoiceMesh {
 
   private dropAudio(peerId: string): void {
     this.flowSamples.delete(peerId);
+    this.inboundZeroPolls.delete(peerId);
+    this.playbackMisses.delete(peerId);
+    this.remoteStreams.delete(peerId);
     const element = this.audio.get(peerId);
     if (element) {
       element.pause();
       element.srcObject = null;
       element.remove();
       this.audio.delete(peerId);
-      this.teardownPeerAudio(peerId);
     }
+    // 不论元素在不在，增益链都要拆（否则节点一直挂在 AudioContext 上）
+    this.teardownPeerAudio(peerId);
     this.dropPumpAudio(peerId);
     const monitor = this.monitors.get(peerId);
     if (monitor) {
@@ -3659,7 +3760,22 @@ export class VoiceMesh {
   }
 
   private monitor(id: string, stream: MediaStream, local = false): void {
-    if (this.monitors.has(id)) return;
+    const existing = this.monitors.get(id);
+    if (existing) {
+      if (existing.stream === stream) return;
+      /*
+       * 换了流（自愈重拨、播放链重建）必须换分析器：老的接的是老节点，
+       * 拿它算电平，说话高亮和发言时长会一直失真。
+       */
+      try {
+        existing.source.disconnect();
+        existing.analyser.disconnect();
+      } catch {
+        /* noop */
+      }
+      this.monitors.delete(id);
+      this.speaking.delete(id);
+    }
     const ctx = this.audioContext();
     if (!ctx) return;
     try {
