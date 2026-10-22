@@ -20,6 +20,15 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.8.2",
+    date: "2026-10-22",
+    lines: [
+      "新主题「春节」：灯笼鞭炮，猪戴财神帽",
+      "主题自己做主：首页右上角随时换",
+      "雪原和万圣夜的小猪也添了新装扮",
+    ],
+  },
+  {
     version: "1.8.1",
     date: "2026-10-22",
     lines: [
