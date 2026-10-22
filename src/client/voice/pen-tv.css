@@ -489,6 +489,47 @@ html[data-daypart="night"] .vx-proj-beam {
   gap: 7px;
 }
 
+/*
+ * 菜单里塞了「画质 4 档 + 声音 3 项 + 方式 3 项」，在 760px 高的窗口里
+ * 会顶出屏幕（业主实拍：最上面那档画质被切掉、看不见）。给它自己滚动。
+ */
+.vx-share-menu {
+  max-height: min(72vh, 560px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* 画质 2×2：四档竖排太占高，两列能省近一半 */
+.vx-share-qgrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+.vx-share-qgrid .vx-share-quality {
+  padding: 7px 8px;
+}
+.vx-share-qgrid .vx-share-quality strong {
+  font-size: 12px;
+}
+.vx-share-qgrid .vx-share-quality span {
+  font-size: 10px;
+}
+
+/* 三选一：一行三个小胶囊（两列网格放三项会剩一个单独换行，很难看） */
+.vx-share-tri {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+.vx-share-tri .vx-share-quality {
+  align-items: center;
+  text-align: center;
+  padding: 7px 2px;
+}
+.vx-share-tri .vx-share-quality strong {
+  font-size: 12px;
+}
+
 /* "?" 悬停说明：优缺点气泡 */
 .vx-share-help {
   position: relative;

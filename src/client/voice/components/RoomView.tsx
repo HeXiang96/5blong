@@ -60,7 +60,7 @@ import { SCENE_THEMES, type SceneThemeId } from "../scene-theme";
 import type { LucideIcon } from "lucide-react";
 import { MonitorUp } from "lucide-react";
 import { SHARE_QUALITY_PRESETS, autoTransportFor } from "../screen-share";
-import { isTauriRuntime, listLoopbackTargets } from "../loopback";
+import { isTauriRuntime, listLoopbackTargets, listShareWindows } from "../loopback";
 
 /**
  * 可对其他成员做的小猪互动，按顺序展示成一排按钮。
@@ -314,8 +314,26 @@ export function RoomView({
 
   useEffect(() => {
     if (!shareMenuOpen || !shareDesktop) return;
-    // 只列"此刻正在出声"的程序：共享前让游戏/视频先出点声，这里才有它
-    void listLoopbackTargets().then(setShareApps);
+    /*
+     * 候选来源分两层：
+     * 1. 「此刻正在出声」的程序（最准，选它一定采得到声音）；
+     * 2. 一个都没出声时，退回「所有有窗口的程序」——否则"指定应用"点下去
+     *    候选为空，按钮看起来像坏了（业主实测反馈）。
+     */
+    void (async () => {
+      const audible = await listLoopbackTargets();
+      if (audible.length > 0) {
+        setShareApps(audible);
+        return;
+      }
+      const windows = await listShareWindows();
+      const seen = new Set<number>();
+      setShareApps(
+        windows
+          .filter((w) => (seen.has(w.pid) ? false : (seen.add(w.pid), true)))
+          .map((w) => ({ pid: w.pid, name: w.title })),
+      );
+    })();
   }, [shareMenuOpen, shareDesktop]);
 
   useEffect(() => {
@@ -1403,6 +1421,7 @@ export function RoomView({
         {shareMenuOpen ? (
           <div className="vx-share-menu" onClick={(event) => event.stopPropagation()}>
             <p className="vx-share-menu-title">共享画质</p>
+            <div className="vx-share-qgrid">
             {(Object.keys(SHARE_QUALITY_PRESETS) as ShareQuality[]).map((key) => {
               const preset = SHARE_QUALITY_PRESETS[key];
               return (
@@ -1413,75 +1432,89 @@ export function RoomView({
                   onClick={() => onSetShareQuality(key)}
                 >
                   <strong>{preset.label}</strong>
-                  <span>60 帧 · {Math.round(preset.maxBitrate / 1000)} kbps</span>
+                  <span>
+                    {preset.fps}fps · {Math.round(preset.maxBitrate / 1000)}k
+                  </span>
                 </button>
               );
             })}
-            <p className="vx-share-menu-title">
-              共享声音
-              <span className="vx-share-help" tabIndex={0} aria-label="共享声音说明">
-                ?
-                <span className="vx-share-tip" role="tooltip">
-                  <b>自动（推荐）</b>：共享某个窗口时，只采那个应用的声音——房间语音
-                  从原理上混不进来；共享整个桌面时采整机声音、排除本应用。
-                  <br />
-                  <b>听到自己的声音重复了两遍</b>：把这里切成"指定应用"，
-                  选中你正在共享的那个程序，共享音频里就只剩它的声音。
-                  <br />
-                  网页版拿不到"只采某个应用"，要共享游戏/视频的声音请用桌面客户端。
-                </span>
-              </span>
+            </div>
+            <p className="vx-share-menu-title">共享声音</p>
+            {/* 原来这两组用 "?" 气泡解释，但菜单为了不顶出屏幕改成了可滚动，
+                绝对定位的气泡会被裁掉（业主实拍：只剩一条深色块）。改成常显一行短说明。 */}
+            <p className="vx-share-menu-hint">
+              自动：共享窗口只采该应用；共享整屏时排除本应用，不会听到房间语音
             </p>
             {shareDesktop ? (
-              <div className="vx-share-transport">
-                {(
-                  [
-                    { key: "off", name: "不带声音", desc: "只共享画面" },
-                    { key: "auto", name: "自动", desc: "窗口→只采该应用" },
-                    { key: "app", name: "指定应用", desc: "回声时用它止血" },
-                  ] as const
-                ).map((item) => {
-                  const on =
-                    item.key === "off"
-                      ? !shareAudio
-                      : shareAudio && (item.key === "auto" ? shareAppPid === null : shareAppPid !== null);
-                  return (
-                    <button
-                      key={item.key}
-                      type="button"
-                      className={`vx-share-quality${on ? " vx-share-quality-on" : ""}`}
-                      onClick={() => {
-                        if (item.key === "off") {
-                          onSetShareAudio(false);
-                          onSetShareAppPid(null);
-                          return;
-                        }
-                        onSetShareAudio(true);
-                        if (item.key === "auto") {
-                          onSetShareAppPid(null);
-                          return;
-                        }
-                        // 切到"指定应用"：默认选第一个正在出声的程序，用户可再改
-                        const first = shareApps[0];
-                        onSetShareAppPid(first ? first.pid : null);
-                      }}
-                    >
-                      <strong>{item.name}</strong>
-                      <span>{item.desc}</span>
-                    </button>
-                  );
-                })}
-              </div>
+              <>
+                {/* 三选一做成一行小胶囊：两列网格放三项会剩一个单独换行，
+                    菜单也被撑高到看不见顶（业主实拍反馈） */}
+                <div className="vx-share-tri" role="group" aria-label="共享声音来源">
+                  {(
+                    [
+                      { key: "off", name: "不带", tip: "只共享画面，不采集任何声音" },
+                      { key: "auto", name: "自动", tip: "共享窗口→只采那个应用；共享整屏→整机但排除本应用" },
+                      { key: "app", name: "指定", tip: "手动选一个程序作为唯一声音来源（听到回声时用它止血）" },
+                    ] as const
+                  ).map((item) => {
+                    const on =
+                      item.key === "off"
+                        ? !shareAudio
+                        : shareAudio && (item.key === "auto" ? shareAppPid === null : shareAppPid !== null);
+                    return (
+                      <button
+                        key={item.key}
+                        type="button"
+                        title={item.tip}
+                        className={`vx-share-quality${on ? " vx-share-quality-on" : ""}`}
+                        onClick={() => {
+                          if (item.key === "off") {
+                            onSetShareAudio(false);
+                            onSetShareAppPid(null);
+                            return;
+                          }
+                          onSetShareAudio(true);
+                          if (item.key === "auto") {
+                            onSetShareAppPid(null);
+                            return;
+                          }
+                          /*
+                           * 切到「指定应用」一定得落一个具体 pid，否则这一项在
+                           * 界面上等于没选中（原来列表为空时点了毫无反应，
+                           * 就是"按钮用不了"的现场）。没有候选就退而求其次，
+                           * 用当前进程列表的第一项；还空就保持原状不再骗人。
+                           */
+                          const first = shareApps[0];
+                          // -1 = "指定，但还没选到程序"：让胶囊能高亮、并显示缺候选的提示，
+                          // 而不是点了像没反应（业主反馈"这个按钮根本用不了"）
+                          onSetShareAppPid(first ? first.pid : -1);
+                        }}
+                      >
+                        <strong>{item.name}</strong>
+                      </button>
+                    );
+                  })}
+                </div>
+                {shareAudio && shareAppPid !== null && shareApps.length === 0 ? (
+                  <p className="vx-share-menu-hint">
+                    没检测到可采集的程序：先让游戏/视频出点声，再重新打开本菜单
+                  </p>
+                ) : null}
+              </>
             ) : (
               <p className="vx-share-menu-hint">网页版只能采整机声音；要"只共享某个应用的声音"请用桌面客户端</p>
             )}
             {shareDesktop && shareAudio && shareAppPid !== null ? (
               <select
                 className="vx-input"
-                value={String(shareAppPid)}
+                value={shareAppPid > 0 ? String(shareAppPid) : ""}
                 onChange={(event) => onSetShareAppPid(event.target.value ? Number(event.target.value) : null)}
               >
-                <option value="">自动（窗口→只采该应用）</option>
+                {/* 这一项原来指向"自动"，选完 pid 变 null，整个下拉连带自己消失；
+                    切回自动请点上方的"自动"胶囊 */}
+                <option value="" disabled>
+                  选择一个程序…
+                </option>
                 {shareApps.map((app) => (
                   <option key={app.pid} value={String(app.pid)}>
                     {app.name}
@@ -1510,22 +1543,22 @@ export function RoomView({
                 </span>
               </span>
             </p>
-            <div className="vx-share-transport">
+            <div className="vx-share-tri" role="group" aria-label="共享方式">
               {(
                 [
-                  { key: "auto", name: "自动", desc: "按人数选直连/转发" },
-                  { key: "p2p", name: "P2P 直连", desc: "画质最好 · 延迟最低" },
-                  { key: "sfu", name: "SFU 转发", desc: "连接成功率兜底" },
+                  { key: "auto", name: "自动", tip: "按观众数选直连/转发" },
+                  { key: "p2p", name: "直连", tip: "P2P 直连：画质最好、延迟最低" },
+                  { key: "sfu", name: "转发", tip: "SFU 转发：连接成功率高，多人更省上行" },
                 ] as const
               ).map((item) => (
                 <button
                   key={item.key}
                   type="button"
+                  title={item.tip}
                   className={`vx-share-quality${shareTransport === item.key ? " vx-share-quality-on" : ""}`}
                   onClick={() => onSetShareTransport(item.key)}
                 >
                   <strong>{item.name}</strong>
-                  <span>{item.desc}</span>
                 </button>
               ))}
             </div>

@@ -609,7 +609,12 @@ export function useVoice() {
            *   3. 共享整个桌面 → 整机混音 − WebView2 进程树（我们自己的语音就是它播的）。
            * 第 2 条是关键：只要共享的是具体窗口，房间语音从原理上就不可能进共享音频。
            */
-          let sharePid = settings.shareAppPid ?? null;
+          /*
+           * 界面用 -1 表示"指定应用、但还没选到具体程序"（否则那个胶囊点了没反馈）。
+           * 传给 Rust 时必须是 null，不然会把 -1 当 pid 去采，直接失败。
+           */
+          let sharePid =
+            settings.shareAppPid && settings.shareAppPid > 0 ? settings.shareAppPid : null;
           let sharePidTitle = "";
           if (!sharePid) {
             const videoTrack = stream.getVideoTracks()[0];
