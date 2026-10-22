@@ -3513,8 +3513,8 @@ html[data-theme="dark"] .vx-link-warn-text {
 
 /* ================================================================
  * 主页：频道分层（2026-10-22）
- * 语言沿用现有体系：纸面 + 木框（同底部公告栏），不是白底 SaaS 卡。
- * 浅色/深色各一套。
+ * 语言沿用现有体系：纸面 + 木框（同底部公告栏）。
+ * 卡片一律不加描边——深色下任何边框都是一条亮线，分层靠底色差 + 投影。
  * ================================================================ */
 
 .vx-channels {
@@ -3531,43 +3531,21 @@ html[data-theme="dark"] .vx-link-warn-text {
   gap: 7px;
   padding: 12px 14px 13px;
   border-radius: 14px;
-  position: relative;
   color: #5b3d18;
 }
 
-/* 主频道：纸面 + 木框 + 顶部木条（跟「公告栏」一套语言） */
 .vx-channel-main {
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.55) 0%, rgba(255, 255, 255, 0) 40%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.5) 0%, rgba(255, 255, 255, 0) 34%),
     linear-gradient(180deg, #fffdf6 0%, #f7ecd6 100%);
-  border: 1px solid rgba(120, 78, 34, 0.45);
   box-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.7) inset,
-    0 6px 16px rgba(70, 44, 14, 0.16);
-}
-.vx-channel-main::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 0;
-  height: 6px;
-  border-radius: 14px 14px 0 0;
-  background:
-    repeating-linear-gradient(92deg, rgba(122, 82, 38, 0.16) 0 2px, rgba(122, 82, 38, 0) 2px 8px),
-    linear-gradient(180deg, #dcb47c 0%, #c1965c 100%);
-  border-bottom: 1px solid rgba(120, 78, 34, 0.28);
-}
-.vx-channel-main > .vx-channel-head {
-  margin-top: 4px;
+    0 1px 0 rgba(255, 255, 255, 0.65) inset,
+    0 8px 20px rgba(70, 44, 14, 0.18);
 }
 
-/* 低频频道：薄木片 / 便签，虚线边，明显更轻 */
+/* 低频频道：更淡的底，无边框——层级靠体量小 + 底更淡，不靠线 */
 .vx-channel-sub {
-  background:
-    repeating-linear-gradient(92deg, rgba(122, 82, 38, 0.05) 0 2px, rgba(122, 82, 38, 0) 2px 9px),
-    linear-gradient(180deg, rgba(255, 246, 222, 0.5) 0%, rgba(255, 246, 222, 0.22) 100%);
-  border: 1px dashed rgba(120, 78, 34, 0.38);
+  background: linear-gradient(180deg, rgba(255, 246, 222, 0.42) 0%, rgba(255, 246, 222, 0.2) 100%);
   box-shadow: none;
 }
 
@@ -3592,6 +3570,7 @@ html[data-theme="dark"] .vx-link-warn-text {
   color: #7a6449; /* 原值 #8a7355 只有 4.33:1，这里提到 5.2:1 */
 }
 
+/* 房间码 + 加入一行；创建单独一行做主操作 */
 .vx-code-row {
   display: flex;
   gap: 8px;
@@ -3600,28 +3579,30 @@ html[data-theme="dark"] .vx-link-warn-text {
 .vx-code-input {
   flex: 1 1 auto;
   min-width: 0;
-  padding: 9px 12px;
+  padding: 10px 12px;
   border-radius: 11px;
-  border: 1px solid rgba(120, 78, 34, 0.42);
-  background: rgba(255, 253, 246, 0.92);
+  border: none;
+  background: rgba(255, 253, 246, 0.9);
   color: #4a3212;
   font: inherit;
   font-variant-numeric: tabular-nums;
-  letter-spacing: 0.26em;
+  letter-spacing: 0.12em;
   text-align: center;
   outline: none;
-  box-shadow: 0 1px 2px rgba(70, 44, 14, 0.08) inset;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  box-shadow: 0 1px 2px rgba(70, 44, 14, 0.1) inset;
+  transition: box-shadow 0.15s ease;
 }
 .vx-code-input:focus {
-  border-color: #a86f2c;
-  box-shadow: 0 0 0 3px rgba(207, 150, 80, 0.24);
+  box-shadow:
+    0 1px 2px rgba(70, 44, 14, 0.1) inset,
+    0 0 0 3px rgba(207, 150, 80, 0.3);
 }
 .vx-code-input::placeholder {
   letter-spacing: 0.06em;
   color: #9a8a70;
 }
 
+/* 卡片底部一行：两个低调入口 */
 .vx-channel-foot {
   display: flex;
   align-items: center;
@@ -3645,6 +3626,23 @@ html[data-theme="dark"] .vx-link-warn-text {
   margin-left: auto;
   font-size: 11px;
 }
+
+/* 低频条：描述左、动作右，压成一行填满横向空间 */
+.vx-channel-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.vx-channel-row .vx-channel-desc {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+}
+.vx-channel-row .vx-channel-acts {
+  margin-left: auto;
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+}
 .vx-channel-acts {
   display: flex;
   gap: 7px;
@@ -3666,24 +3664,14 @@ html[data-theme="dark"] .vx-channel {
 }
 html[data-theme="dark"] .vx-channel-main {
   background:
-    linear-gradient(180deg, rgba(255, 236, 200, 0.1) 0%, rgba(255, 236, 200, 0) 40%),
+    linear-gradient(180deg, rgba(255, 236, 200, 0.07) 0%, rgba(255, 236, 200, 0) 34%),
     linear-gradient(180deg, #33291b 0%, #271f14 100%);
-  border-color: rgba(255, 226, 170, 0.24);
   box-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.08) inset,
-    0 6px 16px rgba(0, 0, 0, 0.4);
-}
-html[data-theme="dark"] .vx-channel-main::before {
-  background:
-    repeating-linear-gradient(92deg, rgba(255, 226, 170, 0.07) 0 2px, rgba(255, 226, 170, 0) 2px 8px),
-    linear-gradient(180deg, #6d5531 0%, #55401f 100%);
-  border-bottom-color: rgba(0, 0, 0, 0.35);
+    0 1px 0 rgba(255, 255, 255, 0.06) inset,
+    0 8px 20px rgba(0, 0, 0, 0.42);
 }
 html[data-theme="dark"] .vx-channel-sub {
-  background:
-    repeating-linear-gradient(92deg, rgba(255, 226, 170, 0.04) 0 2px, rgba(255, 226, 170, 0) 2px 9px),
-    rgba(255, 236, 200, 0.06);
-  border-color: rgba(255, 226, 170, 0.2);
+  background: rgba(255, 236, 200, 0.05);
 }
 html[data-theme="dark"] .vx-channel-head {
   color: #f4e4c2;
@@ -3694,23 +3682,47 @@ html[data-theme="dark"] .vx-channel-invite {
   color: #cbb28a;
 }
 html[data-theme="dark"] .vx-code-input {
-  background: #3a2c15;
-  border-color: rgba(255, 226, 170, 0.3);
+  background: rgba(0, 0, 0, 0.28);
   color: #f4e4c2;
+}
+html[data-theme="dark"] .vx-code-input:focus {
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.2) inset,
+    0 0 0 3px rgba(207, 150, 80, 0.28);
 }
 html[data-theme="dark"] .vx-code-input::placeholder {
   color: #9c8763;
-}
-html[data-theme="dark"] .vx-code-input:focus {
-  border-color: #cf9650;
-  box-shadow: 0 0 0 3px rgba(207, 150, 80, 0.22);
 }
 html[data-theme="dark"] .vx-channel-error {
   color: #ff8a72;
 }
 
 /* ================================================================
- * 顶栏身份 chip（2026-10-22）：迷你木牌，右上角
+ * 公告栏（最新更新）挂主列右侧（宽屏 ≥1060px）
+ * 业主反馈"太靠下面"——原来是主列末尾的 flex 子项，翻到底才看得见。
+ * 窄窗口侧面放不下，回落到主列末尾原位。
+ * ================================================================ */
+
+.vx-landing-board-side {
+  position: absolute;
+  top: 150px;
+  right: clamp(14px, 3vw, 44px);
+  bottom: auto;
+  margin: 0;
+  width: min(248px, calc(100vw - 44px));
+}
+@media (max-width: 1059px) {
+  .vx-landing-board-side {
+    position: relative;
+    top: auto;
+    right: auto;
+    align-self: flex-end;
+    margin: 20px clamp(16px, 5vw, 48px) 34px 0;
+  }
+}
+
+/* ================================================================
+ * 顶栏身份 chip：迷你木牌，右上角
  * ================================================================ */
 
 .vx-top-right {
@@ -3723,7 +3735,7 @@ html[data-theme="dark"] .vx-channel-error {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 4px 5px 4px 5px;
+  padding: 4px 5px;
   border-radius: 999px;
   border: 1px solid rgba(120, 78, 34, 0.45);
   background:

@@ -340,14 +340,16 @@ export function LandingView({
                 这是什么？
               </button>
             </div>
-            <p className="vx-channel-desc">分进攻 / 防守两队，队内语音互相隔离。</p>
-            <div className="vx-channel-acts">
-              <button type="button" className="vx-btn vx-btn-small vx-btn-ghost" onClick={onCreateGame}>
-                创建
-              </button>
-              <button type="button" className="vx-btn vx-btn-small vx-btn-ghost" onClick={onJoinGame}>
-                加入
-              </button>
+            <div className="vx-channel-row">
+              <p className="vx-channel-desc">分进攻 / 防守两队，队内语音互相隔离。</p>
+              <div className="vx-channel-acts">
+                <button type="button" className="vx-btn vx-btn-small vx-btn-ghost" onClick={onCreateGame}>
+                  创建
+                </button>
+                <button type="button" className="vx-btn vx-btn-small vx-btn-ghost" onClick={onJoinGame}>
+                  加入
+                </button>
+              </div>
             </div>
           </section>
         </div>
@@ -381,7 +383,7 @@ export function LandingView({
           所以表现成"点完没反应、也没提示"。
         */}
         {joining ? (
-          <div className="vx-landing-note vx-landing-note-busy" role="status">
+        <div className="vx-landing-note vx-landing-note-busy" role="status">
             <Spinner size={15} />
             <span className="vx-landing-note-text">
               <b>{retrying ? "连接不畅，正在自动换线路重试…" : "正在进入房间…"}</b>
@@ -449,8 +451,7 @@ export function LandingView({
         </ul>
       </main>
 
-      {/* 公告栏挂在页面根容器（贴场景右下角），不跟着居中的主内容列走 */}
-      <aside className="vx-landing-board" aria-label="最新更新">
+        <aside className="vx-landing-board vx-landing-board-side" aria-label="最新更新">
         <div className="vx-landing-board-face">
           <b className="vx-landing-board-title">
             最新更新
@@ -497,6 +498,8 @@ export function LandingView({
         <span className="vx-landing-board-post vx-landing-board-post-r" aria-hidden="true" />
       </aside>
 
+      {/* 公告栏（最新更新）：原来贴在场景右下角，几乎没人看到（业主反馈"太靠下面"）。
+          挪进主列、紧跟频道卡，作为"看完能做什么"之后的"最近变了什么"。 */}
       {joinOpen ? (
         <div className="vx-modal-backdrop" onClick={() => setJoinOpen(false)}>
           <form className="vx-modal" onClick={(event) => event.stopPropagation()} onSubmit={submit}>
