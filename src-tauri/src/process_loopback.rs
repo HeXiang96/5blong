@@ -390,7 +390,9 @@ pub fn run_capture_excluding(
 
 /// 枚举"有标题的可见顶层窗口"：返回 (pid, 标题)。
 pub fn list_window_titles() -> Vec<(u32, String)> {
-    use windows::Win32::Foundation::{BOOL, HWND, LPARAM};
+    // windows 0.62 起 BOOL 在 windows::core，不在 Win32::Foundation（CI 实测 E0432）
+    use windows::core::BOOL;
+    use windows::Win32::Foundation::{HWND, LPARAM};
     use windows::Win32::UI::WindowsAndMessaging::{
         EnumWindows, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId,
         IsWindowVisible,
