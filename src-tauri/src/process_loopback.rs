@@ -399,19 +399,22 @@ pub fn list_window_titles() -> Vec<(u32, String)> {
     };
 
     unsafe extern "system" fn visit(hwnd: HWND, lparam: LPARAM) -> BOOL {
-        let out = &mut *(lparam.0 as *mut Vec<(u32, String)>);
-        if IsWindowVisible(hwnd).as_bool() {
-            let len = GetWindowTextLengthW(hwnd);
-            if len > 0 {
-                let mut buf = vec![0u16; len as usize + 1];
-                let copied = GetWindowTextW(hwnd, &mut buf);
-                if copied > 0 {
-                    let title = String::from_utf16_lossy(&buf[..copied as usize]);
-                    if !title.trim().is_empty() {
-                        let mut pid = 0u32;
-                        GetWindowThreadProcessId(hwnd, Some(&mut pid));
-                        if pid != 0 {
-                            out.push((pid, title));
+        // Rust 2024 起 unsafe fn 体内也要显式 unsafe 块（CI 警告 unsafe_op_in_unsafe_fn）
+        unsafe {
+            let out = &mut *(lparam.0 as *mut Vec<(u32, String)>);
+            if IsWindowVisible(hwnd).as_bool() {
+                let len = GetWindowTextLengthW(hwnd);
+                if len > 0 {
+                    let mut buf = vec![0u16; len as usize + 1];
+                    let copied = GetWindowTextW(hwnd, &mut buf);
+                    if copied > 0 {
+                        let title = String::from_utf16_lossy(&buf[..copied as usize]);
+                        if !title.trim().is_empty() {
+                            let mut pid = 0u32;
+                            GetWindowThreadProcessId(hwnd, Some(&mut pid));
+                            if pid != 0 {
+                                out.push((pid, title));
+                            }
                         }
                     }
                 }
