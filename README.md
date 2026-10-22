@@ -569,6 +569,7 @@ npm run feedback:admin list 20   # 终端查看最近反馈（url / list / rm �
 <!-- AUTO-LOG:START -->
 ### 近期提交（自动生成）
 
+- `7094904` fix(ui): 共享菜单不再顶出屏幕；修好被裁的说明气泡与「指定」按钮；补全量评审报告（10-22 11:35）
 - `3f0d576` fix(build): windows 0.62 里 BOOL 在 windows::core，修正 import（10-22 11:06）
 - `2663fa8` fix(voice): 直连/中继按"真正在用的候选对"判定（10-22 10:58）
 - `634f46d` release: v1.7.6（10-22 10:49）
@@ -577,7 +578,6 @@ npm run feedback:admin list 20   # 终端查看最近反馈（url / list / rm �
 - `b2f2b0f` feat(voice): 单房上限提到 13 人（12 位访客 + 房主）（10-22 09:16）
 - `1f09f0c` fix(voice,game): 全量审查语音代码，修掉 15 处真实缺陷（10-22 09:07）
 - `3f6e9b0` fix(game,voice): 单向无声音——判据改看包/播放链，并堵住三处丢声通道（10-22 08:42）
-- `e367c29` release: v1.7.5（10-21 18:24）
 <!-- AUTO-LOG:END -->
 
 ## 怎么用
