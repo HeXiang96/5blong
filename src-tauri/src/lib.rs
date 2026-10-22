@@ -296,6 +296,8 @@ pub fn run() {
             start_update_download,
             loopback::start_loopback_capture,
             loopback::list_loopback_targets,
+            loopback::list_share_windows,
+            loopback::resolve_share_pid,
             loopback::stop_loopback_capture
         ])
         // 单实例必须在其它插件 / WebView 初始化之前注册。

@@ -52,11 +52,13 @@ import {
   createJitterBufferTuner,
   createScreenSenderTuner,
   healScreenConnection,
+  jitterTargetFor,
   perViewerBitrate,
   probeHardwareEncoders,
   screenHintFor,
   type HardwareCodecProbe,
   type ScreenSenderTuner,
+  type ShareLatency,
   type ShareQuality,
   type TunePoint,
 } from "./screen-share";
@@ -1823,6 +1825,32 @@ export class VoiceMesh {
    *   由调用方在重订阅时带上。
    * 没有人在共享时也记住选择，等下次开播/重订阅时生效。
    */
+  /**
+   * 观众端"延迟换稳定"档位（看别人共享时生效）。
+   * 只影响画面这条 PC 的抖动缓冲（画面 + 共享声音成对），不影响语音房。
+   */
+  private screenLatency: ShareLatency = "balanced";
+
+  setScreenLatency(mode: ShareLatency): void {
+    if (this.screenLatency === mode) return;
+    this.screenLatency = mode;
+    /*
+     * 已经在看的人要立刻生效：重建抖动缓冲 tuner（老的 stop 掉）。
+     * 画面 PC 不变，所以不会黑屏，只是下一次采样按新档位排队。
+     */
+    for (const call of this.screenCalls.values()) {
+      this.viewerJitters.get(call)?.();
+      const pc = this.screenPeerConnection(call);
+      if (pc) {
+        const range = jitterTargetFor(mode);
+        this.viewerJitters.set(
+          call,
+          createJitterBufferTuner(pc, { minMs: range.min, maxMs: range.max }),
+        );
+      }
+    }
+  }
+
   setScreenViewPreference(mode: ScreenViewPreference): void {
     this.localScreenPref = mode;
     const sharer = this.screenShareState?.sharerId;
@@ -3248,7 +3276,8 @@ export class VoiceMesh {
   private smoothScreenReceivers(call: MediaConnection): void {
     const pc = this.screenPeerConnection(call);
     if (!pc) return;
-    const stop = createJitterBufferTuner(pc);
+    const range = jitterTargetFor(this.screenLatency);
+    const stop = createJitterBufferTuner(pc, { minMs: range.min, maxMs: range.max });
     this.viewerJitters.set(call, stop);
   }
 

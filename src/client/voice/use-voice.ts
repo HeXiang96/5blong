@@ -54,7 +54,7 @@ import {
   type ScreenShareState,
 } from "./protocol";
 import { refreshIceServers } from "./ice";
-import { isTauriRuntime, startLoopbackAudio } from "./loopback";
+import { isTauriRuntime, resolveSharePid, startLoopbackAudio } from "./loopback";
 import { loadSettings, saveSettings, type VoiceSettings } from "./settings";
 import { readJson, writeJson } from "./storage";
 
@@ -150,6 +150,12 @@ export function useVoice() {
   /** 最新成员数：开播时据此决定 P2P 还是 SFU（避免闭包里的陈旧值）。 */
   const memberCountRef = useRef(0);
   memberCountRef.current = members.length;
+  /**
+   * 最新设置的镜像：引擎在回调里（startEngine / 订阅侧）要读设置，
+   * 直接闭包会拿到旧值。每轮渲染同步一次，足够及时。
+   */
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
   /** 自适应降档提示只弹一次（同一次共享里不刷屏）。 */
   const stepNoticeShown = useRef(false);
   /** 共享会话的清理（离房/重置时无条件执行）。 */
@@ -364,6 +370,8 @@ export function useVoice() {
     engineRef.current?.destroy();
     const engine = makeEngine();
     engineRef.current = engine;
+    // 观众侧延迟档位：引擎持有一份，画面连接建立时按它排队
+    engine.setScreenLatency(settingsRef.current.shareLatency);
     return engine;
   }, [makeEngine]);
 
@@ -438,6 +446,8 @@ export function useVoice() {
         // 带宽估计擅自把满档降到 q 层（现场：观众选 f 却只收到 353×254）。
         // 只有观众主动选「流畅优先」时才放开自适应降层去换平滑。
         adaptive: settings.shareViewMode === "motion",
+        // 延迟档位：画面与共享声音成对排队（low 0.5s / balanced 自适应 / smooth 1.5s+）
+        latency: settings.shareLatency,
       })
         .then((sub) => {
           if (cancelled) {
@@ -592,6 +602,28 @@ export function useVoice() {
          */
         let viaNativeAudio = false;
         if (desktopNative && settings.shareAudio) {
+          /*
+           * 声音来源的三级优先（2026-10-22，对齐 Oopz 的"只共享当前应用声音"）：
+           *   1. 设置里显式指定了应用 → 只采它；
+           *   2. 共享的是某个窗口/标签 → 用 track.label（窗口标题）反查进程，只采那个应用；
+           *   3. 共享整个桌面 → 整机混音 − WebView2 进程树（我们自己的语音就是它播的）。
+           * 第 2 条是关键：只要共享的是具体窗口，房间语音从原理上就不可能进共享音频。
+           */
+          let sharePid = settings.shareAppPid ?? null;
+          let sharePidTitle = "";
+          if (!sharePid) {
+            const videoTrack = stream.getVideoTracks()[0];
+            const surface = (
+              videoTrack?.getSettings() as { displaySurface?: string } | undefined
+            )?.displaySurface;
+            if (videoTrack && (surface === "window" || surface === "browser" || !surface)) {
+              const resolved = await resolveSharePid(videoTrack.label);
+              if (resolved) {
+                sharePid = resolved.pid;
+                sharePidTitle = resolved.title;
+              }
+            }
+          }
           try {
             const native = await startLoopbackAudio(
               (message) => setNotice({ kind: "error", sticky: true, text: message }),
@@ -611,16 +643,23 @@ export function useVoice() {
                   setNotice({ kind: "info", text: message });
                 }
               },
-              settings.shareAppPid ?? null,
+              sharePid,
             );
             stream.addTrack(native.track);
             nativeLoopbackStopRef.current = native.stop;
             hasAudio = true;
             viaNativeAudio = true;
-            setNotice({
-              kind: "info",
-              text: "已带上系统声音（自动排除房间语音，不会回声）",
-            });
+            /*
+             * 如实写出"声音到底从哪来"：出了回声时这一行就是第一手证据，
+             * 不用再猜走的是哪条路（这条以前只写"已排除房间语音"，反而误导）。
+             */
+            const source =
+              native.mode === "include"
+                ? `只采「${sharePidTitle || `进程 ${native.target}`}」的声音`
+                : native.mode === "webview"
+                  ? "整机声音，已排除本应用语音"
+                  : "整机声音（未能定位本应用的音频进程，可能听到回声；可在设置→共享里指定应用）";
+            setNotice({ kind: "info", text: `已带上系统声音：${source}` });
           } catch (error) {
             console.warn("[screen-share] 内置系统声音采集失败：", error);
             setNotice({
@@ -1153,6 +1192,25 @@ export function useVoice() {
     [persistSettings, settings],
   );
 
+  /** 共享时是否带上系统声音（共享浮层里直接可改，落盘记住）。 */
+  const setShareAudio = useCallback(
+    (on: boolean) => {
+      persistSettings({ ...settings, shareAudio: on });
+    },
+    [persistSettings, settings],
+  );
+
+  /**
+   * 共享声音的来源：null = 自动（共享窗口→只采那个应用；整屏→排除本应用）。
+   * 指定 pid 则只采那个应用——这是"听到回声"时唯一 100% 有效的止血手段。
+   */
+  const setShareAppPid = useCallback(
+    (pid: number | null) => {
+      persistSettings({ ...settings, shareAppPid: pid });
+    },
+    [persistSettings, settings],
+  );
+
   /**
    * 观众端切换画质偏好（自动 / 清晰优先 / 流畅优先）。
    *
@@ -1160,6 +1218,15 @@ export function useVoice() {
    * 经房主转达给共享者、只影响本机这一路发送链；③ SFU 模式下订阅副作用会
    * 因为偏好变化自动重订阅到对应层（见 shareViewMode 的依赖）。
    */
+  /** 观众侧延迟档位（延迟换稳定；画面与共享声音成对）。 */
+  const setShareLatency = useCallback(
+    (mode: "low" | "balanced" | "smooth") => {
+      persistSettings({ ...settings, shareLatency: mode });
+      engineRef.current?.setScreenLatency(mode);
+    },
+    [persistSettings, settings],
+  );
+
   const setShareViewMode = useCallback(
     (mode: ScreenViewPreference) => {
       persistSettings({ ...settings, shareViewMode: mode });
@@ -1564,7 +1631,13 @@ export function useVoice() {
     setShareQuality,
     shareTransport: settings.shareTransport,
     setShareTransport,
+    shareAudio: settings.shareAudio,
+    setShareAudio,
+    shareAppPid: settings.shareAppPid ?? null,
+    setShareAppPid,
     shareViewMode: settings.shareViewMode,
     setShareViewMode,
+    shareLatency: settings.shareLatency,
+    setShareLatency,
   };
 }

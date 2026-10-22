@@ -79,6 +79,15 @@ export interface LoopbackAudio {
   track: MediaStreamTrack;
   /** 停播时调用（停 Rust 采集、关音频图；重复调用安全）。 */
   stop: () => Promise<void>;
+  /**
+   * Rust 侧实际采用的采集模式：
+   * - include：只采一个应用（最理想，房间语音进不来）
+   * - webview：整机 − WebView2 进程树（我们自己的语音从这儿出）
+   * - self：整机 − 本进程（拿不到 WebView2 进程时的兜底，可能仍含人声）
+   */
+  mode: string;
+  /** 本次的目标进程（include=被采应用；webview/self=被排除的进程）。 */
+  target: number;
 }
 
 /** 启动内置系统声音采集。失败抛错（调用方自行提示并降级为无声音）。 */
@@ -183,7 +192,12 @@ export async function startLoopbackAudio(
     void ctx.close().catch(() => {});
   };
 
-  const info = await invoke<{ sampleRate: number; channels: number }>("start_loopback_capture", {
+  const info = await invoke<{
+    sampleRate: number;
+    channels: number;
+    mode?: string;
+    target?: number;
+  }>("start_loopback_capture", {
     onChunk: channel,
     onlyPid: onlyPid ?? null,
   });
@@ -230,7 +244,38 @@ export async function startLoopbackAudio(
     throw error;
   }
 
-  return { track, stop };
+  return { track, stop, mode: info.mode ?? "unknown", target: info.target ?? 0 };
+}
+
+/** 列出"有窗口的进程"（标题 + pid）：共享浮层与自检用（仅桌面客户端）。 */
+export async function listShareWindows(): Promise<{ pid: number; title: string }[]> {
+  if (!isTauriRuntime()) return [];
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    return await invoke<{ pid: number; title: string }[]>("list_share_windows");
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * 从共享源 label（窗口标题）反查窗口所属进程。
+ *
+ * 命中就说明"用户共享的是某个具体窗口"——此时只采那个进程的声音，
+ * 房间语音从原理上不可能混进共享音频。认不出来返回 null，调用方退回
+ * "整机 − 本应用进程树"。
+ */
+export async function resolveSharePid(
+  label: string,
+): Promise<{ pid: number; title: string } | null> {
+  if (!isTauriRuntime() || !label.trim()) return null;
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    const hit = await invoke<{ pid: number; title: string } | null>("resolve_share_pid", { label });
+    return hit && hit.pid ? hit : null;
+  } catch {
+    return null;
+  }
 }
 
 /** 列出正在出声的应用（仅桌面客户端；网页版返回空）。 */

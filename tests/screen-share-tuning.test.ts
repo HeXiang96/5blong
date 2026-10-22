@@ -81,9 +81,13 @@ describe("perViewerBitrate（P2P 上行分摊）", () => {
     expect(perViewerBitrate("hd720", 4)).toBe(1_250_000);
   });
 
-  it("保底 1.2 Mbps：观众再多也不摊到这个线以下", () => {
+  it("保底 1.2 Mbps，但总上行不能顶爆（12 Mbps 预算）", () => {
+    // 7 位观众：8/7 ≈ 1.14 Mbps < 地板，按地板 1.2 Mbps（总 8.4 Mbps，还在预算内）
     expect(perViewerBitrate("fhd1080", 7)).toBe(1_200_000);
-    expect(perViewerBitrate("hd720", 20)).toBe(1_200_000);
+    // 12 位观众（房间上限）：地板会把总量顶到 14.4 Mbps，必须按预算压到 1.0 Mbps
+    expect(perViewerBitrate("fhd1080", 12)).toBe(1_000_000);
+    // 极端情况：预算优先，绝不放大到地板以上
+    expect(perViewerBitrate("hd720", 20)).toBe(600_000);
   });
 
   it("非法观众数按 1 处理", () => {

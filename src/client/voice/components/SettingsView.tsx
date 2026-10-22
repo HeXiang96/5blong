@@ -407,7 +407,7 @@ export function SettingsView({
                       setVoice((prev) => ({ ...prev, shareAppPid: raw ? Number(raw) : null }));
                     }}
                   >
-                    <option value="">整机（自动排除本应用人声）</option>
+                    <option value="">自动（共享窗口→只采那个应用；整屏→排除本应用）</option>
                     {loopTargets.map((target) => (
                       <option key={target.pid} value={String(target.pid)}>
                         {target.name}
@@ -418,7 +418,8 @@ export function SettingsView({
                     刷新正在出声的应用
                   </button>
                   <small>
-                    选一个应用就只采它的声音，通知音、音乐、别的软件都不会混进共享音频。
+                    默认是"自动"：共享某个窗口时会自动只采那个应用的声音（房间语音不可能混进去）；
+                    共享整个桌面时采整机声音、排除本应用。自动认不出来时才需要在这里手动指定。
                     列表只显示"此刻正在出声"的程序——先让游戏/视频出点声再刷新。
                   </small>
                 </div>

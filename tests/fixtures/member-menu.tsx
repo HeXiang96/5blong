@@ -121,6 +121,12 @@ function Fixture() {
     onSetShareQuality: (quality) => record("share-quality", quality),
     shareTransport: "p2p" as const,
     onSetShareTransport: (transport) => record("share-transport", transport),
+    shareAudio: params.get("shareAudio") === "1",
+    onSetShareAudio: (on) => record("share-audio", on),
+    shareAppPid: params.get("sharePid") ? Number(params.get("sharePid")) : null,
+    onSetShareAppPid: (pid) => record("share-app", pid),
+    shareLatency: "balanced" as const,
+    onSetShareLatency: (mode) => record("share-latency", mode),
     shareViewMode: "auto" as const,
     onSetShareViewMode: (mode) => record("share-view-mode", mode),
   };

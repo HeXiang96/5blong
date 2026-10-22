@@ -283,6 +283,12 @@ export function App() {
         onSetShareQuality={voice.setShareQuality}
         shareTransport={voice.shareTransport}
         onSetShareTransport={voice.setShareTransport}
+        shareAudio={voice.shareAudio}
+        onSetShareAudio={voice.setShareAudio}
+        shareAppPid={voice.shareAppPid}
+        onSetShareAppPid={voice.setShareAppPid}
+        shareLatency={voice.shareLatency}
+        onSetShareLatency={voice.setShareLatency}
         shareViewMode={voice.shareViewMode}
         onSetShareViewMode={voice.setShareViewMode}
         onOpenFeedback={openFeedback}

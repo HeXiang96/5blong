@@ -290,13 +290,27 @@ interface PenTvLightboxProps {
    */
   viewMode?: ScreenViewPreference;
   onViewMode?: (mode: ScreenViewPreference) => void;
+  /** 观众端"延迟换稳定"档位（画面与共享声音成对排队）。 */
+  latency?: "low" | "balanced" | "smooth";
+  onLatency?: (mode: "low" | "balanced" | "smooth") => void;
   /** 本机就是共享者时为 true（不显示观众的画质开关）。 */
   isSharer?: boolean;
   onClose: () => void;
 }
 
 /** 点击幕布弹出的放大层：16:9 大画面 + 来源标签 + 音量（共享带声音时）。 */
-export function PenTvLightbox({ state, stream, sharerName, pc, viewMode, onViewMode, isSharer, onClose }: PenTvLightboxProps) {
+export function PenTvLightbox({
+  state,
+  stream,
+  sharerName,
+  pc,
+  viewMode,
+  onViewMode,
+  latency,
+  onLatency,
+  isSharer,
+  onClose,
+}: PenTvLightboxProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   /*
    * 音量/静音**持久化**：以前是组件内 state，关一次灯箱就丢——用户调好的音量
@@ -523,6 +537,33 @@ export function PenTvLightbox({ state, stream, sharerName, pc, viewMode, onViewM
                             ? "流畅优先：宁可糊一点，画面更跟手（看游戏/视频）"
                             : "自动：交给发送端按链路自己调"
                       }
+                    >
+                      {item.name}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+              {!isSharer && onLatency ? (
+                <div
+                  className="vx-tv-viewmode"
+                  role="group"
+                  aria-label="延迟档位"
+                  title="卡就把延迟调大：多等一会儿换画面不卡（画面与声音一起延迟）"
+                >
+                  {(
+                    [
+                      { key: "low", name: "跟手", tip: "最低延迟（≤0.5 秒）：看操作最跟手，网络抖一下会花屏" },
+                      { key: "balanced", name: "平衡", tip: "自适应 0.2~1.2 秒：多数情况够用" },
+                      { key: "smooth", name: "更稳", tip: "固定 1.5 秒以上：基本不卡，代价是明显滞后（看视频/直播）" },
+                    ] as const
+                  ).map((item) => (
+                    <button
+                      key={item.key}
+                      type="button"
+                      className="vx-tv-ctrl"
+                      onClick={() => onLatency(item.key)}
+                      aria-pressed={(latency ?? "balanced") === item.key}
+                      title={item.tip}
                     >
                       {item.name}
                     </button>

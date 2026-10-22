@@ -36,6 +36,11 @@ pub struct LoopbackState {
 pub struct LoopbackStart {
     pub sample_rate: u32,
     pub channels: u32,
+    /// 实际用的采集模式：include（只采一个应用）/ webview / self。
+    /// 前端据此把"声音来源"如实写进提示，避免出了回声还看不出走的哪条路。
+    pub mode: String,
+    /// 本次的目标进程（include=被采应用；webview/self=被排除的进程）。
+    pub target: u32,
 }
 
 /// 停掉现有 worker（置停止标志并等线程退出；线程每轮最多 20ms 检查一次）。
@@ -76,6 +81,7 @@ mod imp {
         on_chunk: Channel<String>,
         app: tauri::AppHandle,
         only_pid: Option<u32>,
+        exclude_pid: u32,
     ) -> Result<(), String> {
         /*
          * 优先进程级采集（整机混音 − 本应用进程树）：
@@ -93,8 +99,10 @@ mod imp {
                     stop.clone(),
                     &mut |pcm: &[i16]| push_pcm(&mut pcm_buf, pcm, &on_chunk),
                 ),
-                // 默认：整机混音减去本应用（共享桌面时不会有房间语音）
-                None => crate::process_loopback::run_capture(stop.clone(), |pcm| {
+                // 默认：整机混音减去"我们自己的声音"。
+                // 排除对象优先是 WebView2 的 browser 进程树（房间语音真正从这里出），
+                // 排 app.exe 只在拿不到 WebView2 进程时兜底——见 exclude_target 注释。
+                None => crate::process_loopback::run_capture_excluding(exclude_pid, stop.clone(), |pcm| {
                     push_pcm(&mut pcm_buf, pcm, &on_chunk)
                 }),
             }
@@ -208,6 +216,23 @@ mod imp {
             }
         }
 
+        /*
+         * 采集模式与目标进程在**起线程之前**定下来，并回给前端：
+         * 排障时"到底采的是谁"必须一眼可见，否则出了回声只能靠猜。
+         *   include  ：只采被共享的那个应用（共享窗口时最理想）
+         *   webview  ：整机 − WebView2 进程树（我们自己的语音从这儿出）
+         *   self     ：整机 − 本进程（拿不到 WebView2 进程时的兜底）
+         */
+        let (mode, target) = match only_pid {
+            Some(pid) => ("include".to_string(), pid),
+            None => {
+                let (pid, kind) = crate::process_loopback::exclude_target();
+                (kind.to_string(), pid)
+            }
+        };
+        // 整机采集时排除这个 pid；include 模式下用不到，随便传自身即可
+        let exclude_pid = if only_pid.is_some() { std::process::id() } else { target };
+
         let stop = Arc::new(AtomicBool::new(false));
         let thread_stop = stop.clone();
         let thread_app = app.clone();
@@ -217,7 +242,13 @@ mod imp {
                 // catch_unwind：wasapi 内部还有别的坑时（见 wait/read 的注释），
                 // panic 不能无声吞掉采集线程——必须把原因发到页面给用户看。
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    capture_loop(thread_stop.clone(), on_chunk.clone(), thread_app.clone(), only_pid)
+                    capture_loop(
+                        thread_stop.clone(),
+                        on_chunk.clone(),
+                        thread_app.clone(),
+                        only_pid,
+                        exclude_pid,
+                    )
                 }));
                 let err = match result {
                     Ok(Ok(())) => return,
@@ -242,7 +273,7 @@ mod imp {
             stop,
             thread: Some(handle),
         });
-        Ok(LoopbackStart { sample_rate: 48_000, channels: 2 })
+        Ok(LoopbackStart { sample_rate: 48_000, channels: 2, mode, target })
     }
 
     /// 列出正在出声的应用（供 UI 选"只采集这个应用"）。
@@ -253,6 +284,30 @@ mod imp {
             .into_iter()
             .map(|(pid, name)| serde_json::json!({ "pid": pid, "name": name }))
             .collect())
+    }
+
+    /// 列出"有窗口的进程"（标题 + pid）：共享浮层据此显示"声音来源"，也用于自检。
+    #[tauri::command]
+    pub fn list_share_windows() -> Result<Vec<serde_json::Value>, String> {
+        let mut list: Vec<serde_json::Value> = crate::process_loopback::list_window_titles()
+            .into_iter()
+            .map(|(pid, title)| serde_json::json!({ "pid": pid, "title": title }))
+            .collect();
+        list.sort_by(|a, b| {
+            let ta = a.get("title").and_then(|v| v.as_str()).unwrap_or("");
+            let tb = b.get("title").and_then(|v| v.as_str()).unwrap_or("");
+            ta.cmp(tb)
+        });
+        Ok(list)
+    }
+
+    /// 从共享源 label 反查窗口进程：命中返回 { pid, title }，否则 null。
+    #[tauri::command]
+    pub fn resolve_share_pid(label: String) -> Result<serde_json::Value, String> {
+        Ok(match crate::process_loopback::pid_for_share_label(&label) {
+            Some((pid, title)) => serde_json::json!({ "pid": pid, "title": title }),
+            None => serde_json::Value::Null,
+        })
     }
 
     /// 停止回环采集（停播时调用；重复调用安全）。
@@ -280,6 +335,16 @@ mod imp {
     #[tauri::command]
     pub fn list_loopback_targets() -> Result<Vec<serde_json::Value>, String> {
         Ok(Vec::new())
+    }
+
+    #[tauri::command]
+    pub fn list_share_windows() -> Result<Vec<serde_json::Value>, String> {
+        Ok(Vec::new())
+    }
+
+    #[tauri::command]
+    pub fn resolve_share_pid(_label: String) -> Result<serde_json::Value, String> {
+        Ok(serde_json::Value::Null)
     }
 }
 

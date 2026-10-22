@@ -76,6 +76,14 @@ export interface VoiceSettings {
    */
   shareViewMode: "auto" | "detail" | "motion";
   /**
+   * 观众端"延迟换稳定"的档位（**看别人共享时**生效）：
+   * - `"low"` 低延迟：≤0.5 秒，适合看操作/游戏，抖动大时会卡；
+   * - `"balanced"`（默认）：自适应 150~1200ms，抖动大自动加大；
+   * - `"smooth"` 流畅优先：固定 1.5 秒以上（画面与共享声音一起延迟），
+   *   换来基本不卡的观感，适合看视频/直播。
+   */
+  shareLatency: "low" | "balanced" | "smooth";
+  /**
    * 设置结构版本（用于迁移）。
    * v2 起把"传输方式"的缺省从 p2p 改成 auto——旧配置里的 p2p 是当年的**默认值**
    * 而不是用户主动选择，所以无版本号时按 auto 迁移；用户之后手动选过就保留。
@@ -132,6 +140,7 @@ export function defaultSettings(): VoiceSettings {
     shareQuality: "fhd1080",
     shareTransport: "auto",
     shareViewMode: "auto",
+    shareLatency: "balanced",
     settingsVersion: 2,
   };
 }
@@ -183,6 +192,11 @@ export function loadSettings(): VoiceSettings {
       stored.shareViewMode === "detail" || stored.shareViewMode === "motion"
         ? stored.shareViewMode
         : "auto",
+    // 延迟档位：存量配置没有该字段时走默认"平衡"
+    shareLatency:
+      stored.shareLatency === "low" || stored.shareLatency === "smooth"
+        ? stored.shareLatency
+        : "balanced",
     processing: {
       echoCancellation: processing.echoCancellation !== false,
       noiseSuppression: processing.noiseSuppression !== false,

@@ -110,6 +110,62 @@ export const JITTER_BUFFER_MS = {
 export const JITTER_ADAPTIVE_MS = { min: 150, max: 1200, interval: 2500 } as const;
 
 /**
+ * 观众端"延迟换稳定"的档位（2026-10-22）。
+ *
+ * 抖动缓冲本质就是"多等一会儿，换不卡"。三档的取舍：
+ * - low      ≤0.5 秒：看操作/游戏跟手，但抖一下就花屏；
+ * - balanced 自适应：按实测抖动在 150~1200ms 之间调（默认，多数人够用）；
+ * - smooth   ≥1.5 秒：基本不卡，代价是明显滞后（看视频/直播无感）。
+ *
+ * ⚠️ 加延迟必须**画面和共享声音一起加**：只延迟画面会让声音先到，
+ * 变成"口型对不上"。下面的 applyReceiverJitter 就是成对下发的。
+ */
+export type ShareLatency = "low" | "balanced" | "smooth";
+
+/** P2P 用的自适应区间（low/smooth 也走同一个 tuner，只是区间不同）。 */
+export function jitterTargetFor(mode: ShareLatency): { min: number; max: number } {
+  switch (mode) {
+    case "low":
+      return { min: 120, max: 400 };
+    case "smooth":
+      return { min: 1500, max: 2000 };
+    default:
+      return { min: JITTER_ADAPTIVE_MS.min, max: JITTER_ADAPTIVE_MS.max };
+  }
+}
+
+/** SFU 用的固定目标（跨境转发，延迟本身就不敏感）。 */
+export function jitterFixedFor(mode: ShareLatency): number {
+  switch (mode) {
+    case "low":
+      return 800;
+    case "smooth":
+      return 4500;
+    default:
+      return JITTER_BUFFER_MS.sfu;
+  }
+}
+
+/**
+ * 把"画面 + 共享声音"成对设成同一个抖动缓冲目标。
+ *
+ * 只设视频会声画不同步；只设音频又会把语音房的语音无故加延迟——
+ * 所以这里只处理这条**画面 PC** 上的 receiver（语音是各自独立的 PC）。
+ */
+export function applyReceiverJitter(pc: RTCPeerConnection, targetMs: number, onlyKinds?: string[]): void {
+  for (const receiver of pc.getReceivers()) {
+    const kind = receiver.track?.kind;
+    if (!kind) continue;
+    if (onlyKinds && !onlyKinds.includes(kind)) continue;
+    try {
+      receiver.jitterBufferTarget = targetMs;
+    } catch {
+      /* 个别实现不支持时忽略 */
+    }
+  }
+}
+
+/**
  * 由实测抖动（秒）算抖动缓冲目标（ms）。纯函数，便于把取值边界钉在单测里。
  *
  * 取 4 倍抖动：缓冲只要盖住"抖动的峰-峰波动"即可，官方 W3C 示例也是这个量级；
@@ -141,19 +197,12 @@ export function createJitterBufferTuner(
 
   const apply = (targetMs: number) => {
     if (stopped) return;
-    for (const receiver of pc.getReceivers()) {
-      /*
-       * 只改视频接收器：共享声音也挂在这条 PC 上，视频的 150~1200ms 抖动缓冲
-       * 套到音频上，观众听到的声音会比画面晚一两秒（"对不上嘴"）。
-       * 音频本身有 WebRTC 自适应抖动缓冲，不需要我们插手。
-       */
-      if (receiver.track?.kind !== "video") continue;
-      try {
-        receiver.jitterBufferTarget = targetMs;
-      } catch {
-        /* 个别实现不支持时忽略 */
-      }
-    }
+    /*
+     * 画面和共享声音**成对**下发同一个目标值：
+     * 只给视频排队会让声音先到（口型对不上）；只给音频排队又白加延迟。
+     * 语音房的声音走各自的 PC，不受这里影响。
+     */
+    applyReceiverJitter(pc, targetMs);
   };
 
   const tick = async () => {
@@ -189,10 +238,27 @@ export function createJitterBufferTuner(
  * （下限不随档位同步上浮：它是"分摊后别低于可看线"的保底，抬高了反而会让
  *  多人场景每路都超过档位本身，等于绕过分摊、把上行重新打爆。）
  */
+/**
+ * P2P 共享时每个观众分到的上行码率。
+ *
+ * 两个约束同时成立才合理：
+ * 1. **不低于 1.2 Mbps**（再低就看不清文字，这是"保底"的意义）；
+ * 2. **总上行不被地板顶爆**——12 位观众 × 1.2 Mbps = 14.4 Mbps，
+ *    家用上行根本给不出（房间上限已提到 13 人，这条现在真的会踩到）。
+ * 所以再按"总预算 12 Mbps"反推每人上限，取两者较小值。
+ *
+ * 注：观众 >4 时默认走 SFU（见 autoTransportFor），这条只在
+ * "手动选 P2P + 很多人看"时才生效。
+ */
+export const P2P_TOTAL_UPLINK_BUDGET = 12_000_000;
+
 export function perViewerBitrate(quality: ShareQuality, viewers: number): number {
   const cap = SHARE_QUALITY_PRESETS[quality].maxBitrate;
   const n = Math.max(1, Math.floor(viewers));
-  return Math.max(1_200_000, Math.round(cap / n));
+  const fairShare = Math.round(cap / n);
+  const budgetPerViewer = Math.round(P2P_TOTAL_UPLINK_BUDGET / n);
+  const floor = Math.min(1_200_000, budgetPerViewer);
+  return Math.max(floor, Math.min(fairShare, budgetPerViewer));
 }
 
 /**
@@ -1783,6 +1849,8 @@ export interface SubscribeScreenOptions {
   simulcast?: boolean;
   /** 优先层（默认 `f`，即满档）。 */
   preferredRid?: string;
+  /** 延迟档位（观众侧设置）：low / balanced / smooth，默认 balanced。 */
+  latency?: ShareLatency;
   /**
    * 是否允许 SFU 自适应降层（`priorityOrdering: "asciibetical"`）。
    *
@@ -1855,12 +1923,13 @@ async function subscribeScreenInner(
   // 抖动缓冲按链路分级：走到这里的只可能是 SFU 转发（P2P 的画面由引擎
   // 直连，不经过这个函数）。跨境链路留 3000ms 排队空间换平滑，比原先
   // 一刀切 4000ms 少一秒延迟。（这只治"抖"，持续带宽不足仍要靠发送端降档。）
+  const jitterTarget = jitterFixedFor(options.latency ?? "balanced");
   pc.ontrack = (event) => {
     stream.addTrack(event.track);
-    // 同样只给视频排队：音频套 3 秒缓冲会变成"声音追着画面后知后觉"
-    if (event.receiver && event.track.kind === "video") {
+    // 画面与声音成对排队，避免"声音追着画面后知后觉"（也只有这条画面 PC）
+    if (event.receiver) {
       try {
-        event.receiver.jitterBufferTarget = JITTER_BUFFER_MS.sfu;
+        event.receiver.jitterBufferTarget = jitterTarget;
       } catch {
         /* 个别实现不支持时忽略 */
       }

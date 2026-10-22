@@ -60,6 +60,7 @@ import { SCENE_THEMES, type SceneThemeId } from "../scene-theme";
 import type { LucideIcon } from "lucide-react";
 import { MonitorUp } from "lucide-react";
 import { SHARE_QUALITY_PRESETS, autoTransportFor } from "../screen-share";
+import { isTauriRuntime, listLoopbackTargets } from "../loopback";
 
 /**
  * 可对其他成员做的小猪互动，按顺序展示成一排按钮。
@@ -175,8 +176,14 @@ export function RoomView({
   onSetShareQuality,
   shareTransport,
   onSetShareTransport,
+  shareAudio,
+  onSetShareAudio,
+  shareAppPid,
+  onSetShareAppPid,
   shareViewMode,
   onSetShareViewMode,
+  shareLatency,
+  onSetShareLatency,
 }: {
   status: EngineStatus;
   members: Member[];
@@ -265,9 +272,16 @@ export function RoomView({
   /** 屏幕共享传输方式（auto 自动 / p2p 直连 / sfu 转发）与切换。 */
   shareTransport: "p2p" | "sfu" | "auto";
   onSetShareTransport: (transport: "p2p" | "sfu" | "auto") => void;
+  /** 共享时是否带系统声音 / 声音来源（null = 自动）。 */
+  shareAudio: boolean;
+  onSetShareAudio: (on: boolean) => void;
+  shareAppPid: number | null;
+  onSetShareAppPid: (pid: number | null) => void;
   /** 观众端画质偏好（自动 / 清晰优先 / 流畅优先）与切换。 */
   shareViewMode: ScreenViewPreference;
   onSetShareViewMode: (mode: ScreenViewPreference) => void;
+  shareLatency: "low" | "balanced" | "smooth";
+  onSetShareLatency: (mode: "low" | "balanced" | "smooth") => void;
 }) {
   const self = members.find((member) => member.local) ?? null;
   const muted = self?.muted ?? true;
@@ -287,6 +301,9 @@ export function RoomView({
   /** 放大层开关。 */
   const [tvExpanded, setTvExpanded] = useState(false);
   const [shareMenuOpen, setShareMenuOpen] = useState(false);
+  /** 共享声音来源候选（仅桌面客户端）：打开共享菜单时现拉一次"正在出声的应用"。 */
+  const [shareApps, setShareApps] = useState<{ pid: number; name: string }[]>([]);
+  const shareDesktop = isTauriRuntime();
   const tvLive = screenShare !== null;
   const selfSharing = tvLive && self !== null && screenShare.sharerId === self.id;
   const tvOccupied = tvLive && !selfSharing;
@@ -294,6 +311,12 @@ export function RoomView({
   useEffect(() => {
     if (!tvLive) setTvExpanded(false);
   }, [tvLive]);
+
+  useEffect(() => {
+    if (!shareMenuOpen || !shareDesktop) return;
+    // 只列"此刻正在出声"的程序：共享前让游戏/视频先出点声，这里才有它
+    void listLoopbackTargets().then(setShareApps);
+  }, [shareMenuOpen, shareDesktop]);
 
   useEffect(() => {
     if (!shareMenuOpen) return;
@@ -1198,6 +1221,8 @@ export function RoomView({
             sharerName={displayNames.get(screenShare.sharerId) ?? "成员"}
             viewMode={shareViewMode}
             onViewMode={onSetShareViewMode}
+            latency={shareLatency}
+            onLatency={onSetShareLatency}
             isSharer={selfSharing}
             onClose={() => setTvExpanded(false)}
           />
@@ -1392,6 +1417,82 @@ export function RoomView({
                 </button>
               );
             })}
+            <p className="vx-share-menu-title">
+              共享声音
+              <span className="vx-share-help" tabIndex={0} aria-label="共享声音说明">
+                ?
+                <span className="vx-share-tip" role="tooltip">
+                  <b>自动（推荐）</b>：共享某个窗口时，只采那个应用的声音——房间语音
+                  从原理上混不进来；共享整个桌面时采整机声音、排除本应用。
+                  <br />
+                  <b>听到自己的声音重复了两遍</b>：把这里切成"指定应用"，
+                  选中你正在共享的那个程序，共享音频里就只剩它的声音。
+                  <br />
+                  网页版拿不到"只采某个应用"，要共享游戏/视频的声音请用桌面客户端。
+                </span>
+              </span>
+            </p>
+            {shareDesktop ? (
+              <div className="vx-share-transport">
+                {(
+                  [
+                    { key: "off", name: "不带声音", desc: "只共享画面" },
+                    { key: "auto", name: "自动", desc: "窗口→只采该应用" },
+                    { key: "app", name: "指定应用", desc: "回声时用它止血" },
+                  ] as const
+                ).map((item) => {
+                  const on =
+                    item.key === "off"
+                      ? !shareAudio
+                      : shareAudio && (item.key === "auto" ? shareAppPid === null : shareAppPid !== null);
+                  return (
+                    <button
+                      key={item.key}
+                      type="button"
+                      className={`vx-share-quality${on ? " vx-share-quality-on" : ""}`}
+                      onClick={() => {
+                        if (item.key === "off") {
+                          onSetShareAudio(false);
+                          onSetShareAppPid(null);
+                          return;
+                        }
+                        onSetShareAudio(true);
+                        if (item.key === "auto") {
+                          onSetShareAppPid(null);
+                          return;
+                        }
+                        // 切到"指定应用"：默认选第一个正在出声的程序，用户可再改
+                        const first = shareApps[0];
+                        onSetShareAppPid(first ? first.pid : null);
+                      }}
+                    >
+                      <strong>{item.name}</strong>
+                      <span>{item.desc}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="vx-share-menu-hint">网页版只能采整机声音；要"只共享某个应用的声音"请用桌面客户端</p>
+            )}
+            {shareDesktop && shareAudio && shareAppPid !== null ? (
+              <select
+                className="vx-input"
+                value={String(shareAppPid)}
+                onChange={(event) => onSetShareAppPid(event.target.value ? Number(event.target.value) : null)}
+              >
+                <option value="">自动（窗口→只采该应用）</option>
+                {shareApps.map((app) => (
+                  <option key={app.pid} value={String(app.pid)}>
+                    {app.name}
+                  </option>
+                ))}
+                {/* 上次选过但这个程序此刻没出声：仍然保留它，避免选项跳空 */}
+                {shareApps.every((app) => app.pid !== shareAppPid) ? (
+                  <option value={String(shareAppPid)}>上次选择的应用（此刻没出声）</option>
+                ) : null}
+              </select>
+            ) : null}
             <p className="vx-share-menu-title">
               共享方式
               <span className="vx-share-help" tabIndex={0} aria-label="两种共享方式的优缺点说明">

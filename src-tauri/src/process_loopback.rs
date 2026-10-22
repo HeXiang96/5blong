@@ -301,3 +301,181 @@ fn process_name(pid: u32) -> Option<String> {
         Some(path.rsplit(['\\', '/']).next().unwrap_or(&path).to_string())
     }
 }
+
+// ------------------------------------------------------- 更精确的"排除对象"
+//
+// 共享整个桌面时用的是 EXCLUDE 模式：整机混音 − 某个进程树。
+// 原来排除的是 app.exe（Tauri 主进程）。但房间语音实际是 **msedgewebview2.exe**
+// 渲染的，而它是不是 app.exe 的子孙取决于 WebView2 的进程拓扑与
+// "排除树在激活那一刻的快照"这两件事——一旦不在快照里，人声就整段被采进去
+// （表现就是"共享音频里听到两遍语音"）。
+//
+// 这里改成优先排除 **WebView2 的 browser 进程树**：它的子进程里就有音频服务，
+// 排掉它等于排掉"我们自己播放的所有声音"，且不影响游戏/浏览器/音乐。
+
+/// 枚举某个进程的直接子进程。
+pub fn child_processes(parent: u32) -> Vec<(u32, String)> {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+        TH32CS_SNAPPROCESS,
+    };
+
+    let mut out: Vec<(u32, String)> = Vec::new();
+    unsafe {
+        let snapshot = match CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) {
+            Ok(handle) => handle,
+            Err(_) => return out,
+        };
+        let mut entry = PROCESSENTRY32W {
+            dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
+            ..Default::default()
+        };
+        if Process32FirstW(snapshot, &mut entry).is_ok() {
+            loop {
+                if entry.th32ParentProcessID == parent {
+                    let name = String::from_utf16_lossy(&entry.szExeFile)
+                        .trim_end_matches('\0')
+                        .to_string();
+                    out.push((entry.th32ProcessID, name));
+                }
+                if Process32NextW(snapshot, &mut entry).is_err() {
+                    break;
+                }
+            }
+        }
+        let _ = CloseHandle(snapshot);
+    }
+    out
+}
+
+/// WebView2 的 browser 进程（我们窗口的渲染与音频都在它的树里）。
+///
+/// 判据：父进程是我们的 app.exe，且可执行名是 msedgewebview2.exe。
+/// WebView2 只会为每个窗口起一个 browser 进程，所以这里通常恰好命中一个；
+/// 命中失败（极老版本、进程树未建立）就返回 None，调用方退回排除自身。
+pub fn webview_browser_process() -> Option<u32> {
+    let me = std::process::id();
+    child_processes(me)
+        .into_iter()
+        .find(|(_, name)| name.eq_ignore_ascii_case("msedgewebview2.exe"))
+        .map(|(pid, _)| pid)
+}
+
+/// 整机采集时要排除的进程：优先 WebView2 browser（人声真正的来源），
+/// 否则退回排除自己。返回值同时用于诊断展示。
+pub fn exclude_target() -> (u32, &'static str) {
+    match webview_browser_process() {
+        Some(pid) => (pid, "webview"),
+        None => (std::process::id(), "self"),
+    }
+}
+
+/// 同 run_capture，但排除指定进程树（而不是固定排除自身）。
+pub fn run_capture_excluding(
+    exclude_pid: u32,
+    stop: Arc<AtomicBool>,
+    on_pcm: impl FnMut(&[i16]) -> bool,
+) -> Result<(), String> {
+    let mut sink = on_pcm;
+    run_capture_with(exclude_pid, true, stop, &mut sink)
+}
+
+// ------------------------------------------------------------- 共享源 → 进程
+//
+// 共享具体窗口时，Chromium 的 track.label 通常就是被共享窗口的标题。
+// 用它反查窗口所属进程，就能改成 INCLUDE 模式**只采那个程序的声音**：
+// 房间语音由我们自己的 WebView2 渲染，从原理上不可能混进来。
+// 这就是 Oopz 那种"只共享当前应用声音"。
+
+/// 枚举"有标题的可见顶层窗口"：返回 (pid, 标题)。
+pub fn list_window_titles() -> Vec<(u32, String)> {
+    use windows::Win32::Foundation::{BOOL, HWND, LPARAM};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        EnumWindows, GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId,
+        IsWindowVisible,
+    };
+
+    unsafe extern "system" fn visit(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        let out = &mut *(lparam.0 as *mut Vec<(u32, String)>);
+        if IsWindowVisible(hwnd).as_bool() {
+            let len = GetWindowTextLengthW(hwnd);
+            if len > 0 {
+                let mut buf = vec![0u16; len as usize + 1];
+                let copied = GetWindowTextW(hwnd, &mut buf);
+                if copied > 0 {
+                    let title = String::from_utf16_lossy(&buf[..copied as usize]);
+                    if !title.trim().is_empty() {
+                        let mut pid = 0u32;
+                        GetWindowThreadProcessId(hwnd, Some(&mut pid));
+                        if pid != 0 {
+                            out.push((pid, title));
+                        }
+                    }
+                }
+            }
+        }
+        BOOL(1) // 继续枚举下一个窗口
+    }
+
+    let mut found: Vec<(u32, String)> = Vec::new();
+    unsafe {
+        let _ = EnumWindows(Some(visit), LPARAM(&mut found as *mut _ as isize));
+    }
+    found
+}
+
+/// 归一化：只留字母数字并转小写（中文原样保留），便于标题比对。
+fn normalize_title(text: &str) -> String {
+    text.chars()
+        .filter(|c| c.is_alphanumeric())
+        .flat_map(|c| c.to_lowercase())
+        .collect()
+}
+
+/// 从共享源 label 反查窗口进程，返回 (pid, 窗口标题)。
+///
+/// label 形态在不同内核上不一致：可能是纯标题，也可能是 `window:12345:0`
+/// 这种源 id。源 id 里没有可读标题时返回 None，上层退回"整机 − 本应用"。
+pub fn pid_for_share_label(label: &str) -> Option<(u32, String)> {
+    let raw = label.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    let stripped = raw
+        .strip_prefix("window:")
+        .or_else(|| raw.strip_prefix("tab:"))
+        .or_else(|| raw.strip_prefix("screen:"))
+        .unwrap_or(raw)
+        .trim();
+    let cleaned = match stripped.rsplit_once(':') {
+        Some((head, tail)) if !tail.is_empty() && tail.chars().all(|c| c.is_ascii_digit()) => head,
+        _ => stripped,
+    };
+    let want = normalize_title(cleaned);
+    if want.chars().count() < 3 {
+        return None; // 太短，容易误配
+    }
+
+    let me = std::process::id();
+    let mut best: Option<(u32, String, usize)> = None;
+    for (pid, title) in list_window_titles() {
+        if pid == me {
+            continue; // 永远不锁自己
+        }
+        let have = normalize_title(&title);
+        if have.is_empty() {
+            continue;
+        }
+        // 双向包含：窗口标题常带后缀（" - 记事本"、"- Google Chrome"），
+        // 而 label 可能是截断后的标题
+        if !(have == want || have.contains(&want) || want.contains(&have)) {
+            continue;
+        }
+        let score = have.chars().count().min(want.chars().count());
+        if best.as_ref().map(|(_, _, s)| score > *s).unwrap_or(true) {
+            best = Some((pid, title, score));
+        }
+    }
+    best.map(|(pid, title, _)| (pid, title))
+}
