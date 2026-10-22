@@ -20,6 +20,16 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.8.0",
+    date: "2026-10-22",
+    lines: [
+      "共享屏幕带声音时，不再把房间语音一起播出去",
+      "看共享卡了可以直接调延迟档位（跟手 / 平衡 / 更稳）",
+      "房间最多可以坐 13 个人了",
+      "切到游戏挂后台，也不会再被系统节流掉线",
+    ],
+  },
+  {
     // bump 自动插入（发版时保证首条 = 本次版本）；内容按需补充，留空 = 公告栏展示上一条有内容版本
     version: "1.7.6",
     date: "2026-10-22",
