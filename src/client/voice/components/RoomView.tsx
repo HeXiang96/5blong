@@ -848,6 +848,40 @@ export function RoomView({
                 </div>
                 <p className="vx-member-menu-hint">你已经投喂了 {audioMenu.feedCount} 次</p>
 
+                {/*
+                  全房热闹（2026-10-22 从底栏挪进来）：蹦迪/烟花是**全房动作**，
+                  不挑目标成员，所以固定用 "*"。冷却与底栏时期一致（房主 30 秒）。
+                */}
+                <div className="vx-menu-divider" />
+                <div className="vx-interact-row">
+                  <button
+                    type="button"
+                    className={`vx-interact-btn${groupCooling ? " vx-interact-btn-disabled" : ""}`}
+                    onClick={() => {
+                      onInteract("*", "", "party");
+                      closeAudioMenu();
+                    }}
+                    disabled={groupCooling}
+                    title={groupCooling ? `刚热闹过，还要等 ${coolLeft} 秒` : "全场一起跳三下（30 秒一次）——所有人都会蹦"}
+                  >
+                    <Music size={15} />
+                    <span>{groupCooling ? `蹦迪 ${coolLeft}s` : "蹦迪"}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={`vx-interact-btn${groupCooling ? " vx-interact-btn-disabled" : ""}`}
+                    onClick={() => {
+                      onInteract("*", "", "fireworks");
+                      closeAudioMenu();
+                    }}
+                    disabled={groupCooling}
+                    title={groupCooling ? `刚热闹过，还要等 ${coolLeft} 秒` : "放一场全屏烟花（30 秒一次）"}
+                  >
+                    <Sparkles size={15} />
+                    <span>烟花</span>
+                  </button>
+                </div>
+
                 {isHost && !audioMenu.isHost ? (
                   <>
                     <div className="vx-menu-divider" />
@@ -1625,35 +1659,6 @@ export function RoomView({
             {unread > 0 ? <span className="vx-badge">{unread > 99 ? "99+" : unread}</span> : null}
           </span>
           <span>聊天</span>
-        </button>
-
-        {/* 全房动作：所有人可发起，房主侧 30 秒冷却（本地 30 秒内也置灰，避免无效点击） */}
-        <button
-          type="button"
-          className={`vx-ctl${groupCooling ? " vx-ctl-disabled" : ""}`}
-          onClick={() => onInteract("*", "", "party")}
-          disabled={groupCooling}
-          title={groupCooling ? `刚热闹过，还要等 ${coolLeft} 秒` : "全场一起跳三下（30 秒一次）"}
-        >
-          <span className="vx-ctl-icon">
-            <Music size={20} />
-            {groupCooling ? <span className="vx-badge">{coolLeft}</span> : null}
-          </span>
-          <span>蹦迪</span>
-        </button>
-
-        <button
-          type="button"
-          className={`vx-ctl${groupCooling ? " vx-ctl-disabled" : ""}`}
-          onClick={() => onInteract("*", "", "fireworks")}
-          disabled={groupCooling}
-          title={groupCooling ? `刚热闹过，还要等 ${coolLeft} 秒` : "放一场全屏烟花（30 秒一次）"}
-        >
-          <span className="vx-ctl-icon">
-            <Sparkles size={20} />
-            {groupCooling ? <span className="vx-badge">{coolLeft}</span> : null}
-          </span>
-          <span>烟花</span>
         </button>
 
         <button type="button" className="vx-ctl vx-ctl-danger" onClick={onLeave}>

@@ -2443,6 +2443,16 @@ html[data-theme="dark"] .vx-voice-panel {
   transform: translateY(-1px);
 }
 
+/* 冷却中：置灰 + 不可点（蹦迪/烟花的 30 秒全房冷却） */
+.vx-interact-btn-disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.vx-interact-btn-disabled:hover {
+  background: transparent;
+  transform: none;
+}
+
 .vx-interact-btn svg {
   color: var(--vx-accent-strong);
 }
@@ -3703,19 +3713,24 @@ html[data-theme="dark"] .vx-channel-error {
  * 窄窗口侧面放不下，回落到主列末尾原位。
  * ================================================================ */
 
+/*
+ * 锚定到**主列右缘**（calc(50% + 286px)），不锚视窗右缘：
+ * 原来用 right: 3vw，拖窗口时公告栏会跟着视窗边缘滑动；
+ * 现在它永远贴在 520px 主列右边 22px 处，只随内容走。
+ * 窗口宽度不足以在侧面放下（<1068px）时，回落到主列末尾原位。
+ */
 .vx-landing-board-side {
   position: absolute;
   top: 150px;
-  right: clamp(14px, 3vw, 44px);
-  bottom: auto;
+  left: calc(50% + 286px);
   margin: 0;
   width: min(248px, calc(100vw - 44px));
 }
-@media (max-width: 1059px) {
+@media (max-width: 1067px) {
   .vx-landing-board-side {
     position: relative;
+    left: auto;
     top: auto;
-    right: auto;
     align-self: flex-end;
     margin: 20px clamp(16px, 5vw, 48px) 34px 0;
   }
