@@ -1030,8 +1030,10 @@ export class VoiceMesh {
             let lost = 0;
             let received = 0;
             stats.forEach((report) => {
-              if (report.type === "candidate-pair" && (report.state === "succeeded" || report.nominated)) {
-                const rtt = (report as RTCIceCandidatePairStats).currentRoundTripTime;
+              if (report.type === "candidate-pair") {
+                // 同上：RTT 也要取在用的那条，否则可能量到备用中继对的往返
+                const pair = VoiceMesh.chosenPair(stats);
+                const rtt = pair?.currentRoundTripTime;
                 if (typeof rtt === "number") rttMs = Math.round(rtt * 1000);
               }
               if (report.type === "inbound-rtp" && report.kind === "audio") {
@@ -2752,8 +2754,8 @@ export class VoiceMesh {
               }
             }
             if (r.type === "candidate-pair") {
-              const p = r as RTCIceCandidatePairStats;
-              if (p.state === "succeeded" || p.nominated) {
+              const p = VoiceMesh.chosenPair(report);
+              if (p) {
                 pairRtt = p.currentRoundTripTime ?? null;
                 const local = report.get(p.localCandidateId ?? "") as { candidateType?: string } | undefined;
                 localType = local?.candidateType ?? "";
@@ -3082,6 +3084,26 @@ export class VoiceMesh {
   /** 只对"ID 比我的大"的同伴发起呼叫，双方各自负责一半的边，天然不会重复。 */
   private shouldCall(peerId: string): boolean {
     return this.myId < peerId;
+  }
+
+  /**
+   * 从 getStats 里挑出**真正在用**的那条候选对。
+   *
+   * 为什么不能"只要有一条 succeeded 的对是中继就算中继"：直连和中继可能同时
+   * 处于 succeeded，这时界面会显示"中继"，让人以为没走直连（业主反馈）。
+   * 正确口径是 ICE 最终**选中**的那条（`selected`），老实现没有该字段时
+   * 才退回 nominated + succeeded。
+   */
+  private static chosenPair(stats: RTCStatsReport): RTCIceCandidatePairStats | null {
+    let selected: RTCIceCandidatePairStats | null = null;
+    let nominated: RTCIceCandidatePairStats | null = null;
+    stats.forEach((report) => {
+      if (report.type !== "candidate-pair") return;
+      const pair = report as RTCIceCandidatePairStats & { selected?: boolean };
+      if (pair.selected === true) selected = pair;
+      else if (!nominated && pair.state === "succeeded" && pair.nominated === true) nominated = pair;
+    });
+    return selected ?? nominated;
   }
 
   // ---------------------------------------------------------------- P2P 屏幕直连
@@ -3497,12 +3519,13 @@ export class VoiceMesh {
                 if ((r.kind ?? "") === "audio") packets += r.packetsReceived ?? 0;
               }
               if (report.type === "candidate-pair") {
-                const pair = report as RTCIceCandidatePairStats;
-                if (pair.state === "succeeded" || pair.nominated) {
+                // 见 chosenPair：只认 ICE 最终选中的那条，别把"备用中继对"当在用
+                const pair = VoiceMesh.chosenPair(stats);
+                if (pair) {
                   const local = stats.get(pair.localCandidateId ?? "") as
                     | { candidateType?: string }
                     | undefined;
-                  if (local?.candidateType === "relay") relay = true;
+                  relay = local?.candidateType === "relay";
                 }
               }
             });
