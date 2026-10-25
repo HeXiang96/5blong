@@ -569,13 +569,13 @@ npm run feedback:admin list 20   # 终端查看最近反馈（url / list / rm �
 <!-- AUTO-LOG:START -->
 ### 近期提交（自动生成）
 
+- `03cc124` feat(screen-share): SFU 订阅也接三档观看状态（10-25 21:58）
 - `5ee44ca` feat(screen-share): 按需码率三档 + 修房主收不到访客共享（10-25 21:55）
 - `bf93950` release: v1.8.5（10-25 21:43）
 - `52fb813` fix(screen-share): 「自动」改为整机采集（排除本应用语音），游戏窗口共享终于有声（10-25 21:43）
 - `8cb47c9` release: v1.8.4（10-25 21:34）
 - `c3f2ee6` docs(changelog): 1.8.4 更新摘要（10-25 21:33）
 - `558b000` test(screen-share): 端到端验证脚本——A 开播后 B 进房能收到共享（10-25 21:32）
-- `0b212fa` fix(screen-share): 开播后进房的人收不到共享（画面+声音）——共享者周期补拨（10-25 21:29）
 <!-- AUTO-LOG:END -->
 
 ## 怎么用
