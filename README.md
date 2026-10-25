@@ -569,6 +569,7 @@ npm run feedback:admin list 20   # 终端查看最近反馈（url / list / rm �
 <!-- AUTO-LOG:START -->
 ### 近期提交（自动生成）
 
+- `558b000` test(screen-share): 端到端验证脚本——A 开播后 B 进房能收到共享（10-25 21:32）
 - `0b212fa` fix(screen-share): 开播后进房的人收不到共享（画面+声音）——共享者周期补拨（10-25 21:29）
 - `8407fe9` release: v1.8.3（10-22 18:11）
 - `82604a9` fix(pig)+client: 主题帽子挂点对准素材头部中心（素材恒镜像显示，旧坐标偏到身位）；客户端默认窗口 1200x800（10-22 18:10）
@@ -576,7 +577,6 @@ npm run feedback:admin list 20   # 终端查看最近反馈（url / list / rm �
 - `583c338` feat(theme): 春节主题上线；主题改为个人偏好（首页右上角切换）（10-22 17:52）
 - `6788b36` feat(landing): 首页配色适配雪原/万圣夜场景；公告栏改挂视窗右下角（10-22 17:00）
 - `3972b66` fix(rust): process_loopback 窗口枚举回调包 unsafe 块，消掉 Rust 2024 警告（10-22 17:00）
-- `f18d810` release: v1.8.1（10-22 16:37）
 <!-- AUTO-LOG:END -->
 
 ## 怎么用
