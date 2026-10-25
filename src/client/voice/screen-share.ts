@@ -390,9 +390,33 @@ export function simulcastLayerLabel(sourceHeight: number, receivedHeight: number
  * motion 走**。轨道只有一个 hint，不能逐人不同；宁可让"清晰优先"那位掉几帧，
  * 也不要让"流畅优先"那位卡住（卡顿的观感损失更大，且对方是明确提过要求的人）。
  */
-export function screenHintFor(prefs: Iterable<ScreenViewPreference>): "motion" | "detail" {
-  for (const pref of prefs) if (pref === "motion") return "motion";
-  return "detail";
+export function screenHintFor(
+  prefs: Iterable<ScreenViewPreference>,
+): "motion" | "detail" | "" {
+  /*
+   * ⚠️ 这个返回值决定"带宽一紧，浏览器先砍什么"：
+   *   detail = 保住分辨率、**砍帧率**（适合看文档/代码）
+   *   motion = 保住帧率、降低分辨率（适合游戏/视频）
+   *
+   * 原来的实现：只要没有观众选「流畅优先」就返回 detail —— 也就是**默认全是 detail**。
+   * 后果（2026-10-25 实测）：Apex 共享 + 链路丢包 5%，浏览器的拥塞控制一压码率，
+   * detail 策略就把帧率砍到 **2 fps**，分辨率停在 1280×720、码率 571kbps，
+   * 观众看到的就是"又卡又糊"。CPU 是 7800X3D，根本不是算力问题。
+   *
+   * 现在：有人要流畅 → motion；**所有观众都明确要清晰**才 detail；
+   * 只要有一个是「自动」，就不设 contentHint（空串），交给浏览器自己平衡。
+   */
+  let hasMotion = false;
+  let hasDetail = false;
+  let hasAuto = false;
+  for (const pref of prefs) {
+    if (pref === "motion") hasMotion = true;
+    else if (pref === "detail") hasDetail = true;
+    else hasAuto = true;
+  }
+  if (hasMotion) return "motion";
+  if (hasDetail && !hasAuto) return "detail";
+  return "";
 }
 
 /**

@@ -20,6 +20,15 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.8.6",
+    date: "2026-10-25",
+    lines: [
+      "共享游戏不再掉成 2 帧，画面跟得上了",
+      "没点开电视的人不再占用共享者的上行",
+      "房主现在能看到成员开的共享",
+    ],
+  },
+  {
     version: "1.8.5",
     date: "2026-10-25",
     lines: [
