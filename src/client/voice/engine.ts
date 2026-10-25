@@ -2766,14 +2766,35 @@ export class VoiceMesh {
       if (call) {
         // 有连接：若长时间没有任何音频进来，说明这条腿已经僵死，清掉让下一轮补拨
         const mediaAt = this.lastMediaAt.get(member.id) ?? 0;
-        if (mediaAt && now - mediaAt > 15_000) {
-          this.calls.delete(member.id);
-          try {
-            call.close();
-          } catch {
-            /* noop */
+        if (mediaAt) {
+          /*
+           * 只拆**确定死了**的链路（2026-10-25 实测："刚说完话就变成连不上"）。
+           *
+           * 以前是"15 秒没收到包就拆"。但 `lastMediaAt` 只在收到 RTP 或 RR 反馈时刷新，
+           * 而**静音 / 不说话的对端本来就不发包**——挂着打 Apex 的人 15 秒不吭声太正常了，
+           * 于是链路被反复拆掉重拨，界面就一直是"与 TA 的语音链路连接中…"。
+           *
+           * 现在：
+           * - ICE 已经不连通（disconnected/failed/closed）+ 15 秒没包 → 拆；
+           * - ICE 仍连着、但对端不是静音/无麦、却 45 秒一个包都没有 → 才算僵死；
+           * - 静音/无麦的对端给到 120 秒才判（它们本来就可以长期零发包）。
+           */
+          const pc = (call as unknown as { peerConnection?: RTCPeerConnection }).peerConnection;
+          const ice = pc?.iceConnectionState;
+          const connected = ice === "connected" || ice === "completed";
+          const silentMs = now - mediaAt;
+          const silentOk = member.muted || member.hasMic === false;
+          const died = !connected && silentMs > 15_000;
+          const frozen = connected && silentMs > (silentOk ? 120_000 : 45_000);
+          if (died || frozen) {
+            this.calls.delete(member.id);
+            try {
+              call.close();
+            } catch {
+              /* noop */
+            }
+            this.dropAudio(member.id);
           }
-          this.dropAudio(member.id);
         }
         continue;
       }

@@ -20,6 +20,14 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.8.7",
+    date: "2026-10-25",
+    lines: [
+      "不说话的人不会再被误判掉线，挂着打游戏也不掉",
+      "语音链路不会每 15 秒自己拆一次了",
+    ],
+  },
+  {
     version: "1.8.6",
     date: "2026-10-25",
     lines: [
