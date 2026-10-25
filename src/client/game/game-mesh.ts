@@ -514,7 +514,14 @@ export class GameMesh {
    *   跨组的人（换队后）会被挂断。
    */
   private reconcileAudio(): void {
-    if (!this.joined || !this.localStream) return;
+    /*
+     * 没有麦克风也要继续对账（2026-10-25，与语音房同一处修正）。
+     *
+     * 拨号方只由"id 较小的一方"决定；如果那一位恰好没有麦克风，原来这里直接
+     * return，对方又按规则不拨 → 这一对永远连不上（别人都正常）。
+     * 现在允许用空流发起（协商成只收不发），他能听见队友，只是不发送。
+     */
+    if (!this.joined) return;
     const me = this.members.get(this.myId);
     if (!me) return;
     if (this.lastTeam !== null && this.lastTeam !== me.team) {
@@ -593,7 +600,7 @@ export class GameMesh {
       }
       if (this.myId >= peerId) continue;
       try {
-        const call = this.peer!.call(peerId, this.publishedStream ?? this.localStream, {
+        const call = this.peer!.call(peerId, this.publishedStream ?? this.localStream ?? new MediaStream(), {
           sdpTransform: opusSdpTransform("voice"),
         });
         if (!call) continue;
@@ -770,13 +777,14 @@ export class GameMesh {
     if (!pc) return false; // 还没建好：先当活的
     const state = pc.connectionState;
     const ice = pc.iceConnectionState;
-    return (
-      state === "closed" ||
-      state === "failed" ||
-      ice === "closed" ||
-      ice === "failed" ||
-      ice === "disconnected"
-    );
+    /*
+     * **不把 disconnected 当死亡**（2026-10-25，与语音房同一处修正）。
+     *
+     * 丢包/切网时 ICE 会短暂 disconnected，通常几秒自愈。这里算死的话，
+     * 收到对方的重复呼叫就会把**还活着的**那条当成"旧的"关掉、改接新的，
+     * 一来一回就是"打着打着没声了"。真死由 watchCallHealth 的 4 秒缓冲裁决。
+     */
+    return state === "closed" || state === "failed" || ice === "closed" || ice === "failed";
   }
 
   /**
