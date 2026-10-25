@@ -54,7 +54,7 @@ import {
   type ScreenShareState,
 } from "./protocol";
 import { refreshIceServers } from "./ice";
-import { isTauriRuntime, resolveSharePid, startLoopbackAudio } from "./loopback";
+import { isTauriRuntime, startLoopbackAudio } from "./loopback";
 import { loadSettings, saveSettings, type VoiceSettings } from "./settings";
 import { readJson, writeJson } from "./storage";
 
@@ -615,19 +615,17 @@ export function useVoice() {
           let sharePid =
             settings.shareAppPid && settings.shareAppPid > 0 ? settings.shareAppPid : null;
           let sharePidTitle = "";
-          if (!sharePid) {
-            const videoTrack = stream.getVideoTracks()[0];
-            const surface = (
-              videoTrack?.getSettings() as { displaySurface?: string } | undefined
-            )?.displaySurface;
-            if (videoTrack && (surface === "window" || surface === "browser" || !surface)) {
-              const resolved = await resolveSharePid(videoTrack.label);
-              if (resolved) {
-                sharePid = resolved.pid;
-                sharePidTitle = resolved.title;
-              }
-            }
-          }
+          /*
+           * 「自动」**不再**按窗口标题反查进程（2026-10-25）。
+           *
+           * 原来共享窗口时会走进程级采集（只采那个应用）。对游戏这条路径极不可靠：
+           * Windows 进程回环只抓默认播放设备上的声音、要求激活时已有活跃音频会话、
+           * 独占模式还完全抓不到——Apex 这类游戏十有八九采到全静音，
+           * 表现就是"有画面没声音"（房间 2354 实测）。
+           *
+           * 现在「自动」= 整机声音 − 本应用语音（我们的语音由 WebView2 渲染，天然被排除），
+           * 什么在响都能抓到；要精确隔离某个应用，用户显式点「指定」即可。
+           */
           try {
             const native = await startLoopbackAudio(
               (message) => setNotice({ kind: "error", sticky: true, text: message }),

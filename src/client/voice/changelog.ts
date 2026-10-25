@@ -20,6 +20,14 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.8.5",
+    date: "2026-10-25",
+    lines: [
+      "共享窗口时游戏声音录不到的，现在能录到了",
+      "「自动」改为整机采集，不再依赖不可靠的进程级采集",
+    ],
+  },
+  {
     version: "1.8.4",
     date: "2026-10-25",
     lines: [
