@@ -569,14 +569,14 @@ npm run feedback:admin list 20   # 终端查看最近反馈（url / list / rm �
 <!-- AUTO-LOG:START -->
 ### 近期提交（自动生成）
 
+- `25ca4f3` fix(voice): 网络抖动不再判定掉线；无麦也能发起；共享 2fps 与按需码率（10-25 22:33）
+- `09e534e` release: v1.8.7（10-25 22:15）
+- `7c53877` fix(voice): 静音 15 秒就被判僵死拆链——'刚说完话突然连不上'的根因（10-25 22:14）
 - `9682f53` release: v1.8.6（10-25 22:03）
 - `0eb6ac6` fix(screen-share): 默认 contentHint 从 detail 改回平衡——游戏共享被砍到 2fps 的根因（10-25 22:03）
 - `03cc124` feat(screen-share): SFU 订阅也接三档观看状态（10-25 21:58）
 - `5ee44ca` feat(screen-share): 按需码率三档 + 修房主收不到访客共享（10-25 21:55）
 - `bf93950` release: v1.8.5（10-25 21:43）
-- `52fb813` fix(screen-share): 「自动」改为整机采集（排除本应用语音），游戏窗口共享终于有声（10-25 21:43）
-- `8cb47c9` release: v1.8.4（10-25 21:34）
-- `c3f2ee6` docs(changelog): 1.8.4 更新摘要（10-25 21:33）
 <!-- AUTO-LOG:END -->
 
 ## 怎么用
