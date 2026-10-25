@@ -145,6 +145,10 @@ export function useVoice() {
   const shareSubRef = useRef<ScreenSubscription | null>(null);
   /** 当前订阅所用的画质偏好（变化时才重订阅）。 */
   const shareSubModeRef = useRef<ScreenViewPreference>("auto");
+  /** 上一次订阅时的观看档位（watch/preview）：变化要求重新订阅。 */
+  const shareSubWatchRef = useRef<"watch" | "preview" | "off">("preview");
+  /** 当前观看档位（watch=灯箱打开 / preview=挂着 / off=不看）。 */
+  const [screenWatchState, setScreenWatchState] = useState<"watch" | "preview" | "off">("preview");
   /** 共享者本机采集的流（自己电视的播放源；订阅流供其他端用）。 */
   const shareLocalStreamRef = useRef<MediaStream | null>(null);
   /** 最新成员数：开播时据此决定 P2P 还是 SFU（避免闭包里的陈旧值）。 */
@@ -413,12 +417,28 @@ export function useVoice() {
       setShareStream(shareLocalStreamRef.current);
       return;
     }
-    // 调试假状态 / 已在订阅同一场：跳过
+    // 调试假状态：跳过
     if (screenShare.sessionId === "demo-local") return;
+    /*
+     * 不看共享 → 退订，省的是自己的下行和 SFU 的出口（2026-10-25 三档之一）。
+     * P2P 那侧由共享者按 off 直接关掉那一路。
+     */
+    if (screenWatchState === "off") {
+      shareSubRef.current?.stop();
+      shareSubRef.current = null;
+      setShareStream(null);
+      setSharePc(null);
+      return;
+    }
     if (shareSubRef.current) {
       // 画质偏好变了（SFU 模式）：偏好映射成订阅层，需要重新订阅；
       // 其它情况下保持不变（避免因成员数变化反复重订阅）。
-      if (shareSubModeRef.current === settings.shareViewMode) return;
+      if (
+        shareSubModeRef.current === settings.shareViewMode &&
+        shareSubWatchRef.current === screenWatchState
+      ) {
+        return;
+      }
       shareSubRef.current.stop();
       shareSubRef.current = null;
     }
@@ -440,11 +460,13 @@ export function useVoice() {
       // 没标 simulcast 的老房主按单档订阅，行为与以前一致。
       void subscribeScreen(screenShare.sessionId, trackNames, {
         simulcast: screenShare.simulcast === true,
-        preferredRid: preferredRidFor(settings.shareViewMode),
+        // preview（没点开灯箱）= 只要 q 层缩略图；watch = 按偏好取满档
+        preferredRid:
+          screenWatchState === "preview" ? "q" : preferredRidFor(settings.shareViewMode),
         // 默认锁住所选的层（业主口径："默认就是最高的来"）——不许 SFU 按它自己的
         // 带宽估计擅自把满档降到 q 层（现场：观众选 f 却只收到 353×254）。
         // 只有观众主动选「流畅优先」时才放开自适应降层去换平滑。
-        adaptive: settings.shareViewMode === "motion",
+        adaptive: screenWatchState === "preview" || settings.shareViewMode === "motion",
         // 延迟档位：画面与共享声音成对排队（low 0.5s / balanced 自适应 / smooth 1.5s+）
         latency: settings.shareLatency,
       })
@@ -455,6 +477,7 @@ export function useVoice() {
           }
           shareSubRef.current = sub;
           shareSubModeRef.current = settings.shareViewMode;
+          shareSubWatchRef.current = screenWatchState;
           setSharePc(sub.pc);
           setShareStream(sub.stream);
         })
@@ -477,7 +500,7 @@ export function useVoice() {
       window.clearTimeout(retryTimer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [screenShare, members.length, settings.shareViewMode]);
+  }, [screenShare, members.length, settings.shareViewMode, screenWatchState]);
 
   /** 共享者本机：采集流变化时同步给电视（开播瞬间先有画面）。 */
   useEffect(() => {
@@ -1255,6 +1278,8 @@ export function useVoice() {
    * watch=灯箱打开（满码率）/ preview=在房间挂着（低码率缩略）/ off=不看（完全不发）。
    */
   const setScreenWatch = useCallback((state: "watch" | "preview" | "off") => {
+    // 本地留一份：SFU 订阅层要按它切换（watch=满档、preview=低层）
+    setScreenWatchState(state);
     engineRef.current?.setScreenWatch(state);
   }, []);
 
