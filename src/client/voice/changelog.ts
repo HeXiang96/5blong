@@ -20,6 +20,14 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.8.4",
+    date: "2026-10-25",
+    lines: [
+      "别人开共享后才进房的人，现在也能看到画面、听到共享声音",
+      "共享声音采不到时会把原因说明白，不再静默",
+    ],
+  },
+  {
     version: "1.8.3",
     date: "2026-10-22",
     lines: [
