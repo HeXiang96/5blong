@@ -569,13 +569,14 @@ npm run feedback:admin list 20   # 终端查看最近反馈（url / list / rm �
 <!-- AUTO-LOG:START -->
 ### 近期提交（自动生成）
 
+- `9682f53` release: v1.8.6（10-25 22:03）
+- `0eb6ac6` fix(screen-share): 默认 contentHint 从 detail 改回平衡——游戏共享被砍到 2fps 的根因（10-25 22:03）
 - `03cc124` feat(screen-share): SFU 订阅也接三档观看状态（10-25 21:58）
 - `5ee44ca` feat(screen-share): 按需码率三档 + 修房主收不到访客共享（10-25 21:55）
 - `bf93950` release: v1.8.5（10-25 21:43）
 - `52fb813` fix(screen-share): 「自动」改为整机采集（排除本应用语音），游戏窗口共享终于有声（10-25 21:43）
 - `8cb47c9` release: v1.8.4（10-25 21:34）
 - `c3f2ee6` docs(changelog): 1.8.4 更新摘要（10-25 21:33）
-- `558b000` test(screen-share): 端到端验证脚本——A 开播后 B 进房能收到共享（10-25 21:32）
 <!-- AUTO-LOG:END -->
 
 ## 怎么用
