@@ -2756,7 +2756,8 @@ export class VoiceMesh {
     if (!this.destroyed && this.screenShareState?.sharerId === this.myId && this.screenStream) {
       this.startScreenCalls();
     }
-    if (this.destroyed || !this.me || !this.outgoingStream) return;
+    // 没有麦克风也要继续补拨（见 callPeer 的死锁说明）——只有没进房才跳过
+    if (this.destroyed || !this.me) return;
     const now = Date.now();
     /** 每个 tick 最多补拨一条：与 MEDIA_STAGGER_MS 的错峰意图保持一致。 */
     let dialed = 0;
@@ -3550,9 +3551,19 @@ export class VoiceMesh {
   }
 
   private callPeer(peerId: string): void {
-    // 没有麦克风就不发起：对方仍然会 call 我（纯收听者因此能听到所有人）。
-    const stream = this.outgoingStream ?? this.localStream;
-    if (!this.peer || !stream || this.calls.has(peerId)) return;
+    /*
+     * 没有麦克风也要发起（2026-10-25 修死锁）。
+     *
+     * 原来这里 `!stream` 直接 return，注释里假设"对方会 call 我"。但拨号方是由
+     * `shouldCall = myId < peerId` **单边决定**的：如果被指定的拨号方恰好没有麦克风
+     * （没插麦/采集失败/纯收听），他既不拨、对方又按规则不拨 → 两边永远连不上。
+     * 现象就是"别人重进都能连上，只有他那个一直连接中"。
+     *
+     * 现在没麦时用一条**空流**发起呼叫：协商成 recvonly，我照样能听见对方，
+     * 只是不发送音频（本来也没有可发的）。
+     */
+    const stream = this.outgoingStream ?? this.localStream ?? new MediaStream();
+    if (!this.peer || this.calls.has(peerId)) return;
     // 已经不在名册里的人不拨（自愈/错峰定时器都可能比"他离开"晚一拍）
     if (!this.members.has(peerId)) return;
     const call = this.peer.call(peerId, stream, {
@@ -3866,13 +3877,18 @@ export class VoiceMesh {
     if (!pc) return false;   // 还没建好：先当活的，交给常规流程
     const state = pc.connectionState;
     const ice = pc.iceConnectionState;
-    return (
-      state === "closed" ||
-      state === "failed" ||
-      ice === "closed" ||
-      ice === "failed" ||
-      ice === "disconnected"
-    );
+    /*
+     * **不把 disconnected 当死亡**（2026-10-25）。
+     *
+     * WebRTC 的 `disconnected` 在丢包/短暂网络抖动时非常常见，通常几秒内自己回到
+     * connected。原来把它算死，于是：抖一下 → 判死 → 关掉重拨 → 对面也判死重拨 →
+     * 双方在"关-拨-关"之间来回，界面永远停在"与 TA 的语音链路连接中…"，
+     * 而且是**按对出现**的（只有那条链路质量差的配对会这样，别人一切正常）。
+     *
+     * 现在只有 closed / failed 才算死；真正失联交给媒体看门狗（ICE 不连通 + 15 秒
+     * 没有包）去收尾，那时才重拨。
+     */
+    return state === "closed" || state === "failed" || ice === "closed" || ice === "failed";
   }
 
   /** 链路恢复（或成员离开）时清掉自愈状态。 */
