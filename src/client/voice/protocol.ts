@@ -426,6 +426,12 @@ export function parseInteractEvent(input: unknown): InteractEvent | null {
  * 成员表与语音链路完全不读也不写它——共享链路崩了只表现为"电视雪花"。
  */
 /** 观众端画质偏好：`auto` 自动 / `detail` 清晰优先 / `motion` 流畅优先。 */
+/** 观众看不看共享：满码率 / 低码率预览 / 完全不收。 */
+export type ScreenWatchState = "watch" | "preview" | "off";
+export function isScreenWatchState(value: unknown): value is ScreenWatchState {
+  return value === "watch" || value === "preview" || value === "off";
+}
+
 export type ScreenViewPreference = "auto" | "detail" | "motion";
 
 export function isScreenViewPreference(value: unknown): value is ScreenViewPreference {
@@ -571,6 +577,13 @@ export type GuestMessage =
    * 访客只能给房主发消息，房主再把它转给共享者（共享者不一定是房主）。
    */
   | { t: "screen-pref"; mode: ScreenViewPreference }
+  /**
+   * 观众"看不看共享"的三档（2026-10-25）：
+   * - watch   灯箱打开，要满码率
+   * - preview 在房间里挂着，只要低码率缩略预览
+   * - off     不看（页面隐藏 / 主动收起），完全不发
+   */
+  | { t: "screen-watch"; state: ScreenWatchState }
   | { t: "ping"; ts: number }
   | { t: "pong"; ts: number };
 
@@ -587,6 +600,7 @@ export type HostMessage =
   | { t: "screen-share"; state: ScreenShareState | null }
   /** 转发给共享者的观众画质偏好（from = 提出偏好的成员 id）。 */
   | { t: "screen-pref"; from: string; mode: ScreenViewPreference }
+  | { t: "screen-watch"; from: string; state: ScreenWatchState }
   | { t: "chat"; id: string; name: string; text: string; ts: number }
   | { t: "roster"; members: WireMember[]; topic?: string }
   /** 房主切换场景主题（"" = 回到默认，只有时段光照）。 */
@@ -684,6 +698,9 @@ export function parseGuestMessage(data: unknown): GuestMessage | null {
     }
     case "screen-share-stop":
       return { t: "screen-share-stop" };
+    case "screen-watch": {
+      return isScreenWatchState(msg["state"]) ? { t: "screen-watch", state: msg["state"] } : null;
+    }
     case "screen-pref": {
       // 观众的画质偏好：形状不对就丢弃（旧房主收到也会安全忽略）
       return isScreenViewPreference(msg["mode"]) ? { t: "screen-pref", mode: msg["mode"] } : null;
@@ -755,6 +772,11 @@ export function parseHostMessage(data: unknown): HostMessage | null {
     }
     case "lock":
       return { t: "lock", locked: msg["locked"] === true };
+    case "screen-watch": {
+      const from = str(msg["from"], 64);
+      if (!from || !isScreenWatchState(msg["state"])) return null;
+      return { t: "screen-watch", from, state: msg["state"] };
+    }
     case "screen-pref": {
       const from = str(msg["from"], 64);
       if (!from || !isScreenViewPreference(msg["mode"])) return null;

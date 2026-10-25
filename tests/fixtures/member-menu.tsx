@@ -133,6 +133,7 @@ function Fixture() {
     onSetShareAppPid: (pid) => record("share-app", pid),
     shareLatency: "balanced" as const,
     onSetShareLatency: (mode) => record("share-latency", mode),
+    onWatchScreen: (state) => record("share-watch", state),
     shareViewMode: "auto" as const,
     onSetShareViewMode: (mode) => record("share-view-mode", mode),
   };

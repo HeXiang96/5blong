@@ -288,6 +288,7 @@ export function App() {
         onSetShareAppPid={voice.setShareAppPid}
         shareLatency={voice.shareLatency}
         onSetShareLatency={voice.setShareLatency}
+        onWatchScreen={voice.setScreenWatch}
         shareViewMode={voice.shareViewMode}
         onSetShareViewMode={voice.setShareViewMode}
         onOpenFeedback={openFeedback}

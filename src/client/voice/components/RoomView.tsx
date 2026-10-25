@@ -183,6 +183,7 @@ export function RoomView({
   onSetShareViewMode,
   shareLatency,
   onSetShareLatency,
+  onWatchScreen,
 }: {
   status: EngineStatus;
   members: Member[];
@@ -279,6 +280,8 @@ export function RoomView({
   onSetShareViewMode: (mode: ScreenViewPreference) => void;
   shareLatency: "low" | "balanced" | "smooth";
   onSetShareLatency: (mode: "low" | "balanced" | "smooth") => void;
+  /** 观众看不看共享：灯箱打开=watch（满码率），关掉=preview（低码率缩略）。 */
+  onWatchScreen: (state: "watch" | "preview" | "off") => void;
 }) {
   const self = members.find((member) => member.local) ?? null;
   const muted = self?.muted ?? true;
@@ -1214,7 +1217,11 @@ export function RoomView({
           stageHeight={stageHeight}
           stageBottomGap={stageBottomGap}
           paused={tvExpanded}
-          onExpand={() => setTvExpanded(true)}
+          onExpand={() => {
+            setTvExpanded(true);
+            // 点开才要满码率：共享者那边按这个把这一路升上去
+            onWatchScreen("watch");
+          }}
         />
 
         {tvExpanded && screenShare ? (
@@ -1228,7 +1235,11 @@ export function RoomView({
             latency={shareLatency}
             onLatency={onSetShareLatency}
             isSharer={selfSharing}
-            onClose={() => setTvExpanded(false)}
+            onClose={() => {
+              setTvExpanded(false);
+              // 关灯箱退回缩略档：剩下的画面只是小幕布上的缩略图
+              onWatchScreen("preview");
+            }}
           />
         ) : null}
 

@@ -1250,6 +1250,14 @@ export function useVoice() {
     [persistSettings, settings],
   );
 
+  /**
+   * 观众：告诉共享者"我现在怎么看看共享"。
+   * watch=灯箱打开（满码率）/ preview=在房间挂着（低码率缩略）/ off=不看（完全不发）。
+   */
+  const setScreenWatch = useCallback((state: "watch" | "preview" | "off") => {
+    engineRef.current?.setScreenWatch(state);
+  }, []);
+
   const setShareViewMode = useCallback(
     (mode: ScreenViewPreference) => {
       persistSettings({ ...settings, shareViewMode: mode });
@@ -1667,5 +1675,6 @@ export function useVoice() {
     setShareViewMode,
     shareLatency: settings.shareLatency,
     setShareLatency,
+    setScreenWatch,
   };
 }

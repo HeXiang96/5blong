@@ -39,6 +39,7 @@ import {
   type InteractKind,
   type PenPose,
   type ScreenSharePublication,
+  type ScreenWatchState,
   type ScreenShareState,
   type ScreenViewPreference,
   type WireMember,
@@ -51,6 +52,7 @@ import {
   boostScreenOfferSdp,
   createJitterBufferTuner,
   createScreenSenderTuner,
+  applyScreenSenderParams,
   healScreenConnection,
   jitterTargetFor,
   perViewerBitrate,
@@ -1475,6 +1477,11 @@ export class VoiceMesh {
         this.routeScreenPref(guest.member.id, message.mode);
         break;
       }
+      case "screen-watch": {
+        // 同上：谁在看共享，房主要负责转给共享者（省的是**共享者**的上行）
+        this.routeScreenWatch(guest.member.id, message.state);
+        break;
+      }
       case "ping": {
         this.send(conn, { t: "pong", ts: message.ts });
         break;
@@ -1651,6 +1658,94 @@ export class VoiceMesh {
    * 把某个观众的画质偏好送到**共享者**手里（房主侧）：共享者是房主就本地应用，
    * 是访客就经他那条数据连接转过去。
    */
+  /**
+   * 观众：告诉房主/共享者"我现在怎么看看共享"。
+   *
+   * 三档的意义在**共享者的上行**：off 会把那一路直接关掉（真省带宽），
+   * preview 只发低码率缩略（扫一眼够用），watch 才是满码率。
+   */
+  setScreenWatch(state: ScreenWatchState): void {
+    if (this.myScreenWatch === state) return;
+    this.myScreenWatch = state;
+    const sharer = this.screenShareState?.sharerId;
+    if (!sharer || sharer === this.myId) return;
+    if (this.hosting) {
+      this.routeScreenWatch(this.myId, state);
+      return;
+    }
+    this.send(this.hostConn, { t: "screen-watch", state });
+  }
+
+  /** 房主：把观众的观看状态转给共享者（共享者是房主时直接应用）。 */
+  private routeScreenWatch(from: string, state: ScreenWatchState): void {
+    const sharer = this.screenShareState?.sharerId;
+    if (!sharer) return;
+    if (sharer === this.myId) {
+      this.screenWatch.set(from, state);
+      this.applyScreenWatch(from);
+      return;
+    }
+    const record = this.guests.get(sharer);
+    if (record) this.send(record.conn, { t: "screen-watch", from, state });
+  }
+
+  /**
+   * 共享者：按某位观众的状态调整他那一路。
+   *
+   * - off：直接关掉那条画面呼叫 —— 这是唯一能**真正释放上行**的做法
+   *   （把 maxBitrate 设小仍会占带宽，关掉才归零）；下一次状态变回 preview/
+   *   watch 时由 ensureCalls 或本方法重拨。
+   * - preview：低码率 + 半分辨率 + 15fps 的缩略流，扫一眼够用。
+   * - watch：满码率（按在看人数分摊）。
+   */
+  private applyScreenWatch(peerId: string): void {
+    if (this.screenShareState?.sharerId !== this.myId || !this.screenStream) return;
+    const state = this.screenWatch.get(peerId) ?? "preview";
+    const existing = this.screenCalls.get(peerId);
+    if (state === "off") {
+      if (!existing) return;
+      this.screenTuners.get(peerId)?.stop();
+      this.screenTuners.delete(peerId);
+      this.screenHealers.get(peerId)?.();
+      this.screenHealers.delete(peerId);
+      try {
+        existing.close();
+      } catch {
+        /* noop */
+      }
+      this.screenCalls.delete(peerId);
+      this.screenCallAt.delete(peerId);
+      return;
+    }
+    if (!existing) {
+      this.callScreenPeer(peerId);
+      return;
+    }
+    const pc = this.screenPeerConnection(existing);
+    if (!pc) return;
+    if (state === "watch") {
+      const viewers = Math.max(1, this.watcherCount());
+      this.screenTuners.get(peerId)?.retune(perViewerBitrate(this.screenQuality, viewers));
+      return;
+    }
+    // preview：调低码率/帧率/分辨率（tuner 在 preview 下不创建，不会被它覆盖）
+    void applyScreenSenderParams(pc, this.screenQuality, {
+      maxBitrate: VoiceMesh.PREVIEW_SCREEN_BITRATE,
+      maxFramerate: 15,
+      scaleResolutionDownBy: 2,
+    });
+  }
+
+  /** 正在"看"的观众数（off 的不算）——按需分摊码率。 */
+  private watcherCount(): number {
+    let count = 0;
+    for (const member of this.members.values()) {
+      if (member.local) continue;
+      if ((this.screenWatch.get(member.id) ?? "preview") !== "off") count += 1;
+    }
+    return count;
+  }
+
   private routeScreenPref(from: string, mode: ScreenViewPreference): void {
     const sharer = this.screenShareState?.sharerId;
     if (!sharer) return;
@@ -2413,6 +2508,13 @@ export class VoiceMesh {
         }
         break;
       }
+      case "screen-watch": {
+        if (this.screenShareState?.sharerId === this.myId) {
+          this.screenWatch.set(message.from, message.state);
+          this.applyScreenWatch(message.from);
+        }
+        break;
+      }
       case "theme": {
         // 主题已是个人偏好（2026-10-22）：老版本房主仍会广播，直接忽略。
         break;
@@ -3103,6 +3205,16 @@ export class VoiceMesh {
   private screenQuality: ShareQuality = "fhd1080";
   /** P2P 屏幕呼叫（共享者 → 各成员，一人一条）。 */
   private screenCalls = new Map<string, MediaConnection>();
+  /** 预览档码率（bps）：只给"在房间里挂着、没点开灯箱"的观众发这么多。 */
+  private static readonly PREVIEW_SCREEN_BITRATE = 500_000;
+
+  /**
+   * 每位观众的"看不看共享"（共享者视角，2026-10-25）：
+   * watch=满码率 / preview=低码率缩略 / off=完全不发（关掉那一路，省上行）。
+   */
+  private screenWatch = new Map<string, ScreenWatchState>();
+  /** 我自己作为观众时的观看状态。 */
+  private myScreenWatch: ScreenWatchState = "preview";
   /** 每条画面呼叫的发起时刻：用于回收"发出去了但一直没连上"的僵尸呼叫。 */
   private screenCallAt = new Map<string, number>();
   /** 每条 P2P 画面链路的自适应调谐器（按 peerId）——负责码率与降级阶梯。 */
@@ -3167,12 +3279,19 @@ export class VoiceMesh {
       this.screenCallAt.delete(peerId);
     }
     const viewer = this.members.get(peerId);
-    const viewers = Math.max(1, this.members.size - 1);
+    const watchState = this.screenWatch.get(peerId) ?? "preview";
+    // 不看的人不拨号：这条是"真省上行"，比把码率调小更彻底
+    if (watchState === "off") return;
+    const isPreview = watchState === "preview";
+    const viewers = Math.max(1, this.watcherCount());
+    const targetBitrate = isPreview
+      ? VoiceMesh.PREVIEW_SCREEN_BITRATE
+      : perViewerBitrate(this.screenQuality, viewers);
     // 双端 AV1 判断（逐观众）：本机有 AV1 硬编，且**这一位观众**报了 AV1 硬解，
     // 才把 AV1 提到 H.264 之前。任何一位观众不支持，给他的流仍是 H.264。
     const useAv1 = this.hwProbe?.av1 === true && viewer?.av1Decode === true;
     // 起始码率：按这位观众分摊后的码率起步（上限的 75%），跳过编码器的开局爬坡。
-    const startKbps = Math.round((perViewerBitrate(this.screenQuality, viewers) * 0.75) / 1000);
+    const startKbps = Math.round((targetBitrate * 0.75) / 1000);
     // 与语音同一套 PeerJS 传输；metadata 标记让对端知道这是画面呼叫（不给流、只收）。
     // sdpTransform：把 offer 里的 H.264（High Profile 优先）——或双端都支持时的 AV1
     // ——提到 m=video 首位，并注入起始码率。PeerJS 自己出 offer，我们没机会调
@@ -3189,6 +3308,24 @@ export class VoiceMesh {
     this.screenCallAt.set(peerId, Date.now());
     const pc = this.screenPeerConnection(call);
     if (pc) void applyAudioProfile(pc, "music");
+    if (pc && isPreview) {
+      /*
+       * 预览档：房间里挂着但没点开灯箱的观众，只发 500kbps / 15fps / 半分辨率的缩略流。
+       * 这里**不建 tuner**——调谐器会按满档参数 retune，把预览档拉回去。
+       */
+      void applyScreenSenderParams(pc, this.screenQuality, {
+        maxBitrate: VoiceMesh.PREVIEW_SCREEN_BITRATE,
+        maxFramerate: 15,
+        scaleResolutionDownBy: 2,
+      });
+      call.on("close", () => {
+        if (this.screenCalls.get(peerId) === call) {
+          this.screenCalls.delete(peerId);
+          this.screenCallAt.delete(peerId);
+        }
+      });
+      return;
+    }
     if (!pc) {
       call.on("close", () => {
         if (this.screenCalls.get(peerId) === call) {
@@ -3206,7 +3343,7 @@ export class VoiceMesh {
     // 这里只补两个"更早一次"的触发点：① 同步（PeerJS 构造时已 addTrack）；
     // ② 协商进入 stable（此时 setParameters 才一定被接受）。
     const tuner = createScreenSenderTuner(pc, this.screenQuality, {
-      maxBitrate: perViewerBitrate(this.screenQuality, viewers),
+      maxBitrate: targetBitrate,
       // 观众自己选的偏好（清晰/流畅）逐连接生效；没选过 = auto
       preference: this.viewerScreenPrefs.get(peerId) ?? "auto",
       // 档位记忆：重连/下次开播从上次稳定档位起步，坏链路不再重爬 18 秒
@@ -3313,8 +3450,15 @@ export class VoiceMesh {
   }
 
   /** 观众端：应答共享者的画面呼叫（只收不发），流经事件交给界面。 */
-  private onIncomingScreenCall(call: MediaConnection, sessionId: string): void {    // 过期的会话（共享者已停又快速重开的旧呼叫）直接关掉
-    if (this.screenShareState && this.screenShareState.sessionId !== sessionId) {
+  private onIncomingScreenCall(call: MediaConnection, sessionId: string): void {
+    /*
+     * 只有"两边都拿得到 sessionId 且确实不同"才算过期会话。
+     *
+     * `sessionId` 是共享者拨号那一刻的本地状态：他刚点开播、还没收到房主的
+     * 广播时，metadata 里就是空串。以前空串一律 != 本地 sessionId → 直接 close，
+     * 表现就是"房主看不到访客的共享"（2026-10-25 反馈）。
+     */
+    if (this.screenShareState && sessionId && this.screenShareState.sessionId !== sessionId) {
       try {
         call.close();
       } catch {
@@ -3331,7 +3475,7 @@ export class VoiceMesh {
        * 已经有这条，不会重拨 → 新人为永久黑屏 + 没有共享声音（实测房间 2354）。
        */
       const state = this.screenShareState;
-      if (state && state.sessionId !== sessionId) {
+      if (state && sessionId && state.sessionId !== sessionId) {
         try {
           call.close();
         } catch {
