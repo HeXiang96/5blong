@@ -569,6 +569,7 @@ npm run feedback:admin list 20   # 终端查看最近反馈（url / list / rm �
 <!-- AUTO-LOG:START -->
 ### 近期提交（自动生成）
 
+- `0b212fa` fix(screen-share): 开播后进房的人收不到共享（画面+声音）——共享者周期补拨（10-25 21:29）
 - `8407fe9` release: v1.8.3（10-22 18:11）
 - `82604a9` fix(pig)+client: 主题帽子挂点对准素材头部中心（素材恒镜像显示，旧坐标偏到身位）；客户端默认窗口 1200x800（10-22 18:10）
 - `be112e8` release: v1.8.2（10-22 17:53）
@@ -576,8 +577,6 @@ npm run feedback:admin list 20   # 终端查看最近反馈（url / list / rm �
 - `6788b36` feat(landing): 首页配色适配雪原/万圣夜场景；公告栏改挂视窗右下角（10-22 17:00）
 - `3972b66` fix(rust): process_loopback 窗口枚举回调包 unsafe 块，消掉 Rust 2024 警告（10-22 17:00）
 - `f18d810` release: v1.8.1（10-22 16:37）
-- `10ca253` chore(telemetry): 新增房间问题归因分析脚本（rooms-attribution）（10-22 16:33）
-- `9517351` feat(room): 蹦迪/烟花挪进成员互动菜单；公告栏锚定主列右缘不再随视窗漂移（10-22 16:12）
 <!-- AUTO-LOG:END -->
 
 ## 怎么用
