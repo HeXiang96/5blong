@@ -24,6 +24,16 @@ const CAPTURE_SAMPLE_RATE = 48_000;
 
 /** 等第一块 PCM 的时限。超过即判定采集链路不通。 */
 const FIRST_CHUNK_TIMEOUT_MS = 4_000;
+/**
+ * 进程级采集的静音观察窗口（ms）。
+ *
+ * Windows 的"只采某个进程"能连上但**一直吐静音**——典型原因是选到了启动器/
+ * 没有音频会话的那个进程。这种故障不会报错，只表现为"共享没声音"，
+ * 所以启动后观察一小段，全程静音就自动退回整机采集。
+ */
+const SILENCE_PROBE_MS = 2_000;
+/** 判定"静音"的振幅阈值（i16 满量程 1.0）。 */
+const SILENCE_PEAK = 0.0005;
 
 /**
  * AudioWorklet 源码（Blob URL 注入，免得为 40 行代码加一个构建入口）。
@@ -75,6 +85,19 @@ export function isTauriRuntime(): boolean {
 }
 
 export interface LoopbackAudio {
+  /**
+   * true = 用户选了"只采某个应用"，但那个进程一直没出声，已自动退回整机采集。
+   * 调用方要提示用户：现在可能听到房间语音（回声），可以把来源改成"自动"。
+   */
+  fellBackFromPid?: boolean;
+  /** 目前收到的最大振幅（0~1）：用于判断"进程级采集是不是只有静音"。 */
+  peak: () => number;
+  /**
+   * true = 连整机采集都只有静音（2 秒窗口内零振幅）。
+   * 典型原因：游戏把声音输出到了**非默认**播放设备（Apex 单独选耳机/虚拟声卡），
+   * 或游戏走独占模式——这两种 Windows 回环都抓不到。
+   */
+  stillSilent?: boolean;
   /** 可直接 addTrack 进共享流的系统声音轨。 */
   track: MediaStreamTrack;
   /** 停播时调用（停 Rust 采集、关音频图；重复调用安全）。 */
@@ -91,7 +114,7 @@ export interface LoopbackAudio {
 }
 
 /** 启动内置系统声音采集。失败抛错（调用方自行提示并降级为无声音）。 */
-export async function startLoopbackAudio(
+async function startLoopbackOnce(
   onLost?: (message: string) => void,
   onFallback?: (message: string) => void,
   /** 只采集这个进程的声音（INCLUDE）；不传=整机混音减去本应用 */
@@ -150,6 +173,8 @@ export async function startLoopbackAudio(
 
   let nodeReady = true;
   let chunkCount = 0;
+  /** 已收到的最大振幅（0~1），用于判定"进程级采集是否只有静音"。 */
+  let peak = 0;
   let signalFirstChunk: (() => void) | null = null;
   const firstChunk = new Promise<void>((resolve) => {
     signalFirstChunk = resolve;
@@ -167,7 +192,13 @@ export async function startLoopbackAudio(
     const usable = bytes.byteLength - (bytes.byteLength % 2);
     const pcm = new Int16Array(bytes.buffer, bytes.byteOffset, usable / 2);
     const samples = new Float32Array(pcm.length);
-    for (let i = 0; i < pcm.length; i += 1) samples[i] = pcm[i] / 32768;
+    for (let i = 0; i < pcm.length; i += 1) {
+      const value = pcm[i] / 32768;
+      samples[i] = value;
+      // 记峰值：进程级采集最典型的故障是"连上了但一直是静音"（选错进程/该进程没声音）
+      const magnitude = value < 0 ? -value : value;
+      if (magnitude > peak) peak = magnitude;
+    }
     node.port.postMessage({ type: "chunk", samples }, [samples.buffer]);
   };
 
@@ -244,7 +275,45 @@ export async function startLoopbackAudio(
     throw error;
   }
 
-  return { track, stop, mode: info.mode ?? "unknown", target: info.target ?? 0 };
+  return {
+    track,
+    stop,
+    mode: info.mode ?? "unknown",
+    target: info.target ?? 0,
+    peak: () => peak,
+  };
+}
+
+/**
+ * 启动内置系统声音采集（带**进程级静音兜底**）。
+ *
+ * 选"只采某个应用"时，Windows 可能连上却一直吐静音（选错进程/该进程还没出声）。
+ * 这里在启动后观察 {@link SILENCE_PROBE_MS}：全程零振幅就自动关掉重开、退回
+ * 整机采集，并把 `fellBackFromPid` 交给调用方提示用户（可能听到房间语音）。
+ */
+export async function startLoopbackAudio(
+  onLost?: (message: string) => void,
+  onFallback?: (message: string) => void,
+  onlyPid?: number | null,
+): Promise<LoopbackAudio> {
+  const first = await startLoopbackOnce(onLost, onFallback, onlyPid);
+  // 整机采集不做静音判断：桌面没声音是用户自己的事，不该擅自改来源
+  if (!onlyPid || first.mode !== "include") return first;
+
+  await new Promise<void>((resolve) => window.setTimeout(resolve, SILENCE_PROBE_MS));
+  if (first.peak() > SILENCE_PEAK) return first;
+
+  // 进程级采集 2 秒全是静音 → 退回整机（多等 2 秒换"有声音"是值得的）
+  console.warn("[screen-share] 指定进程一直没出声，退回整机采集");
+  try {
+    await first.stop();
+  } catch {
+    /* 停不掉也继续，避免把用户卡在无声状态 */
+  }
+  const fallback = await startLoopbackOnce(onLost, onFallback, null);
+  // 整机也静音 → 不是选错进程，是"这台机器的回环抓不到这个游戏的声音"
+  await new Promise<void>((resolve) => window.setTimeout(resolve, SILENCE_PROBE_MS));
+  return { ...fallback, fellBackFromPid: true, stillSilent: fallback.peak() <= SILENCE_PEAK };
 }
 
 /** 列出"有窗口的进程"（标题 + pid）：共享浮层与自检用（仅桌面客户端）。 */

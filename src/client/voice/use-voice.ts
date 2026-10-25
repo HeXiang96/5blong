@@ -657,8 +657,28 @@ export function useVoice() {
              * 如实写出"声音到底从哪来"：出了回声时这一行就是第一手证据，
              * 不用再猜走的是哪条路（这条以前只写"已排除房间语音"，反而误导）。
              */
-            const source =
-              native.mode === "include"
+            /*
+             * 进程级采集"连上了但全程静音"是真实存在的故障：部分游戏（如 Apex）
+             * 的音频不走默认播放设备/由别的进程渲染，Windows 的进程回环就抓不到。
+             * loopback 层会观察 2 秒，全静音时自动退回整机采集并置 fellBackFromPid，
+             * 这里要**如实告诉用户**：声音有了，但可能带房间语音。
+             */
+            if (native.stillSilent) {
+              /*
+               * 采集链路通了但**一直零振幅**：观众端就是"画面有、没声音"。
+               * Windows 回环只抓默认播放设备上的声音，游戏单独选了别的输出
+               * （耳机/虚拟声卡）或走独占模式时，这里就是静音——必须说出来。
+               */
+              setNotice({
+                kind: "error",
+                sticky: true,
+                text:
+                  "共享音频是静音：没抓到任何声音。请确认游戏的声音输出和 Windows 默认播放设备是同一个（Apex 里常单独选了耳机），或改用「共享整个屏幕 + 自动」。",
+              });
+            }
+            const source = native.fellBackFromPid
+              ? `选定的程序没有声音输出，已改为采集整机声音（可能听到房间语音；可在设置→共享里换个应用）`
+              : native.mode === "include"
                 ? `只采「${sharePidTitle || `进程 ${native.target}`}」的声音`
                 : native.mode === "webview"
                   ? "整机声音，已排除本应用语音"

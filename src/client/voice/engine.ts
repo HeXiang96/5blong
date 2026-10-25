@@ -2644,6 +2644,16 @@ export class VoiceMesh {
    * 双方界面都在房里，却谁也不出声。卡顿、退房重进之后尤其容易踩到。
    */
   private ensureCalls(): void {
+    /*
+     * 我是共享者时每轮补一次画面呼叫（幂等，已有呼叫直接跳过）。
+     *
+     * 原来只有"名册变化 / 收到共享状态"这两个时机才补，一旦那次事件丢了
+     * （开播后才进房的人、信令抖动、呼叫卡在 new），这个人就永远收不到
+     * 共享画面和共享声音——这是"开播后进房的人看不到也听不到"的根因。
+     */
+    if (!this.destroyed && this.screenShareState?.sharerId === this.myId && this.screenStream) {
+      this.startScreenCalls();
+    }
     if (this.destroyed || !this.me || !this.outgoingStream) return;
     const now = Date.now();
     /** 每个 tick 最多补拨一条：与 MEDIA_STAGGER_MS 的错峰意图保持一致。 */
@@ -3093,6 +3103,8 @@ export class VoiceMesh {
   private screenQuality: ShareQuality = "fhd1080";
   /** P2P 屏幕呼叫（共享者 → 各成员，一人一条）。 */
   private screenCalls = new Map<string, MediaConnection>();
+  /** 每条画面呼叫的发起时刻：用于回收"发出去了但一直没连上"的僵尸呼叫。 */
+  private screenCallAt = new Map<string, number>();
   /** 每条 P2P 画面链路的自适应调谐器（按 peerId）——负责码率与降级阶梯。 */
   private screenTuners = new Map<string, ScreenSenderTuner>();
   /** 每条 P2P 画面链路的自愈解绑函数（按 peerId，close 时调用）。 */
@@ -3134,7 +3146,26 @@ export class VoiceMesh {
   }
 
   private callScreenPeer(peerId: string): void {
-    if (!this.peer || !this.screenStream || this.screenCalls.has(peerId)) return;
+    if (!this.peer || !this.screenStream) return;
+    const existing = this.screenCalls.get(peerId);
+    if (existing) {
+      /*
+       * 有一条就跳过会漏掉"offer 丢了 / 对方还没进房就拨了"的僵尸呼叫：
+       * 那条 call 永远停在 new，map 里一直占位，这个人就再也收不到共享
+       * （实测房间 2354：开播后才进房的人永久黑屏 + 无共享声音）。
+       * 现在：呼叫已死，或超过 12 秒还没连上，就丢掉重拨。
+       */
+      const startedAt = this.screenCallAt.get(peerId) ?? 0;
+      const zombie = !startedAt || Date.now() - startedAt > 12_000;
+      if (!this.isCallDead(existing) && !zombie) return;
+      try {
+        existing.close();
+      } catch {
+        /* noop */
+      }
+      this.screenCalls.delete(peerId);
+      this.screenCallAt.delete(peerId);
+    }
     const viewer = this.members.get(peerId);
     const viewers = Math.max(1, this.members.size - 1);
     // 双端 AV1 判断（逐观众）：本机有 AV1 硬编，且**这一位观众**报了 AV1 硬解，
@@ -3155,11 +3186,15 @@ export class VoiceMesh {
     });
     if (!call) return;
     this.screenCalls.set(peerId, call);
+    this.screenCallAt.set(peerId, Date.now());
     const pc = this.screenPeerConnection(call);
     if (pc) void applyAudioProfile(pc, "music");
     if (!pc) {
       call.on("close", () => {
-        if (this.screenCalls.get(peerId) === call) this.screenCalls.delete(peerId);
+        if (this.screenCalls.get(peerId) === call) {
+          this.screenCalls.delete(peerId);
+          this.screenCallAt.delete(peerId);
+        }
       });
       return;
     }
@@ -3289,7 +3324,14 @@ export class VoiceMesh {
     }
     call.answer(undefined, { sdpTransform: opusSdpTransform("music") });
     call.on("stream", (stream) => {
-      if (this.screenShareState?.sessionId !== sessionId) {
+      /*
+       * 只关"确认过期"的会话：`screenShareState` 为 null 说明 welcome 还没处理完，
+       * 这是**新进房最常见的时序**（共享者的媒体呼叫比房主的名册/状态先到）。
+       * 以前这里把 null 也判成过期，直接 close，而共享者那边的 screenCalls 里
+       * 已经有这条，不会重拨 → 新人为永久黑屏 + 没有共享声音（实测房间 2354）。
+       */
+      const state = this.screenShareState;
+      if (state && state.sessionId !== sessionId) {
         try {
           call.close();
         } catch {
