@@ -642,10 +642,23 @@ describe("jitterBufferTargetFor（抖动缓冲自适应）", () => {
 });
 
 describe("观众偏好聚合（多人共用一条轨时的取舍）", () => {
+  /*
+   * 2026-10-25 改口径：默认不再是 detail（detail 会被拥塞控制砍到 2fps）。
+   * 现在：有人要流畅 → motion；**全员明确要清晰**才 detail；有「自动」就不设 hint。
+   */
   it("只要有一位要流畅优先，整条轨就按 motion 走", () => {
-    expect(screenHintFor(["auto", "detail"])).toBe("detail");
     expect(screenHintFor(["detail", "motion"])).toBe("motion");
-    expect(screenHintFor([])).toBe("detail");
+    expect(screenHintFor(["auto", "motion"])).toBe("motion");
+  });
+
+  it("全员明确要清晰才设 detail，混着「自动」就交给浏览器平衡", () => {
+    expect(screenHintFor(["detail", "detail"])).toBe("detail");
+    expect(screenHintFor(["auto", "detail"])).toBe("");
+    expect(screenHintFor(["auto"])).toBe("");
+  });
+
+  it("没有观众（或没人表态）时不设 hint", () => {
+    expect(screenHintFor([])).toBe("");
   });
 
   it("SFU 订阅层：清晰优先/自动取满档，流畅优先退半档", () => {

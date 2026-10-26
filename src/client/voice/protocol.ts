@@ -589,8 +589,15 @@ export type GuestMessage =
    * - off     不看（页面隐藏 / 主动收起），完全不发
    */
   | { t: "screen-watch"; state: ScreenWatchState }
-  /** 进房之后才登录：补报账号 ID，房主更新名册后其他人立刻可加好友 */
-  | { t: "account"; accountId: string }
+  /**
+   * 进房之后才登录：补报账号 ID，房主更新名册后其他人立刻可加好友。
+   *
+   * name / avatar 可选（2026-10-26 补）：登录后昵称头像跟随账号，
+   * 而那条「账号 → 本地身份」的同步与这条消息谁先谁后并不确定，
+   * 所以这里顺手带一份当前资料——房主收到就一并更新，晚到的
+   * identity 消息再覆盖一次也不会错。旧客户端不带这两个字段，解析后为 undefined。
+   */
+  | { t: "account"; accountId: string; name?: string; avatar?: string }
   | { t: "ping"; ts: number }
   | { t: "pong"; ts: number };
 
@@ -714,7 +721,16 @@ export function parseGuestMessage(data: unknown): GuestMessage | null {
     }
     case "account": {
       const accountId = str(msg["accountId"], 8);
-      return /^\d{8}$/.test(accountId) ? { t: "account", accountId } : null;
+      if (!/^\d{8}$/.test(accountId)) return null;
+      // name / avatar 缺省就等于「这次只报 ID」，旧客户端与本端都照常处理
+      const name = str(msg["name"], LIMITS.name);
+      const avatar = str(msg["avatar"], LIMITS.avatar);
+      return {
+        t: "account",
+        accountId,
+        ...(name ? { name } : {}),
+        ...(avatar ? { avatar } : {}),
+      };
     }
     case "screen-pref": {
       // 观众的画质偏好：形状不对就丢弃（旧房主收到也会安全忽略）

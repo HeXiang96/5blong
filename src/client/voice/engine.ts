@@ -1499,7 +1499,13 @@ export class VoiceMesh {
          */
         const record = this.members.get(guest.member.id);
         if (record) {
-          this.members.set(record.id, { ...record, accountId: message.accountId });
+          this.members.set(record.id, {
+            ...record,
+            accountId: message.accountId,
+            // 顺手带上来的资料（旧客户端没有，解析后是 undefined）
+            ...(message.name ? { name: message.name } : {}),
+            ...(message.avatar ? { avatar: message.avatar } : {}),
+          });
           this.emitMembers();
           this.broadcastHost({ t: "roster", members: this.roster() });
         }
@@ -1892,8 +1898,17 @@ export class VoiceMesh {
     if (this.hosting && this.joined) {
       this.broadcastHost({ t: "roster", members: this.roster() });
     } else if (this.joined && this.hostConn) {
-      // 访客没有广播权：向房主补报一次，由房主更新名册并重播
-      if (next) this.send(this.hostConn, { t: "account", accountId: next });
+      // 访客没有广播权：向房主补报一次，由房主更新名册并重播。
+      // 带上当前昵称/头像——登录后资料会跟随账号，这两件事的先后顺序不确定，
+      // 一起发过去房主就不用等第二条 identity 消息。
+      if (next) {
+        this.send(this.hostConn, {
+          t: "account",
+          accountId: next,
+          name: this.me.name,
+          avatar: this.me.avatar,
+        });
+      }
     }
   }
 

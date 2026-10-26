@@ -1205,18 +1205,30 @@ export function useVoice() {
 
   const closeSettings = useCallback(() => setView(settingsReturn), [settingsReturn]);
 
+  /**
+   * 改资料（昵称 / 头像 / 颜色）。
+   *
+   * 以前对外暴露的是 `useState` 的裸 setter：账号改名后 App 里 `voice.setIdentity()`
+   * 一调用，**内存变了、盘没写、屋里没人知道**——正在房间里的人看自己的铭牌是旧名，
+   * 别人名册也是旧名（2026-10-26 交接文档里的半成品）。这里统一成一条路径：
+   * 写盘 + 通知引擎（房主广播名册 / 访客发 identity 给房主转发）。
+   */
+  const applyIdentity = useCallback((next: Identity) => {
+    setIdentity(next);
+    setIdentitySaving(!saveIdentity(next));
+    engineRef.current?.updateIdentity(next);
+  }, []);
+
   const saveAll = useCallback(
     (nextIdentity: Identity, nextSettings: VoiceSettings) => {
-      setIdentity(nextIdentity);
-      setIdentitySaving(!saveIdentity(nextIdentity));
+      applyIdentity(nextIdentity);
 
       const engine = engineRef.current;
       const settingsToSave = persistSettings(nextSettings);
       if (engine) {
         void engine.updateAudioSettings(settingsToSave);
         engine.applySpeaker(settingsToSave);
-        // 昵称/头像/颜色改动立即同步运行中的会话（铭牌不再停留在旧名字）
-        engine.updateIdentity(nextIdentity);
+        // 昵称/头像/颜色已在 applyIdentity 里同步给引擎（铭牌不再停留在旧名字）
         // 设置页保存后同步一下采集参数的真实状态，供房间面板显示。
         void engine
           .applyCaptureProcessing(settingsToSave.processing)
@@ -1224,7 +1236,7 @@ export function useVoice() {
       }
       setView(settingsReturn);
     },
-    [persistSettings, settingsReturn],
+    [applyIdentity, persistSettings, settingsReturn],
   );
 
   /** 屏幕共享画质档位（开播时生效；落盘）。 */
@@ -1660,7 +1672,7 @@ export function useVoice() {
     sendChat,
     copyInvite,
     copyText,
-    setIdentity,
+    setIdentity: applyIdentity,
     setNotice,
     setJoinError,
     micVolume: settings.micVolume,

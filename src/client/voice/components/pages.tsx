@@ -6,7 +6,6 @@ import type { LastRoom, SessionSummary } from "../session-stats";
 
 import { AVATAR_COLORS, initials, type Identity } from "../identity";
 import { CODE_HINT, CODE_PLACEHOLDER, JOIN_PARSE_ERROR, JOIN_WAIT_HINT, ROOM_CODE_LEN } from "../protocol";
-import { saveIdentity } from "../identity";
 import { Avatar, Spinner, Toggle } from "./ui";
 import { PenFrame } from "./PigPen";
 import { HealthCheck } from "./HealthCheck";
@@ -187,8 +186,8 @@ export function LandingView({
 
   const commitName = () => {
     const name = draftName.trim().slice(0, 24) || identity.name;
+    // onIdentityChange 已经是「写盘 + 通知引擎」的一条路径，这里别再重复落盘
     onIdentityChange({ ...identity, name });
-    saveIdentity({ ...identity, name });
     setEditing(false);
   };
 
