@@ -1315,8 +1315,15 @@ const SESSION_TTL_MS = 30 * 24 * 3600_000;
 /** 心跳超过这个时间没更新就算离线（客户端 30 秒一跳，留两倍容差）。 */
 const PRESENCE_ONLINE_MS = 75_000;
 const MAX_AVATAR_CHARS = 120_000;
-/** 与客户端（PBKDF2 12 万次）保持一致，别单方面调低——那会让老密码全部失效。 */
-const PBKDF2_ROUNDS = 120_000;
+/**
+ * PBKDF2-SHA256 迭代次数。
+ *
+ * ⚠️ Workers **硬上限是 100000**：超过就直接抛
+ * `Pbkdf2 failed: iteration counts above 100000 are not supported`，
+ * 而这句话会被下面的 try 吞成一句 "internal"（2026-10-26 线上注册全 500 的根因）。
+ * 取上限值；哈希串里自带次数（pbkdf2$<rounds>$<hex>），将来调整不影响老密码。
+ */
+const PBKDF2_ROUNDS = 100_000;
 
 function accountCorsHeaders(request) {
   const origin = request.headers.get("Origin");
@@ -1866,6 +1873,11 @@ async function handleAccount(request, env, url) {
     if (inviteMatch && request.method === "DELETE") return await accountDismissInvite(request, env, inviteMatch[1]);
     return accountJson(request, { error: "not found" }, 404);
   } catch (error) {
+    /*
+     * 别把内部错误抛给客户端，但也别让它无声消失：
+     * 2026-10-26 的"注册全 500"就是被这里吞掉的一句话
+     * （Pbkdf2 迭代超上限），只能靠 Workers 日志才看得见。
+     */
     console.error("[account]", error?.stack ?? error?.message ?? error);
     return accountJson(request, { error: "internal" }, 500);
   }

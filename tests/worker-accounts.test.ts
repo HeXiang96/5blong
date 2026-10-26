@@ -17,8 +17,11 @@ const SCHEMA = readFileSync("worker/accounts-schema.sql", "utf8");
 /** D1 的最小替身：只实现 handler 真正用到的那几个方法。 */
 class FakeD1 {
   private sqlite: any;
+  /** 直接摸库的入口（只给"看表里到底存了什么"这类断言用） */
+  raw: any;
   constructor(sqlite: any) {
     this.sqlite = sqlite;
+    this.raw = sqlite;
   }
   prepare(sql: string) {
     const sqlite = this.sqlite;
@@ -217,5 +220,27 @@ describe("在线心跳", () => {
     const entry = list.data.friends.find((item: any) => item.account.id === a.account.id);
     expect(entry.presence.state).toBe("online");
     expect(entry.presence.roomCode).toBe("235417");
+  });
+});
+
+describe("密码哈希的硬约束", () => {
+  it("PBKDF2 迭代次数不能超过 Workers 的 10 万上限", () => {
+    // 超过上限时 Workers 直接抛错，整条注册接口 500（2026-10-26 线上事故）。
+    // 这条断言就是防止有人"为了更安全"把数字往上调。
+    const source = readFileSync("worker/_worker.pages.js", "utf8");
+    const match = /const PBKDF2_ROUNDS = ([\d_]+)/.exec(source);
+    expect(match, "找不到 PBKDF2_ROUNDS").toBeTruthy();
+    const rounds = Number(String(match![1]).replace(/_/g, ""));
+    expect(rounds).toBeLessThanOrEqual(100_000);
+    expect(rounds).toBeGreaterThanOrEqual(50_000);
+  });
+
+  it("哈希串自带迭代次数（换强度不影响老密码）", async () => {
+    const { account, token } = await register("pighash");
+    expect(account.id).toMatch(/^\d{8}$/);
+    const me = await json(await call("/me", { token }));
+    expect(me.data.account.username).toBe("pighash");
+    const stored = env.DB.raw.prepare("SELECT hash FROM accounts WHERE id = ?").get(account.id);
+    expect(stored?.hash).toMatch(/^pbkdf2\$\d+\$[0-9a-f]{64}$/);
   });
 });
