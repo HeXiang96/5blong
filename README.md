@@ -612,6 +612,7 @@ npm run feedback:admin list 20   # 终端查看最近反馈（url / list / rm �
 <!-- AUTO-LOG:START -->
 ### 近期提交（自动生成）
 
+- `4387a6d` release: v1.9.5（10-27 00:27）
 - `ff5c511` release: v1.9.4（10-27 00:01）
 - `d654d47` release: v1.9.3（10-26 22:28）
 - `322b85d` release: v1.9.2（10-26 20:21）
@@ -619,8 +620,6 @@ npm run feedback:admin list 20   # 终端查看最近反馈（url / list / rm �
 - `25ba62d` release: v1.9.1（10-26 19:57）
 - `9a176bd` fix(friends): 真凶——welcome/roster 建成员漏 accountId，访客看谁都没账号；roster 重播还会洗掉已记录的账号；双端流转补回归测试（10-26 19:40）
 - `1acbf2d` fix(friends): 全员已登录却显示未登录——旧客户端名册不带账号，用好友在线数据按昵称兜底匹配；未匹配文案改为未登录或版本较旧（10-26 19:25）
-- `ae1b540` release: v1.9.0（10-26 18:56）
-- `1b8a9c2` feat(admin): 后台操作反馈重设计（成功/失败分色 + 审计时间线）；时间统一北京时间；README 写入 1.9.0 全部改动（10-26 18:56）
 <!-- AUTO-LOG:END -->
 
 ## 怎么用
