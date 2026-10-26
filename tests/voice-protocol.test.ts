@@ -12,6 +12,7 @@ import {
   hostPeerId,
   hostProofMessage,
   isJoinInFlight,
+  isNewRoomCode,
   isRoomCode,
   makeRoomCode,
   normalizeCode,
@@ -60,10 +61,22 @@ describe("room code", () => {
 
   it("rejects codes outside the alphabet or of the wrong length", () => {
     expect(isRoomCode("123")).toBe(false); // too short
-    expect(isRoomCode("12345")).toBe(false); // too long
+    expect(isRoomCode("12345")).toBe(false); // 5 位既不是新码也不是老码
     expect(isRoomCode("123A")).toBe(false); // letters are excluded from the alphabet
     expect(isRoomCode("12 34")).toBe(false); // spaces are not part of a code
     expect(isRoomCode("12-34")).toBe(false); // separators are not part of a code
+  });
+
+  it("接受旧版 4 位码，但新生成的码一律 6 位", () => {
+    // 老邀请链接/老截图里的 4 位码继续可用（房主 ID 由码推导，长度不影响定位）
+    expect(isRoomCode(CODE)).toBe(true);
+    expect(isNewRoomCode(CODE)).toBe(false);
+    const fresh = makeRoomCode(randomIndex);
+    expect(fresh).toHaveLength(6);
+    expect(isNewRoomCode(fresh)).toBe(true);
+    // 旧码能走完整的进房解析
+    expect(parseJoinInput(CODE)).toEqual({ code: CODE, hostId: "", roomKey: "" });
+    expect(parseJoinInput(fresh)).toEqual({ code: fresh, hostId: "", roomKey: "" });
   });
 
   it("builds peer ids that satisfy the PeerJS id grammar", () => {

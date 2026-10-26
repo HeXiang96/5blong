@@ -89,13 +89,15 @@ describe("SessionStatsRecorder（今晚小结）", () => {
 });
 
 describe("上次房间记忆", () => {
-  it("只认 4 位数字的房间码", () => {
+  it("认 4 位老码与 6 位新码，别的一律不记", () => {
     saveLastRoom("abcd", "guest");
     expect(loadLastRoom()).toBeNull();
-    saveLastRoom("8294", "guest");
+    saveLastRoom("8294", "guest"); // 老码
     expect(loadLastRoom()?.code).toBe("8294");
+    saveLastRoom("235417", "guest"); // 新码
+    expect(loadLastRoom()?.code).toBe("235417");
     saveLastRoom("123", "guest");
-    expect(loadLastRoom()?.code).toBe("8294");
+    expect(loadLastRoom()?.code).toBe("235417");
   });
 
   it("房主记录带上钥匙，能用于恢复同一房间", () => {

@@ -349,7 +349,7 @@ const startGuest = async (target: {
 describe("VoiceMesh 加入握手", () => {
   it("持完整邀请链接（roomKey）的访客能自动握手并建立媒体", async () => {
     const { holder: hostHolder, invite } = await startHost();
-    expect(invite.code).toHaveLength(4);
+    expect(invite.code).toHaveLength(6);
 
     const { holder: guestHolder } = await startGuest({
       code: invite.code,

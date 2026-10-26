@@ -8,6 +8,8 @@
  * 隐私：只统计时长与人数，**不涉及任何内容**；结果只显示在本机。
  */
 
+import { isRoomCode } from "./protocol";
+
 export interface SessionMemberSample {
   id: string;
   name: string;
@@ -128,7 +130,7 @@ const LAST_ROOM_MAX_AGE_MS = 12 * 60 * 60 * 1000;
 
 export function saveLastRoom(code: string, role: "guest" | "host", roomKey?: string): void {
   const normalized = code.trim();
-  if (!/^[0-9]{4}$/.test(normalized)) return;
+  if (!isRoomCode(normalized)) return;
   try {
     const record: LastRoom = { code: normalized, savedAt: Date.now(), role };
     if (role === "host" && roomKey) record.roomKey = roomKey;
@@ -147,7 +149,7 @@ export function loadLastRoom(): LastRoom | null {
     const savedAt = typeof parsed.savedAt === "number" ? parsed.savedAt : 0;
     // 太旧的记录没有意义（房间里早没人了）
     if (!savedAt || Date.now() - savedAt > LAST_ROOM_MAX_AGE_MS) return null;
-    if (typeof parsed.code === "string" && /^[0-9]{4}$/.test(parsed.code)) {
+    if (typeof parsed.code === "string" && isRoomCode(parsed.code)) {
       const record: LastRoom = { code: parsed.code, savedAt, role: parsed.role };
       if (parsed.role === "host" && typeof parsed.roomKey === "string") record.roomKey = parsed.roomKey;
       return record;

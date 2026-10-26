@@ -87,32 +87,52 @@ export function parsePenEvent(input: unknown): PenEvent | null {
 }
 
 // ---------------------------------------------------------------------------
-// 房间码：4 位数字
+// 房间码：6 位数字（旧的 4 位码继续可用）
 // ---------------------------------------------------------------------------
 
 /** 房间码只用数字，方便口头报码与手动输入。 */
 export const CODE_ALPHABET = "0123456789";
-export const ROOM_CODE_LEN = 4;
+/**
+ * 新房间码 6 位（2026-10-26）。
+ *
+ * 4 位只有 9000 多个可用码，100 个固定房号撞上同一间的概率约 40%——
+ * 想给用户「我的房间 235417 永远这间」就必须先扩大码空间（6 位 = 10^6）。
+ */
+export const ROOM_CODE_LEN = 6;
+/**
+ * 旧版 4 位码：**继续放行**。
+ *
+ * 房主 PeerID 由房间码直接推导（`hostPeerIdForCode`），所以长度变了也能对上——
+ * 老邀请链接、老截图里念出来的 4 位码都还能进房。本端新生成的码一律 6 位。
+ */
+export const LEGACY_ROOM_CODE_LEN = 4;
 
 /** PeerJS 的 ID 校验规则是 ^[A-Za-z0-9]+(?:[ _-][A-Za-z0-9]+)*$，故用 '-' 分段。 */
 export const ROOM_PREFIX = "5b";
 export const HOST_ID_PREFIX = "5b-h-";
 export const GUEST_ID_PREFIX = "5b-g-";
 
-/** 10^4 = 10,000 种组合。 */
+/** 10^6 = 1,000,000 种组合。 */
 export const CODE_SPACE = CODE_ALPHABET.length ** ROOM_CODE_LEN;
 
 const CODE_PATTERN = new RegExp(`^[${CODE_ALPHABET}]{${ROOM_CODE_LEN}}$`);
+const LEGACY_CODE_PATTERN = new RegExp(`^[${CODE_ALPHABET}]{${LEGACY_ROOM_CODE_LEN}}$`);
 
 export function normalizeCode(input: string): string {
   return input.trim().toUpperCase().replace(/[\s-]/g, "");
 }
 
+/** 是否是本端**认可**的房码（含旧的 4 位）。所有进房/欢迎校验都用它。 */
 export function isRoomCode(value: string): boolean {
+  return CODE_PATTERN.test(value) || LEGACY_CODE_PATTERN.test(value);
+}
+
+/** 是否是新格式（6 位）。只在「要不要提示用户换码」这类判断里用。 */
+export function isNewRoomCode(value: string): boolean {
   return CODE_PATTERN.test(value);
 }
 
-/** 生成房间码。随机源由调用方注入，便于测试与使用 crypto。 */
+/** 生成房间码（新格式 6 位）。随机源由调用方注入，便于测试与使用 crypto。 */
 export function makeRoomCode(random: (max: number) => number): string {
   let code = "";
   for (let i = 0; i < ROOM_CODE_LEN; i++) {
@@ -1039,7 +1059,9 @@ export function rejectText(reason: RejectReason): string {
 // ---------------------------------------------------------------------------
 
 export const CODE_HINT = `${ROOM_CODE_LEN} 位房间码`;
-export const CODE_PLACEHOLDER = `例如 ${"1234".slice(0, ROOM_CODE_LEN)} 或邀请链接`;
+export const CODE_PLACEHOLDER = `例如 235417 或邀请链接`;
+/** 提示里明确「老的 4 位码也能用」，免得手里有旧码的人以为失效了。 */
+export const CODE_HINT_LEGACY = `${ROOM_CODE_LEN} 位房间码（早期的 ${LEGACY_ROOM_CODE_LEN} 位码也还能用）`;
 export const JOIN_PARSE_ERROR = `请输入${CODE_HINT}，或粘贴完整邀请链接`;
 
 /**

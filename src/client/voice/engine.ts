@@ -12,7 +12,6 @@ import {
   HEARTBEAT_TIMEOUT_MS,
   HOST_SILENCE_TIMEOUT_MS,
   MAX_MEMBERS,
-  ROOM_CODE_LEN,
   WELCOME_TIMEOUT_MS,
   buildInviteUrl,
   decideAdmission,
@@ -1534,7 +1533,8 @@ export class VoiceMesh {
       hostReady: !this.destroyed && !!this.hostId,
       closed: this.destroyed,
       locked: this.locked,
-      codeMatches: this.code.length === ROOM_CODE_LEN,
+      // 房主手里必须有本端认可的码（6 位新码 / 4 位老码都算），否则一律拒绝
+      codeMatches: isRoomCode(this.code),
       proofValid: expected === message.proof || codeOnly,
       existing: this.guests.has(peerId),
       /*

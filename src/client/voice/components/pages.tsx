@@ -5,7 +5,15 @@ import { SCENE_THEMES, type SceneThemeId } from "../scene-theme";
 import type { LastRoom, SessionSummary } from "../session-stats";
 
 import { AVATAR_COLORS, initials, type Identity } from "../identity";
-import { CODE_HINT, CODE_PLACEHOLDER, JOIN_PARSE_ERROR, JOIN_WAIT_HINT, ROOM_CODE_LEN } from "../protocol";
+import {
+  CODE_HINT,
+  CODE_HINT_LEGACY,
+  CODE_PLACEHOLDER,
+  JOIN_PARSE_ERROR,
+  JOIN_WAIT_HINT,
+  ROOM_CODE_LEN,
+  isRoomCode,
+} from "../protocol";
 import { Avatar, Spinner, Toggle } from "./ui";
 import { PenFrame } from "./PigPen";
 import { HealthCheck } from "./HealthCheck";
@@ -115,8 +123,9 @@ export function LandingView({
   /** 内联房间码 → 直接进房；格式不对就地提示，不打断。 */
   const joinByCode = () => {
     const code = codeDraft.trim();
-    if (code.length !== ROOM_CODE_LEN) {
-      setParseError(CODE_HINT);
+    // 6 位是新码；4 位是老码，两者都放行（老链接/老码不该突然失效）
+    if (!isRoomCode(code)) {
+      setParseError(CODE_HINT_LEGACY);
       return;
     }
     onDismissError?.();
@@ -372,7 +381,7 @@ export function LandingView({
                 onKeyDown={(event) => {
                   if (event.key === "Enter") joinByCode();
                 }}
-                placeholder="输入 4 位房间码"
+                placeholder="输入 6 位房间码"
                 inputMode="numeric"
                 autoComplete="off"
                 aria-label="房间码"
@@ -382,8 +391,8 @@ export function LandingView({
                 type="button"
                 className="vx-btn vx-btn-ghost"
                 onClick={joinByCode}
-                disabled={joining || codeDraft.length < ROOM_CODE_LEN}
-                title={CODE_HINT}
+                disabled={joining || !isRoomCode(codeDraft.trim())}
+                title={CODE_HINT_LEGACY}
               >
                 <LogIn size={16} /> 加入
               </button>
@@ -619,8 +628,7 @@ export function LandingView({
             {parseError ? <p className="vx-field-error">{parseError}</p> : null}
             <p className="vx-modal-hint">
               只输{ROOM_CODE_LEN}位房间码也能直接进房；想更私密就让房主发邀请链接。
-            </p>
-            <div className="vx-modal-actions">
+            </p>            <div className="vx-modal-actions">
               <button type="button" className="vx-btn vx-btn-quiet" onClick={() => setJoinOpen(false)}>
                 取消
               </button>
