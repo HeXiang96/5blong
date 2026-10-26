@@ -649,3 +649,43 @@ describe("临时房取号会避开已认领的房号", () => {
     expect(code).not.toBe(seen[0]);
   });
 });
+
+describe("登录账号在房间名册中的流转（加好友依赖它）", () => {
+  it("双端登录：名册里互见 accountId；房主收访客补报也会更新", async () => {
+    const { host, holder: hostHolder, invite } = await startHost();
+    host.setAccountId("11111111");
+
+    const { guest, holder: guestHolder } = await startGuest({
+      code: invite.code,
+      hostId: invite.hostId,
+      roomKey: invite.roomKey,
+    });
+    // 场景一：进房前已登录（hello 应带 accountId）
+    guest.setAccountId("22222222");
+
+    await sleep(60);
+    const hostMembers = lastMembers(hostHolder) as any[];
+    const guestMembers = lastMembers(guestHolder) as any[];
+
+    const hostSeenGuest = hostMembers.find((m) => !m.local);
+    const guestSeenHost = guestMembers.find((m) => !m.local);
+    expect(hostSeenGuest?.accountId).toBe("22222222");
+    expect(guestSeenHost?.accountId).toBe("11111111");
+
+    // 场景二：进房后才登录（走 account 补报 → 房主更新名册 → 重播）
+    const { guest: late, holder: lateHolder } = await startGuest({
+      code: invite.code,
+      hostId: invite.hostId,
+      roomKey: invite.roomKey,
+    });
+    await sleep(40);
+    late.setAccountId("33333344"); // 进房之后才登录
+    await sleep(60);
+
+    const lateMembers = lastMembers(lateHolder) as any[];
+    const lateSeenHost = lateMembers.find((m) => !m.local);
+    const hostSeenLate = (lastMembers(hostHolder) as any[]).find((m) => m.accountId === "33333344");
+    expect(lateSeenHost?.accountId).toBe("11111111");
+    expect(hostSeenLate?.accountId).toBe("33333344");
+  });
+});

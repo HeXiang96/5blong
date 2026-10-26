@@ -2717,6 +2717,12 @@ export class VoiceMesh {
           serverMuted: member.serverMuted ?? false,
           deafened: member.deafened ?? false,
           ...(member.av1Decode === true ? { av1Decode: true } : {}),
+          /*
+           * accountId 必须带上：成员菜单的「加好友」全靠它。
+           * 2026-10-26 事故：welcome 建成员时漏了这个字段——访客看到的所有人
+           * （包括房主）都没有账号，全员显示"对方未登录，无法加好友"。
+           */
+          ...(member.accountId ? { accountId: member.accountId } : {}),
           local: false,
         });
       }
@@ -2806,6 +2812,12 @@ export class VoiceMesh {
             isHost: member.isHost,
             serverMuted: member.serverMuted ?? false,
             ...(member.av1Decode === true ? { av1Decode: true } : {}),
+            /*
+             * accountId 同样必须带上——这里是**整体替换**成员记录，
+             * 漏掉它意味着房主每次重播名册（有人进出/改名）都会把
+             * hello 里已经记录的账号洗掉，"加好友"时好时坏。
+             */
+            ...(member.accountId ? { accountId: member.accountId } : {}),
             local: false,
           });
         }
