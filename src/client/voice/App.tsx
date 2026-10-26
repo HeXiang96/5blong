@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { preloadRnnoise } from "./engine";
 import { shouldShowOnboarding } from "./onboarding";
@@ -318,6 +318,23 @@ export function App() {
    * 通过邀请链接直接进房的人不打扰——那时 view 不是 landing，等他回首页自然会看到。
    * `?tv=demo`（调试/全链路验证）跳过，免得挡着自动开播。
    */
+  /**
+   * 房间内"昵称 → 账号 ID"兜底映射：旧客户端（1.8.9 之前）名册不带 accountId，
+   * 但好友在服务端的心跳里报过"自己在哪个房"。同房同名唯一匹配才收录，
+   * 同名多人置空串放弃匹配——宁可显示"版本较旧"，也不把好友请求发错人。
+   */
+  const friendsInRoomByName = useMemo(() => {
+    const map = new Map<string, string>();
+    const code = voice.roomCode;
+    if (!code) return map;
+    for (const { account: friend, presence } of account.snapshot.friends) {
+      if (presence.roomCode !== code || !friend.name) continue;
+      if (map.has(friend.name)) map.set(friend.name, "");
+      else map.set(friend.name, friend.id);
+    }
+    return map;
+  }, [account.snapshot.friends, voice.roomCode]);
+
   const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [whatsNewOpen, setWhatsNewOpen] = useState(false);
   useEffect(() => {
@@ -469,6 +486,7 @@ export function App() {
           })
         }
         status={voice.status}
+        friendsInRoomByName={friendsInRoomByName}
         members={voice.members}
         speaking={voice.speaking}
         messages={voice.messages}

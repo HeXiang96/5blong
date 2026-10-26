@@ -130,6 +130,8 @@ export function useVoice() {
    * 状态只有一条：房主权威广播的 ScreenShareState。SFU 的发布/订阅
    * 全部住在 use-voice 之外的 screen-share.ts，与语音链路零接触。
    */
+  /** 当前所在房号（不在房 = 空串）。好友面板按它匹配"谁在这个房"，兜底补 accountId。 */
+  const [roomCode, setRoomCode] = useState("");
   const [screenShare, setScreenShare] = useState<ScreenShareState | null>(() => {
     // ?tv=1：不开采集就能目检全套动画（电视播测试彩条）
     if (typeof location !== "undefined" && debugTvFrom(location.search)) {
@@ -244,6 +246,7 @@ export function useVoice() {
   identityRef.current = identity;
 
   const resetRoom = useCallback(() => {
+    setRoomCode("");
     setMembers([]);
     setSpeaking([]);
     setMessages([]);
@@ -1105,6 +1108,7 @@ export function useVoice() {
       const mine = engine.invite;
       // 记下"上次房间"：房主关掉客户端后，首页可以用同一房号+钥匙重建。
       if (mine) {
+        setRoomCode(mine.code);
         saveLastRoom(mine.code, "host", mine.roomKey);
         if (prefer && mine.code !== prefer.code) {
           setNotice({
@@ -1126,6 +1130,7 @@ export function useVoice() {
       setJoinError(null);
       // 只有"加入别人的房间"才记一键重进；自己开过的房关了就没了，记了反而误导
       // （2026-10-16 业主反馈：创完房退出还显示"上次房间"干嘛）。
+      setRoomCode(target.code);
       saveLastRoom(target.code, "guest");
       const engine = startEngine();
       // 注意：这里不能靠 await join() 的返回来切页。
@@ -1817,6 +1822,7 @@ export function useVoice() {
     shareTransport: settings.shareTransport,
     setShareTransport,
     shareAudio: settings.shareAudio,
+    roomCode,
     shareFallbackDuck: settings.shareFallbackDuck,
     setShareAudio,
     setShareFallbackDuck,

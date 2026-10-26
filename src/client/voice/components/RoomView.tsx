@@ -187,6 +187,7 @@ export function RoomView({
   onSetShareAppPid,
   shareFallbackDuck,
   onSetShareFallbackDuck,
+  friendsInRoomByName,
   shareViewMode,
   onSetShareViewMode,
   shareLatency,
@@ -297,6 +298,13 @@ export function RoomView({
   /** 老系统回退到整机采集时，是否把房间人声压低（防回声） */
   shareFallbackDuck: boolean;
   onSetShareFallbackDuck: (on: boolean) => void;
+  /**
+   * 当前房间里"昵称 → 账号 ID"的映射（由好友面板的在线数据算出）。
+   * 旧客户端（1.8.9 之前）的名册不带 accountId，靠它兜底：
+   * 好友在服务端报了"自己在哪个房"，昵称对得上就能加/显示已是好友。
+   * 同名多人时值为空串（放弃匹配，宁缺毋滥）。
+   */
+  friendsInRoomByName?: Map<string, string>;
   /** 观众端画质偏好（自动 / 清晰优先 / 流畅优先）与切换。 */
   shareViewMode: ScreenViewPreference;
   onSetShareViewMode: (mode: ScreenViewPreference) => void;
@@ -653,6 +661,15 @@ export function RoomView({
   const listRef = useRef<HTMLDivElement | null>(null);
   const [draft, setDraft] = useState("");
   const [audioMenu, setAudioMenu] = useState<AudioMenuState | null>(null);
+  /*
+   * 成员菜单的"加好友"目标：优先用名册里的 accountId（对方客户端 ≥1.8.9 才有），
+   * 兜底用好友面板的在线数据按昵称匹配（旧客户端名册不带账号，
+   * 但好友在服务端报过"自己在哪个房"——2026-10-26 全员已登录却显示未登录就是这种）。
+   * 同名多人时映射值为空串，宁可不匹配也不安错人。
+   */
+  const menuAccountId = audioMenu
+    ? audioMenu.accountId || (friendsInRoomByName?.get(audioMenu.name ?? "") ?? "")
+    : "";
   /** 本次打开菜单里是否已发出好友请求（按菜单实例重置） */
   const [friendSent, setFriendSent] = useState(false);
   /** 当前面板对应成员的网络链路状态（连接中/失败时给"重新连接"入口）。 */
@@ -896,24 +913,24 @@ export function RoomView({
                   </>
                 ) : null}
 
-                {selfAccountId && !audioMenu.accountId ? (
+                {selfAccountId && !menuAccountId ? (
                   <>
                     <div className="vx-menu-divider" />
-                    <button type="button" className="vx-menu-btn" disabled title="对方没登录账号，无法加好友">
-                      <UserPlus size={14} /> 对方未登录，无法加好友
+                    <button type="button" className="vx-menu-btn" disabled title="对方未登录，或客户端版本较旧（1.8.9 之前不报账号）；让对方升级后即可加好友">
+                      <UserPlus size={14} /> 对方未登录或版本较旧
                     </button>
                   </>
                 ) : null}
 
-                {selfAccountId && audioMenu.accountId && audioMenu.accountId !== selfAccountId ? (
+                {selfAccountId && menuAccountId && menuAccountId !== selfAccountId ? (
                   <>
                     <div className="vx-menu-divider" />
                     <button
                       type="button"
                       className="vx-menu-btn"
-                      disabled={friendAccountIds?.has(audioMenu.accountId) || friendSent}
+                      disabled={friendAccountIds?.has(menuAccountId) || friendSent}
                       onClick={() => {
-                        const target = audioMenu.accountId;
+                        const target = menuAccountId;
                         if (!target || !onAddFriend) return;
                         void onAddFriend(target).then((ok) => {
                           if (ok) setFriendSent(true);
@@ -922,7 +939,7 @@ export function RoomView({
                       title="用账号加对方为好友（与房主/闭听权限无关）"
                     >
                       <UserPlus size={14} />
-                      {friendAccountIds?.has(audioMenu.accountId)
+                      {friendAccountIds?.has(menuAccountId)
                         ? "已是好友"
                         : friendSent
                           ? "请求已发送"
@@ -1746,15 +1763,17 @@ export function RoomView({
             {shareDesktop && shareAudio ? (
               <>
                 <label className="vx-field">
+                  <span className="vx-field-label">老系统回退时压低房间声音（防回声，不影响有没有声音）</span>
                   <Toggle
                     checked={shareFallbackDuck}
-                    label="老系统回退时压低房间声音"
+                    label="老系统回退时压低房间声音（防回声）"
                     onChange={onSetShareFallbackDuck}
                   />
                 </label>
                 <p className="vx-share-menu-hint">
-                  个别老系统不支持"按应用取声音"，只能整机采集——那种情况共享音频里会带上房间人声。
-                  打开后共享期间把别人说话压到 15%，几乎听不出回声。
+                  只在个别老系统上才用得上：那种系统不支持"按应用取声音"，只能整机采集，
+                  共享音频里会混进房间人声。打开后共享期间把别人说话压到 15%，几乎听不出回声。
+                  一般机器保持关闭即可；"有没有声音"由上面的 不带/自动/指定 决定。
                 </p>
               </>
             ) : null}
