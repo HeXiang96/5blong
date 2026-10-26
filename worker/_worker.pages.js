@@ -1185,9 +1185,9 @@ async function accountsAdminInner(request, env) {
           .bind(Date.now(), id)
           .run();
         await adminAudit(env, who.name, "room_clear", id, "管理员清空固定房号（号回池）");
-        flash.push(`已清空 ${id} 的房号，这个号回到池子里`);
+        flash.push(`ok:已清空 ${id} 的房号，这个号回到池子里`);
       } else if (!/^\d{6}$/.test(raw)) {
-        flash.push("房号必须是 6 位数字");
+        flash.push("err:房号必须是 6 位数字");
       } else {
         const occupied = await env.DB.prepare(
           "SELECT id FROM accounts WHERE room_code = ? AND id <> ?",
@@ -1195,7 +1195,7 @@ async function accountsAdminInner(request, env) {
           .bind(raw, id)
           .first();
         if (occupied) {
-          flash.push(`房号 ${raw} 已被账号 ${occupied.id} 认领，先清掉那边`);
+          flash.push(`err:房号 ${raw} 已被账号 ${occupied.id} 认领，先清掉那边`);
         } else {
           await env.DB.prepare(
             "UPDATE accounts SET room_code = ?, room_code_at = ?, room_changes = 1, updated_at = ? WHERE id = ?",
@@ -1203,18 +1203,18 @@ async function accountsAdminInner(request, env) {
             .bind(raw, Date.now(), Date.now(), id)
             .run();
           await adminAudit(env, who.name, "room_set", id, `管理员把房号改成 ${raw}`);
-          flash.push(`已把 ${id} 的房号改成 ${raw}`);
+          flash.push(`ok:已把 ${id} 的房号改成 ${raw}`);
         }
       }
     }
 
     if (action === "set_id") {
       if (who.role !== "main") {
-        flash.push("只有业主令牌能改数字 ID");
+        flash.push("err:只有业主令牌能改数字 ID");
       } else {
         const next = String(form.get("newid") ?? "").trim();
         if (!ADMIN_ID_RE.test(next)) {
-          flash.push("新数字 ID 必须是 8 位数字");
+          flash.push("err:新数字 ID 必须是 8 位数字");
         } else if (next === id) {
           flash.push("新旧 ID 一样，什么都没做");
         } else {
@@ -1222,7 +1222,7 @@ async function accountsAdminInner(request, env) {
             .bind(next)
             .first();
           if (taken) {
-            flash.push(`数字 ID ${next} 已被占用`);
+            flash.push(`err:数字 ID ${next} 已被占用`);
           } else {
             await env.DB.batch([
               env.DB.prepare("UPDATE account_sessions SET account_id = ? WHERE account_id = ?").bind(next, id),
@@ -1243,7 +1243,7 @@ async function accountsAdminInner(request, env) {
               ),
             ]);
             await adminAudit(env, who.name, "id_set", id, `管理员把数字 ID 改成 ${next}`);
-            flash.push(`已把数字 ID ${id} 改成 ${next}（好友与会话已同步）`);
+            flash.push(`ok:已把数字 ID ${id} 改成 ${next}（好友与会话已同步）`);
           }
         }
       }
@@ -1259,6 +1259,24 @@ async function accountsAdminInner(request, env) {
     });
   }
 
+  /** 审计留痕 → 页面顶部的「最近操作」时间线：改了什么、谁改的、几点，刷新也不丢。 */
+  const ACTION_LABEL = {
+    room_set: "改了房号",
+    room_clear: "清空了房号",
+    id_set: "改了数字 ID",
+  };
+  let recent = [];
+  try {
+    recent =
+      (
+        await env.DB.prepare(
+          "SELECT at, actor, action, target, detail FROM admin_audit ORDER BY at DESC LIMIT 8",
+        ).all()
+      ).results ?? [];
+  } catch {
+    // 审计表还没建（老库）：这块整体不显示，不挡住列表
+  }
+
   const rows =
     (
       await env.DB.prepare(
@@ -1269,7 +1287,10 @@ async function accountsAdminInner(request, env) {
     ).results ?? [];
 
   const now = Date.now();
-  const fmt = (ms) => (ms ? new Date(Number(ms)).toLocaleString("zh-CN", { hour12: false }) : "—");
+  /** Worker 默认按 UTC 渲染时间，必须显式指定北京时间（业主指出过差 8 小时的问题）。 */
+  const beijing = (ms, opts) =>
+    new Date(Number(ms)).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false, ...opts });
+  const fmt = (ms) => (ms ? beijing(ms, {}) : "—");
   const online = (last) => last && now - Number(last) < 3 * 60_000;
 
   const body = rows.length
@@ -1323,6 +1344,38 @@ async function accountsAdminInner(request, env) {
 </table>`
     : '<p class="a-empty">还没有账号。注册后这里会出现。</p>';
 
+  const fmtClock = (ms) => beijing(ms, { hour: "2-digit", minute: "2-digit" });
+  const actionText = (row) => {
+    const what = ACTION_LABEL[row.action] ?? row.action;
+    return `${escapeHtml(row.actor)} ${what} · 账号 ${escapeHtml(row.target)} · ${escapeHtml(row.detail)}`;
+  };
+
+  const flashHtml = flash.length
+    ? `<div class="a-flash">${flash
+        .map((line) => {
+          const ok = line.startsWith("ok:");
+          const text = ok ? line.slice(3) : line.startsWith("err:") ? line.slice(4) : line;
+          return `<div class="a-flash-line ${ok ? "a-flash-ok" : "a-flash-err"}">${
+            ok ? "✓" : "⚠"
+          } ${escapeHtml(text)}</div>`;
+        })
+        .join("")}</div>`
+    : "";
+
+  const recentHtml = recent.length
+    ? `<details class="a-recent" open>
+        <summary>最近操作 · ${recent.length} 条（审计留痕，所有改动可追溯）</summary>
+        <ol>
+          ${recent
+            .map(
+              (row) =>
+                `<li><span class="a-recent-time">${fmtClock(row.at)}</span> ${actionText(row)}</li>`,
+            )
+            .join("")}
+        </ol>
+      </details>`
+    : "";
+
   const content = `
 <style>
   .a-summary { color: #6b6257; margin: 0 0 14px; }
@@ -1340,11 +1393,21 @@ async function accountsAdminInner(request, env) {
   .a-input { width: 108px; border: 1px solid #d8cfc0; border-radius: 8px; padding: 5px 8px; font-size: 13px; background: #fffdf9; }
   .a-ghost { color: #8a5b1c; }
   .a-danger { border-color: #e0b4ac; color: #9c3222; }
-  .a-flash { background: #fdf6e6; border: 1px solid #ecdcb4; border-radius: 10px; padding: 10px 12px; margin-bottom: 14px; }
-  .a-flash div + div { margin-top: 4px; }
+  .a-flash { background: #fff; border: 1px solid #e3ded4; border-radius: 12px; padding: 10px 12px; margin-bottom: 14px; }
+  .a-flash-line { display: flex; gap: 8px; align-items: baseline; padding: 3px 0; }
+  .a-flash-line + .a-flash-line { border-top: 1px dashed #f0ebe2; }
+  .a-flash-ok { color: #2f6b3a; }
+  .a-flash-err { color: #9c3222; }
+  .a-recent { background: #fff; border: 1px solid #e3ded4; border-radius: 12px; padding: 10px 12px; margin-bottom: 14px; }
+  .a-recent summary { cursor: pointer; font-weight: 600; font-size: 13.5px; color: #5b5348; }
+  .a-recent ol { margin: 8px 0 0; padding-left: 4px; list-style: none; }
+  .a-recent li { display: flex; gap: 8px; align-items: baseline; padding: 3px 0; font-size: 13px; border-bottom: 1px dashed #f0ebe2; }
+  .a-recent li:last-child { border-bottom: none; }
+  .a-recent-time { color: #8a8175; font-variant-numeric: tabular-nums; white-space: nowrap; }
 </style>
 <p class="a-summary">共 ${rows.length} 个账号 · 以 ${escapeHtml(who.name)}（${who.role === "main" ? "业主" : "员工"}）身份查看 · <b>密码不在此页展示（数据库里只有不可逆哈希）</b></p>
-${flash.length ? `<div class="a-flash">${flash.map((line) => `<div>${escapeHtml(line)}</div>`).join("")}</div>` : ""}
+${flashHtml}
+${recentHtml}
 ${body}`;
 
   return adminPage("账号后台", content, 200);

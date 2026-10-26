@@ -7,6 +7,7 @@
  * 把真实的 handler 从头跑一遍。
  */
 import { DatabaseSync } from "node:sqlite";
+import { writeFileSync } from "node:fs";
 import { readFileSync } from "node:fs";
 import { beforeEach, describe, expect, it } from "vitest";
 
@@ -358,8 +359,12 @@ describe("账号后台 /accounts-admin", () => {
     await call("/me", { method: "PATCH", body: { roomCode: "910001" }, token: a.token });
 
     const res = await adminRequest("/accounts-admin?staff=owner-token-123");
-    expect(res.status).toBe(200);
     const html = await res.text();
+    if (res.status !== 200) {
+      writeFileSync("outputs/admin-500.html", html);
+      console.log("dumped outputs/admin-500.html");
+    }
+    expect(res.status).toBe(200);
     expect(html).toContain("adminlist");
     expect(html).toContain("910001");
     // 密码相关字段一个都不许出现
@@ -384,6 +389,15 @@ describe("账号后台 /accounts-admin", () => {
       form: { action: "set_room", id: a.account.id, code: "910009" },
     });
     expect(changed.status).toBe(303);
+    // 重设计后的操作反馈：成功带 ok: 前缀，错误带 err: 前缀（渲染成分色的两栏）
+    const location = changed.headers.get("location") ?? "";
+    expect(location).toContain(encodeURIComponent("ok:已把"));
+
+    // 「最近操作」时间线直接读审计表，刷新也不丢
+    const page = await adminRequest("/accounts-admin?staff=owner-token-123");
+    const html = await page.text();
+    expect(html).toContain("最近操作");
+    expect(html).toContain("910009");
 
     const me = await json(await call("/me", { token: a.token }));
     expect(me.data.account.roomCode).toBe("910009");
@@ -445,6 +459,7 @@ describe("账号后台 /accounts-admin", () => {
       form: { action: "set_id", id: a.account.id, newid: "22223333" },
     });
     expect(res.status).toBe(303);
+    expect(res.headers.get("location") ?? "").toContain(encodeURIComponent("err:"));
     const me = await json(await call("/me", { token: a.token }));
     expect(me.data.account.id).toBe(a.account.id); // 没被改
   });
