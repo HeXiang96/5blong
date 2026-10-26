@@ -42,8 +42,18 @@ export function AccountDialog({
       setError(null);
       setBusy(false);
       setCopied(false);
+      return;
     }
-  }, [open]);
+    /*
+     * 表单弹窗**不能点背景就关**（2026-10-26 反馈：填到一半点一下外面，
+     * 用户名密码全丢）。只认 ✕ 和 Esc，避免误触丢输入。
+     */
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
 
   if (!open) return null;
 
@@ -85,8 +95,8 @@ export function AccountDialog({
   // ---- 已登录：我的资料 ----
   if (account) {
     return (
-      <div className="vx-modal-backdrop" onClick={onClose}>
-        <div className="vx-sheet" onClick={(event) => event.stopPropagation()}>
+      <div className="vx-modal-backdrop">
+        <div className="vx-sheet">
           <div className="vx-sheet-head">
             <strong>我的资料</strong>
             <button type="button" className="vx-icon-btn" onClick={onClose} aria-label="关闭">
@@ -171,8 +181,8 @@ export function AccountDialog({
 
   // ---- 未登录：登录 / 注册 ----
   return (
-    <div className="vx-modal-backdrop" onClick={onClose}>
-      <div className="vx-sheet" onClick={(event) => event.stopPropagation()}>
+    <div className="vx-modal-backdrop">
+      <div className="vx-sheet">
         <div className="vx-sheet-head">
           <strong>{mode === "login" ? "登录" : "注册"}</strong>
           <button type="button" className="vx-icon-btn" onClick={onClose} aria-label="关闭">
@@ -303,8 +313,26 @@ export function FriendsDrawer({
       setQuery("");
       setResults([]);
       setNote("");
+      return;
     }
-  }, [open]);
+    // popover 语义：点卡片外面关闭；点在卡片内或好友按钮上不关
+    const onDown = (event: PointerEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (!target) return;
+      if (target.closest(".vx-friends")) return;
+      if (target.closest(".vx-friends-btn")) return;
+      onClose();
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("pointerdown", onDown, true);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("pointerdown", onDown, true);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [open, onClose]);
 
   if (!open) return null;
 
