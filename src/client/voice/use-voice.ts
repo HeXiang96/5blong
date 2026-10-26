@@ -56,6 +56,7 @@ import {
 import { refreshIceServers } from "./ice";
 import { isTauriRuntime, startLoopbackAudio } from "./loopback";
 import { buildInviteText } from "./invite-text";
+import { holdRoomCode, releaseRoomHolds } from "./account/room-lookup";
 import { loadSettings, saveSettings, type VoiceSettings } from "./settings";
 import { readJson, writeJson } from "./storage";
 
@@ -384,7 +385,13 @@ export function useVoice() {
           setInteractions((prev) => prev.filter((item) => item.key !== key));
         }, ttl);
       },
-    });
+    },
+    /*
+     * 开临时房前查一次"这个号是不是某个账号的固定房号"，避开撞号。
+     * 查不到就照常开（online 时才查，离线/后端不通不影响"随手开一间"）。
+     */
+    { holdCode: holdRoomCode, releaseHold: releaseRoomHolds },
+  );
   }, []);
 
   /** 每次尝试都是干净的引擎：避免上一次的 peer / 心跳影响这一次。 */

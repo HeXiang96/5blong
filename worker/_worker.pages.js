@@ -1542,6 +1542,72 @@ async function accountLogout(request, env) {
   });
 }
 
+/**
+ * 公开查询：这个房号是否已被某账号认领。
+ *
+ * 只回 true/false，**不返回归属人**——开临时房的人只需要知道"要不要换一个号"。
+ * 不需要登录：未注册用户开房同样会查一次，否则"免注册"就得让位给查重。
+ */
+/** 房间占位的存活时间：客户端 30 秒续一次，留三倍容差（断网/切后台）。 */
+const ROOM_HOLD_TTL_MS = 90_000;
+
+/**
+ * 占住房号（开房前调；唯一主键保证"同一刻只有一个客户端拿到这个号"）。
+ *
+ * 规则（业主 2026-10-26）：
+ *   1. 号已被某账号认领（accounts.room_code）→ 409 taken，**认领优先**；
+ *   2. 号被别的客户端占着且没过期 → 409 busy；
+ *   3. 自己占的 / 已过期 / 没人占 → 续期成功。
+ * 客户端拿到 409 就换一个号；接口不通则降级照常开（不能为了查重把人挡在门外）。
+ */
+async function accountHoldRoom(request, env) {
+  const body = await request.json().catch(() => null);
+  const code = String(body?.code ?? "").trim();
+  const token = String(body?.token ?? "").trim();
+  if (!ACCOUNT_ROOM_CODE_RE.test(code) || !/^[a-zA-Z0-9_-]{8,64}$/.test(token)) {
+    return accountJson(request, { error: "bad request" }, 400);
+  }
+  const claimed = await env.DB.prepare("SELECT 1 AS x FROM accounts WHERE room_code = ? LIMIT 1")
+    .bind(code)
+    .first();
+  if (claimed) return accountJson(request, { error: "taken" }, 409);
+
+  const now = Date.now();
+  const hold = await env.DB.prepare("SELECT token, expires_at FROM room_holds WHERE code = ?")
+    .bind(code)
+    .first();
+  if (hold && hold.expires_at > now && hold.token !== token) {
+    return accountJson(request, { error: "busy" }, 409);
+  }
+  await env.DB.prepare(
+    "INSERT INTO room_holds (code, token, expires_at) VALUES (?, ?, ?) " +
+      "ON CONFLICT(code) DO UPDATE SET token = excluded.token, expires_at = excluded.expires_at",
+  )
+    .bind(code, token, now + ROOM_HOLD_TTL_MS)
+    .run();
+  return accountJson(request, { ok: true, code, ttl: ROOM_HOLD_TTL_MS }, 200);
+}
+
+/** 关房时释放自己占的号（token 只认自己的，别误放别人的）。 */
+async function accountReleaseHold(request, env, url) {
+  const token = String(url.searchParams.get("token") ?? "").trim();
+  if (!token) return accountJson(request, { ok: false }, 400);
+  await env.DB.prepare("DELETE FROM room_holds WHERE token = ?").bind(token).run();
+  return accountJson(request, { ok: true }, 200);
+}
+
+async function accountRoomClaim(request, env, url) {
+  const code = String(url.searchParams.get("code") ?? "").trim();
+  if (!ACCOUNT_ROOM_CODE_RE.test(code)) return accountJson(request, { taken: false }, 200);
+  const row = await env.DB.prepare("SELECT 1 AS x FROM accounts WHERE room_code = ? LIMIT 1")
+    .bind(code)
+    .first();
+  return accountJson(request, { taken: Boolean(row) }, 200, {
+    // 公开只读、随房号变化：让浏览器缓存 10 分钟，省点 D1 读
+    "Cache-Control": "public, max-age=600",
+  });
+}
+
 async function accountUpdateProfile(request, env) {
   const me = await currentAccount(request, env);
   if (!me) return accountJson(request, { error: "not-found" }, 401);
@@ -1587,6 +1653,16 @@ async function accountUpdateProfile(request, env) {
       .bind(roomCode, me.id)
       .first();
     if (occupied) return accountJson(request, { error: "room-taken" }, 409);
+    /*
+     * 这个号现在正被别人当临时房开着（有未过期的占位）：也不能认领，
+     * 否则他一开着、你一认领，同一个号就有两个房主候选了。
+     */
+    const heldNow = await env.DB.prepare(
+      "SELECT 1 AS x FROM room_holds WHERE code = ? AND expires_at > ?",
+    )
+      .bind(roomCode, Date.now())
+      .first();
+    if (heldNow) return accountJson(request, { error: "room-taken" }, 409);
     patch.roomCode = roomCode;
     // 已经有号 → 这次就是那唯一一次修改；首次领号不计数
     patch.roomChanges = me.room_code ? 1 : 0;
@@ -1859,6 +1935,9 @@ async function handleAccount(request, env, url) {
       return accountJson(request, { account: toProfile(await currentAccount(request, env)) }, 200);
     }
     if (path === "/me" && request.method === "PATCH") return await accountUpdateProfile(request, env);
+    if (path === "/room-claim" && request.method === "GET") return await accountRoomClaim(request, env, url);
+    if (path === "/room-hold" && request.method === "POST") return await accountHoldRoom(request, env);
+    if (path === "/room-hold" && request.method === "DELETE") return await accountReleaseHold(request, env, url);
     if (path === "/search" && request.method === "GET") return await accountSearch(request, env, url);
     if (path === "/friends" && request.method === "GET") return await accountSnapshot(request, env);
     if (path === "/friends" && request.method === "POST") return await accountAddFriend(request, env);

@@ -84,3 +84,14 @@ CREATE INDEX IF NOT EXISTS idx_room_invites_to ON room_invites (to_id, at DESC);
 -- 老库补列（CREATE TABLE IF NOT EXISTS 不会给已存在的表加列）。
 -- 重复执行会报 duplicate column，scripts/accounts-setup.mjs 会跳过这种错误。
 ALTER TABLE accounts ADD COLUMN room_changes INTEGER NOT NULL DEFAULT 0;
+
+-- 房号占位（2026-10-26 业主口径：认领过的号，别人开临时房就不能再占）：
+-- 开房前先用唯一主键原子地"占住"这个号；心跳续期，关房释放，过期可被覆盖。
+-- 这样"临时房撞上某个账号的固定房号"从"概率问题"变成"数据库挡住"。
+-- 注意：房号已被账号认领（accounts.room_code）时**不允许占位**，那条优先。
+CREATE TABLE IF NOT EXISTS room_holds (
+  code TEXT PRIMARY KEY,
+  token TEXT NOT NULL,
+  expires_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_room_holds_token ON room_holds (token);

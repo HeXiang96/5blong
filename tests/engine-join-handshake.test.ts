@@ -621,3 +621,31 @@ describe("私密房 · 临时密码爆破防护", () => {
     expect(lastStatus(recovered.holder)).toBe("connected");
   });
 });
+
+/**
+ * 开临时房避开"别人的固定房号"：查重返回 true 时必须换一个号再开。
+ * 不这么做的话，别人随手开的临时房可能正好占住某人的「我的房间」号。
+ */
+describe("临时房取号会避开已认领的房号", () => {
+  it("第一次给的号被判占用 → 换号开房，最终号不是被占的那个", async () => {
+    const holder = makeEvents();
+    const seen: string[] = [];
+    const host = new VoiceMesh(holder.events as any, {
+      holdCode: async (code: string) => {
+        seen.push(code);
+        // 只把第一个候选号当成"已被某账号认领"
+        return seen.length === 1 ? "taken" : "ok";
+      },
+    });
+    engines.push(host);
+    let code = "";
+    holder.events.ready = (v: any) => {
+      code = v.code;
+    };
+    await host.host(identity, defaultSettings(), false);
+
+    expect(seen.length).toBeGreaterThanOrEqual(2);
+    expect(code).toMatch(/^\d{6}$/);
+    expect(code).not.toBe(seen[0]);
+  });
+});

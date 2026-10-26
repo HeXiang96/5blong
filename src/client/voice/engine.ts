@@ -613,7 +613,54 @@ export class VoiceMesh {
   /** 当前选定的扬声器设备（空串 = 系统默认）。创建远端元素时按它绑定。 */
   private speakerDeviceId = "";
 
-  constructor(private readonly events: EngineEvents) {}
+  /**
+   * `options.isCodeTaken`：开临时房前问一句"这个号是不是已被某账号认领"，
+   * 由 use-voice 注入（引擎不直接碰 HTTP）。拿不到就照常开，绝不阻塞。
+   */
+  constructor(
+    private readonly events: EngineEvents,
+    private readonly options: {
+      /** 开房前占住房号：ok/offline 可用，taken/busy 要换号 */
+      holdCode?: (code: string, token: string) => Promise<"ok" | "taken" | "busy" | "offline">;
+      /** 关房释放占位（服务端 90 秒也会自动过期） */
+      releaseHold?: (token: string) => Promise<void>;
+    } = {},
+  ) {
+    this.roomHoldToken = randomToken(12);
+  }
+
+  /** 本次开房的占位凭据（关房时用它释放；不落盘）。 */
+  private readonly roomHoldToken: string;
+  /** 真正占住的号（我的房间走账号认领，不占位 → 空串）。 */
+  private heldCode = "";
+  private holdTimer = 0;
+
+  /**
+   * 随机取一个"没被任何账号认领"的房号。
+   *
+   * 为什么要有这一步：临时房号是本地随机的，不看谁认领了什么——
+   * 理论上别人随手开一间就可能撞上你的「我的房间」号（1/100 万），
+   * 那一刻来访者输你的号会进到他那间，你自己开房反而被顶掉。
+   */
+  private async pickRoomCode(): Promise<string> {
+    const hold = this.options.holdCode;
+    if (!hold) return makeRoomCode(randomIndex);
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const candidate = makeRoomCode(randomIndex);
+      const result = await hold(candidate, this.roomHoldToken);
+      if (result === "ok") {
+        this.heldCode = candidate;
+        return candidate;
+      }
+      if (result === "offline") {
+        // 接口不通（离线/后端没上线）：照常开，把查重降级掉，绝不挡人
+        return candidate;
+      }
+      // taken（某账号的固定房号）/ busy（别人正开着）：换一个再试
+    }
+    // 连试 20 个都被占：退回随机，至少能开成
+    return makeRoomCode(randomIndex);
+  }
 
   // ---------------------------------------------------------------- 公共 API
 
@@ -680,7 +727,7 @@ export class VoiceMesh {
     while (!this.destroyed && attempt < 3) {
       attempt += 1;
       const want = attempt === 1 ? prefer?.code : undefined;
-      const code = want && isRoomCode(want) ? normalizeCode(want) : makeRoomCode(randomIndex);
+      const code = want && isRoomCode(want) ? normalizeCode(want) : await this.pickRoomCode();
       // 房主注册在由房间码推导的固定 ID 上：访客只输房间码也能定位到房主，
       // 不需要任何注册后端。ID 被占用（撞码/有人蹲守）时 openPeer 返回
       // "retry"，下面的循环换新码重来。
@@ -729,6 +776,8 @@ export class VoiceMesh {
         this.events.ready({ code, hostId: id, roomKey: this.roomKey });
         this.startRoomTelemetry();
         this.startSessionStats();
+        // 占住的号要定期续期：服务端 90 秒过期，这里 30 秒续一次（切后台也扛得住）
+        if (this.heldCode) this.startHoldRenewal();
         return;
       }
 
@@ -1143,9 +1192,29 @@ export class VoiceMesh {
     }
   }
 
+  /** 占位续期：这是"别人开临时房不会占掉我的号"的硬保证，别省。 */
+  private startHoldRenewal(): void {
+    const hold = this.options.holdCode;
+    if (!hold || !this.heldCode) return;
+    this.stopHoldRenewal();
+    this.holdTimer = this.timers.every(30_000, () => {
+      if (this.destroyed || !this.heldCode) return;
+      void hold(this.heldCode, this.roomHoldToken);
+    });
+  }
+
+  private stopHoldRenewal(): void {
+    if (this.holdTimer) this.timers.cancel(this.holdTimer);
+    this.holdTimer = 0;
+  }
+
   destroy(): void {
     if (this.destroyed) return;
     this.destroyed = true;
+    // 关房立刻把号放回池子（服务端也有 90 秒兜底过期）
+    this.stopHoldRenewal();
+    if (this.heldCode) void this.options.releaseHold?.(this.roomHoldToken);
+    this.heldCode = "";
     this.stopRoomTelemetry();
     this.stopSessionStats(true);
     stopPoseTickerFn();

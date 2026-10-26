@@ -244,3 +244,90 @@ describe("密码哈希的硬约束", () => {
     expect(stored?.hash).toMatch(/^pbkdf2\$\d+\$[0-9a-f]{64}$/);
   });
 });
+
+describe("房号占用查询（开临时房前查重）", () => {
+  it("未认领 = false；被认领 = true；非法码一律 false；不泄漏归属人", async () => {
+    const me = await register("pigclaim");
+    const before = await json(await call("/room-claim?code=100000"));
+    expect(before.data).toEqual({ taken: false });
+
+    await call("/me", { method: "PATCH", body: { roomCode: "100000" }, token: me.token });
+
+    const after = await json(await call("/room-claim?code=100000"));
+    expect(after.data).toEqual({ taken: true }); // 只有 taken，没有账号信息
+
+    expect((await json(await call("/room-claim?code=12345"))).data).toEqual({ taken: false });
+    expect((await json(await call("/room-claim"))).data).toEqual({ taken: false });
+  });
+});
+
+describe("房号占位（认领号不能被临时房占用）", () => {
+  const TOKEN_A = "token-aaaa-1111";
+  const TOKEN_B = "token-bbbb-2222";
+
+  it("同一时刻只有一个客户端能占住；释放后别人才能占", async () => {
+    const first = await json(
+      await call("/room-hold", { method: "POST", body: { code: "777001", token: TOKEN_A } }),
+    );
+    expect(first.status).toBe(200);
+
+    const second = await json(
+      await call("/room-hold", { method: "POST", body: { code: "777001", token: TOKEN_B } }),
+    );
+    expect(second.status).toBe(409);
+    expect(second.data.error).toBe("busy");
+
+    // 自己续期是允许的
+    expect(
+      (await json(await call("/room-hold", { method: "POST", body: { code: "777001", token: TOKEN_A } })))
+        .status,
+    ).toBe(200);
+
+    await call(`/room-hold?token=${TOKEN_A}`, { method: "DELETE" });
+    expect(
+      (await json(await call("/room-hold", { method: "POST", body: { code: "777001", token: TOKEN_B } })))
+        .status,
+    ).toBe(200);
+  });
+
+  it("已被账号认领的号，谁也占不住", async () => {
+    const me = await register("pighold");
+    await call("/me", { method: "PATCH", body: { roomCode: "777002" }, token: me.token });
+    const blocked = await json(
+      await call("/room-hold", { method: "POST", body: { code: "777002", token: TOKEN_B } }),
+    );
+    expect(blocked.status).toBe(409);
+    expect(blocked.data.error).toBe("taken");
+  });
+
+  it("反方向也成立：正被人开着（有占位）的号，不能认领", async () => {
+    await call("/room-hold", { method: "POST", body: { code: "777003", token: TOKEN_A } });
+    const me = await register("pigclaim2");
+    const res = await json(
+      await call("/me", { method: "PATCH", body: { roomCode: "777003" }, token: me.token }),
+    );
+    expect(res.status).toBe(409);
+    expect(res.data.error).toBe("room-taken");
+  });
+
+  it("改号之后，旧号回池：别人能占、也能认领", async () => {
+    const me = await register("pigchange");
+    await call("/me", { method: "PATCH", body: { roomCode: "777004" }, token: me.token });
+    // 领号后这个号谁也占不住
+    expect(
+      (await json(await call("/room-hold", { method: "POST", body: { code: "777004", token: TOKEN_A } })))
+        .status,
+    ).toBe(409);
+
+    // 用掉唯一一次改号机会
+    await call("/me", { method: "PATCH", body: { roomCode: "777005" }, token: me.token });
+
+    // 旧号 777004 已经回到池子：别人可以认领
+    const other = await register("pigother");
+    const take = await json(
+      await call("/me", { method: "PATCH", body: { roomCode: "777004" }, token: other.token }),
+    );
+    expect(take.status).toBe(200);
+    expect(take.data.account.roomCode).toBe("777004");
+  });
+});
