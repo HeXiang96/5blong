@@ -61,7 +61,8 @@ export function AccountDialog({
     }
     setPassword("");
     onChanged();
-    onClose();
+    // 注册成功**不关窗**：立刻让他看见自己的 8 位 ID（新人最需要这个）
+    if (mode === "login") onClose();
   };
 
   const pickAvatar = async (file: File) => {
@@ -144,7 +145,7 @@ export function AccountDialog({
           </div>
 
           <p className="vx-sheet-hint">
-            好友用这串 ID 加你。房间里显示的是昵称，ID 不会出现在猪圈里。
+            把这串 ID 发给朋友，他们在「好友 → 添加」里输入就能加你。房间里显示的是昵称，ID 不出现在猪圈里。
           </p>
 
           <div className="vx-sheet-actions">
@@ -312,9 +313,11 @@ export function FriendsDrawer({
 
   return (
     <aside className="vx-friends" aria-label="好友">
-      <div className="vx-sheet-head">
-        <strong>好友</strong>
-        <span className="vx-friends-spacer" />
+      <div className="vx-friends-head">
+        <div className="vx-friends-title">
+          <b>好友</b>
+          <span>{snapshot.friends.length} 位</span>
+        </div>
         <button type="button" className="vx-icon-btn" onClick={onClose} aria-label="关闭">
           <X size={16} />
         </button>
@@ -326,7 +329,7 @@ export function FriendsDrawer({
           className={tab === "friends" ? "vx-friends-tab-on" : ""}
           onClick={() => setTab("friends")}
         >
-          好友 <b>{snapshot.friends.length}</b>
+          好友
         </button>
         <button
           type="button"
@@ -347,29 +350,45 @@ export function FriendsDrawer({
       <div className="vx-friends-body">
         {tab === "friends" ? (
           snapshot.friends.length === 0 ? (
-            <p className="vx-sheet-hint">
-              还没有好友。去「添加」用 8 位 ID 找人，或者在房间里点成员 → 加好友。
-            </p>
+            <div className="vx-friends-empty">
+              <span aria-hidden>🐷</span>
+              <b>还没有好友</b>
+              <p>用 8 位 ID 搜人，或在房间里点成员加好友</p>
+            </div>
           ) : (
             snapshot.friends.map((entry) => {
               const online = entry.presence.state === "online";
-              const inOtherRoom = Boolean(entry.presence.roomCode && entry.presence.roomCode !== roomCode);
+              const inOtherRoom = Boolean(
+                entry.presence.roomCode && entry.presence.roomCode !== roomCode,
+              );
               return (
                 <div className="vx-friend-row" key={entry.account.id}>
-                  <Avatar avatar={entry.account.avatar} color="#b783d9" name={entry.account.name} size={32} />
+                  <span className={`vx-friend-dot${online ? " vx-friend-dot-on" : ""}`} aria-hidden />
+                  <Avatar
+                    avatar={entry.account.avatar}
+                    color="#b783d9"
+                    name={entry.account.name}
+                    size={34}
+                  />
                   <div className="vx-friend-main">
                     <b>{entry.account.name}</b>
-                    <span className={online ? "vx-friend-on" : ""}>
-                      {online
-                        ? inOtherRoom
-                          ? `在 ${entry.presence.roomCode} 房`
-                          : "在线"
-                        : "离线"}
+                    <span className="vx-friend-sub">
+                      {online ? (
+                        inOtherRoom ? (
+                          <>
+                            在 <i className="vx-friend-room">{entry.presence.roomCode}</i> 房间
+                          </>
+                        ) : (
+                          "在线"
+                        )
+                      ) : (
+                        "离线"
+                      )}
                     </span>
                   </div>
                   <button
                     type="button"
-                    className="vx-btn vx-btn-small vx-btn-ghost"
+                    className="vx-friend-act"
                     disabled={!online || inOtherRoom || !roomCode}
                     title={
                       inOtherRoom
@@ -390,14 +409,20 @@ export function FriendsDrawer({
 
         {tab === "requests" ? (
           snapshot.incoming.length === 0 ? (
-            <p className="vx-sheet-hint">没有待处理的请求。</p>
+            <div className="vx-friends-empty">
+              <span aria-hidden>🍃</span>
+              <b>没有待处理的请求</b>
+              <p>别人加你时会出现在这里</p>
+            </div>
           ) : (
             snapshot.incoming.map((request) => (
-              <div className="vx-friend-row" key={request.account.id}>
-                <Avatar avatar={request.account.avatar} color="#b783d9" name={request.account.name} size={32} />
+              <div className="vx-friend-row vx-friend-row-req" key={request.account.id}>
+                <Avatar avatar={request.account.avatar} color="#b783d9" name={request.account.name} size={34} />
                 <div className="vx-friend-main">
                   <b>{request.account.name}</b>
-                  <span>{request.account.username} · {request.account.id}</span>
+                  <span className="vx-friend-sub">
+                    {request.account.username} · {request.account.id}
+                  </span>
                 </div>
                 <button
                   type="button"

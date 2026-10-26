@@ -226,7 +226,12 @@ export function LandingView({
             </button>
           )}
           <div className="vx-id-chip">
-            <Avatar avatar={identity.avatar} color={identity.color} name={identity.name} size={24} />
+            <Avatar
+              avatar={account?.avatar || identity.avatar}
+              color={account ? colorForId(account.id) : identity.color}
+              name={account?.name ?? identity.name}
+              size={24}
+            />
             {editing ? (
               <input
                 className="vx-id-input"
@@ -258,15 +263,26 @@ export function LandingView({
                 {account?.name ?? identity.name}
               </button>
             )}
-            <button
-              type="button"
-              className="vx-id-copy"
-              onClick={onCopyId}
-              title={`复制个人 ID（${identity.personId}）`}
-              aria-label="复制个人 ID"
-            >
-              <Copy size={12} />
-            </button>
+            {account ? (
+              <button
+                type="button"
+                className="vx-id-btn"
+                onClick={onOpenAccount}
+                title={`我的 ID：${account.id}（点开可复制）`}
+              >
+                ID
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="vx-id-copy"
+                onClick={onCopyId}
+                title={`复制个人 ID（${identity.personId}）`}
+                aria-label="复制个人 ID"
+              >
+                <Copy size={12} />
+              </button>
+            )}
           </div>
           <span className="vx-scene-wrap">
             <button

@@ -26,6 +26,10 @@
   gap: 8px;
   font-size: 14.5px;
 }
+/* 关闭按钮永远靠右，不要挤在标题旁边 */
+.vx-sheet-head .vx-icon-btn {
+  margin-left: auto;
+}
 
 .vx-sheet-row {
   display: flex;
@@ -131,110 +135,223 @@
   display: none;
 }
 
-/* 好友抽屉 */
+/* 好友面板（2026-10-26 改为「按钮下方的小卡片」——原来铺满整个右侧高度，太压）
+   固定挂在顶栏下方右侧，最大 460 高，圆角纸面。 */
 .vx-friends {
   position: fixed;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  width: min(340px, 100vw);
+  top: 62px;
+  right: 18px;
   z-index: 40;
+  width: 300px;
+  max-height: min(460px, calc(100vh - 90px));
   display: flex;
   flex-direction: column;
+  gap: 2px;
+  padding: 12px 12px 8px;
+  border-radius: 15px;
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.45) 0%, rgba(255, 255, 255, 0) 30%),
+    radial-gradient(120% 60% at 100% 0%, rgba(255, 236, 200, 0.55) 0%, rgba(255, 236, 200, 0) 62%),
     linear-gradient(180deg, #fffdf6 0%, #f6ead2 100%);
-  border-left: 1px solid rgba(120, 78, 34, 0.3);
-  box-shadow: -16px 0 40px rgba(70, 44, 14, 0.22);
-  color: #5b3d18;
-  padding: 12px 12px 10px;
-}
-.vx-friends .vx-sheet-head {
-  padding: 2px 4px 8px;
-}
-.vx-friends-spacer {
-  flex: 1 1 auto;
+  border: 1px solid rgba(120, 78, 34, 0.24);
+  box-shadow: 0 16px 36px rgba(70, 44, 14, 0.22);
+  color: #4a3212;
+  animation: vx-friends-in 0.14s ease-out;
 }
 
-.vx-friends-tabs {
+@keyframes vx-friends-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: none; }
+}
+
+.vx-friends-head {
   display: flex;
-  gap: 6px;
+  align-items: center;
+  gap: 8px;
   padding: 0 2px 8px;
 }
-.vx-friends-tabs button {
+.vx-friends-title {
   flex: 1 1 auto;
-  padding: 6px 8px;
-  border-radius: 9px;
-  border: 1px solid transparent;
-  background: rgba(255, 253, 246, 0.5);
-  color: #7a6449;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.vx-friends-title b {
+  font-size: 14.5px;
+  letter-spacing: 0.02em;
+  color: #4a3212;
+}
+.vx-friends-title span {
+  font-size: 11px;
+  color: #8a7355;
+}
+
+/* 文字式 tab + 木色下划线：比分段按钮轻，和木牌调性一致 */
+.vx-friends-tabs {
+  display: flex;
+  gap: 14px;
+  padding: 0 2px;
+  border-bottom: 1px solid rgba(120, 78, 34, 0.16);
+}
+.vx-friends-tabs button {
+  position: relative;
+  padding: 4px 0 7px;
+  border: none;
+  background: none;
+  color: #8a7355;
   font: inherit;
-  font-size: 12px;
+  font-size: 12.5px;
   cursor: pointer;
 }
 .vx-friends-tabs .vx-friends-tab-on {
-  background: rgba(255, 253, 246, 0.95);
-  border-color: rgba(120, 78, 34, 0.35);
-  color: #5b3d18;
+  color: #4a3212;
   font-weight: 700;
+}
+.vx-friends-tabs .vx-friends-tab-on::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 2px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, #c1965c, #a86f2c);
 }
 .vx-friends-badge {
   display: inline-block;
   min-width: 16px;
+  margin-left: 4px;
   padding: 0 4px;
   border-radius: 999px;
   background: #c2410c;
   color: #fff5e6;
   font-size: 10px;
   line-height: 16px;
+  vertical-align: 1px;
 }
 
 .vx-friends-body {
   flex: 1 1 auto;
   overflow-y: auto;
+  padding: 6px 2px 4px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 2px;
 }
 
+/* 行：不铺底、用发丝分隔线；hover 才轻轻亮一下 */
 .vx-friend-row {
   display: flex;
   align-items: center;
-  gap: 9px;
-  padding: 7px 8px;
-  border-radius: 11px;
-  background: rgba(255, 253, 246, 0.6);
+  gap: 8px;
+  padding: 7px 5px;
+  border-radius: 10px;
+  border-bottom: 1px solid rgba(120, 78, 34, 0.1);
+  transition: background 0.12s ease;
 }
+.vx-friend-row:last-child {
+  border-bottom: none;
+}
+.vx-friend-row:hover {
+  background: rgba(255, 246, 222, 0.7);
+}
+.vx-friend-row-req {
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.vx-friend-dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: rgba(120, 78, 34, 0.22);
+}
+.vx-friend-dot-on {
+  background: #35a06e;
+  box-shadow: 0 0 0 3px rgba(53, 160, 110, 0.18);
+}
+
 .vx-friend-main {
   flex: 1 1 auto;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: 2px;
 }
 .vx-friend-main b {
-  font-size: 12.5px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #3f2b10;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.vx-friend-main span {
+.vx-friend-sub {
   font-size: 10.5px;
   color: #8a7355;
 }
-.vx-friend-main .vx-friend-on {
-  color: #2f7d5b;
+.vx-friend-room {
+  font-style: normal;
+  font-weight: 600;
+  padding: 0 4px;
+  border-radius: 5px;
+  background: rgba(168, 111, 44, 0.16);
+  color: #7a5220;
+}
+
+.vx-friend-act {
+  flex: 0 0 auto;
+  padding: 5px 11px;
+  border-radius: 999px;
+  border: 1px solid rgba(120, 78, 34, 0.32);
+  background: rgba(255, 253, 246, 0.8);
+  color: #5b3d18;
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.vx-friend-act:hover:not(:disabled) {
+  background: #fffdf6;
+  border-color: rgba(120, 78, 34, 0.5);
+}
+.vx-friend-act:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* 空状态：给个图形，不要一行干字 */
+.vx-friends-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 26px 16px;
+  text-align: center;
+}
+.vx-friends-empty span {
+  font-size: 24px;
+  opacity: 0.85;
+}
+.vx-friends-empty b {
+  font-size: 13px;
+  color: #4a3212;
+}
+.vx-friends-empty p {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: #8a7355;
 }
 
 .vx-friends-search {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 7px 9px;
+  gap: 7px;
+  margin: 4px 2px 8px;
+  padding: 8px 10px;
   border-radius: 10px;
-  background: rgba(255, 253, 246, 0.92);
+  background: rgba(255, 253, 246, 0.9);
   box-shadow: 0 1px 2px rgba(70, 44, 14, 0.1) inset;
+  color: #8a7355;
 }
 .vx-friends-search input {
   flex: 1 1 auto;
@@ -251,7 +368,7 @@
   padding: 6px 4px 2px;
   font-size: 10.5px;
   color: #8a7355;
-  min-height: 18px;
+  min-height: 16px;
 }
 
 /* 顶栏入口：登录按钮 / 好友按钮红点 */
@@ -279,9 +396,30 @@
 }
 :is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-sheet-row > span:first-child,
 :is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-sheet-hint,
-:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-friend-main span,
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-friend-sub,
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-friends-title span,
 :is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-friends-foot {
   color: #cbb28a;
+}
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-friends-title b,
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-friend-main b,
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-friends-tabs .vx-friends-tab-on {
+  color: #f4e4c2;
+}
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-friend-row:hover {
+  background: rgba(255, 236, 200, 0.08);
+}
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-friend-row {
+  border-bottom-color: rgba(255, 226, 170, 0.12);
+}
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-friend-act {
+  border-color: rgba(255, 226, 170, 0.28);
+  background: rgba(255, 236, 200, 0.1);
+  color: #f4e4c2;
+}
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-friend-room {
+  background: rgba(207, 150, 80, 0.24);
+  color: #f0d6a8;
 }
 :is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-sheet-value,
 :is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-sheet-input,
@@ -296,9 +434,9 @@
 }
 :is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-friends {
   background:
-    linear-gradient(180deg, rgba(255, 236, 200, 0.06) 0%, rgba(255, 236, 200, 0) 30%),
+    radial-gradient(120% 60% at 100% 0%, rgba(255, 226, 170, 0.08) 0%, rgba(255, 226, 170, 0) 60%),
     linear-gradient(180deg, #2f2618 0%, #241d12 100%);
-  border-left-color: rgba(255, 226, 170, 0.2);
+  border-left-color: rgba(255, 226, 170, 0.18);
   color: #f4e4c2;
 }
 :is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-friends-tabs .vx-friends-tab-on {
@@ -325,5 +463,32 @@
 :is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-login-btn {
   border-color: rgba(255, 226, 170, 0.3);
   background: rgba(255, 236, 200, 0.1);
+  color: #f4e4c2;
+}
+
+/* chip 里的「ID」按钮：让新用户一眼找到自己的 ID（原来只有个没含义的复制图标） */
+.vx-id-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 26px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  border: 1px solid rgba(120, 78, 34, 0.4);
+  background: rgba(255, 253, 246, 0.8);
+  color: #5b3d18;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+}
+.vx-id-btn:hover {
+  background: #fffdf6;
+}
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-id-btn {
+  border-color: rgba(255, 226, 170, 0.32);
+  background: rgba(255, 236, 200, 0.14);
   color: #f4e4c2;
 }
