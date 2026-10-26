@@ -355,6 +355,7 @@ export function FriendsDrawer({
       if (!target) return;
       if (target.closest(".vx-friends")) return;
       if (target.closest(".vx-friends-btn")) return;
+      if (target.closest(".vx-sign-friends")) return;
       onClose();
     };
     const onKey = (event: KeyboardEvent) => {

@@ -137,11 +137,15 @@
 
 /* 好友面板（2026-10-26 改为「按钮下方的小卡片」——原来铺满整个右侧高度，太压）
    固定挂在顶栏下方右侧，最大 460 高，圆角纸面。 */
+/*
+ * 层级必须高于房间内的面板：房间里最高用到 120（聊天/弹层），
+ * 之前写 40，结果"点了好友按钮没反应"——其实是开了但被压在场景下面。
+ */
 .vx-friends {
   position: fixed;
   top: 62px;
   right: 18px;
-  z-index: 40;
+  z-index: 130;
   width: 300px;
   max-height: min(460px, calc(100vh - 90px));
   display: flex;
@@ -511,7 +515,7 @@
   left: 50%;
   bottom: 96px;
   transform: translateX(-50%);
-  z-index: 45;
+  z-index: 125;
   display: flex;
   align-items: center;
   gap: 9px;
@@ -600,13 +604,15 @@
   position: relative;
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  width: 34px;
-  height: 34px;
-  border-radius: 9px;
+  gap: 5px;
+  height: 30px;
+  padding: 0 6px;
+  border-radius: 8px;
   border: 1px solid transparent;
   background: transparent;
   color: #6d4b21;
+  font: inherit;
+  font-size: 12px;
   cursor: pointer;
 }
 .vx-sign-friends:hover {

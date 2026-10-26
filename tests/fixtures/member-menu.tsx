@@ -7,6 +7,7 @@ import { createRoot } from "react-dom/client";
 import { RoomView } from "../../src/client/voice/components/RoomView";
 import type { InteractKind } from "../../src/client/voice/protocol";
 import { parseSceneTheme } from "../../src/client/voice/scene-theme";
+import "../../src/client/voice/account.css";
 import "../../src/client/voice/styles.css";
 import "../../src/client/voice/pen-scene.css";
 import "../../src/client/voice/pen-life.css";

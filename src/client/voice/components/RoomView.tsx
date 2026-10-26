@@ -47,6 +47,7 @@ import {
   VolumeX,
   X,
   Gift,
+  Contact,
   UserPlus,
 } from "lucide-react";
 
@@ -1116,15 +1117,20 @@ export function RoomView({
             <Users size={14} /> {members.length}/{maxMembers}
           </span>
 
+          {/*
+            「好友」不能只放一个人形图标：左边 1/8 也是人形，两个长得一样，
+            谁也不知道哪个是好友（2026-10-26 反馈）。这里换 Contact 图标 + 明写文字，
+            不加底色，和旁边"设公告"那类纯文字项同一套语言。
+          */}
           {selfAccountId && onOpenFriends ? (
             <button
               type="button"
               className="vx-sign-friends"
               onClick={onOpenFriends}
-              aria-label="好友"
-              title={friendRequestCount > 0 ? `好友（${friendRequestCount} 条请求）` : "好友"}
+              title={friendRequestCount > 0 ? `好友（${friendRequestCount} 条请求）` : "好友：看谁在线、处理请求"}
             >
-              <Users size={17} />
+              <Contact size={15} />
+              <span>好友</span>
               {friendRequestCount > 0 ? <i className="vx-sign-friends-dot" /> : null}
             </button>
           ) : null}

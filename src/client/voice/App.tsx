@@ -385,6 +385,59 @@ export function App() {
         />
       <OnboardingDialog open={onboardingOpen} onClose={closeOnboarding} />
       <WhatsNewDialog open={whatsNewOpen} onClose={closeWhatsNew} />
+
+      {/*
+        房间里同样要挂账号/好友面板（2026-10-26 修"点了好友没反应"）：
+        房间这条分支是**提前 return** 的，之前这些面板只写在首页分支里，
+        所以房间里的按钮点了什么也不会发生。
+      */}
+      {incomingQueue.length > 0
+        ? (() => {
+            const request = account.snapshot.incoming.find(
+              (item) => item.account.id === incomingQueue[0],
+            );
+            if (!request) return null;
+            return (
+              <FriendRequestToast
+                request={request}
+                onAccept={() => {
+                  const id = request.account.id;
+                  setIncomingQueue((queue) => queue.filter((item) => item !== id));
+                  void accountAdapter.acceptFriend(id).then(() => account.refresh());
+                }}
+                onDismiss={() => setIncomingQueue((queue) => queue.slice(1))}
+              />
+            );
+          })()
+        : null}
+      <AccountDialog
+        open={accountOpen}
+        adapter={accountAdapter}
+        account={account.me}
+        onClose={() => setAccountOpen(false)}
+        onChanged={() => void account.refresh()}
+        onOpenFriends={() => {
+          setAccountOpen(false);
+          setFriendsOpen(true);
+        }}
+      />
+      <FriendsDrawer
+        open={friendsOpen}
+        adapter={accountAdapter}
+        snapshot={account.snapshot}
+        onClose={() => setFriendsOpen(false)}
+        onChanged={() => void account.refresh()}
+        roomCode={voice.invite?.code ?? null}
+        canInvite={voice.members.some((member) => member.local && member.isHost)}
+        onInvite={() =>
+          copyText(
+            buildInviteText(voice.invite?.code ?? "", {
+              count: voice.members.length,
+              topic: voice.topic,
+            }),
+          )
+        }
+      />
       </>
     );
   }
