@@ -305,7 +305,8 @@ interface FriendsDrawerProps {
   onChanged: () => void;
   /** 当前所在房间（用于显示"在 2354 房"） */
   roomCode?: string | null;
-  onInvite?: (account: AccountProfile) => void;
+  /** 邀请：复制一条邀请文案（真正的推送通道还没接） */
+  onInvite?: (account: AccountProfile) => Promise<boolean>;
 }
 
 export function FriendsDrawer({
@@ -321,6 +322,8 @@ export function FriendsDrawer({
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<AccountProfile[]>([]);
   const [note, setNote] = useState("");
+  /** 已经复制过邀请的好友（按钮显示"已复制"，2 秒后复原） */
+  const [invited, setInvited] = useState<Set<string>>(new Set());
   const searchTimer = useRef(0);
 
   const runSearch = useCallback(
@@ -447,12 +450,24 @@ export function FriendsDrawer({
                       inOtherRoom
                         ? "对方在别的房间里"
                         : roomCode
-                          ? "把对方请进我的房间"
+                          ? "复制一条邀请，发给对方点开就进"
                           : "先建一个房间，才能邀请"
                     }
-                    onClick={() => onInvite?.(entry.account)}
+                    onClick={() => {
+                      void onInvite?.(entry.account).then((ok) => {
+                        if (!ok) return;
+                        setInvited((prev) => new Set(prev).add(entry.account.id));
+                        window.setTimeout(() => {
+                          setInvited((prev) => {
+                            const next = new Set(prev);
+                            next.delete(entry.account.id);
+                            return next;
+                          });
+                        }, 2_000);
+                      });
+                    }}
                   >
-                    邀请
+                    {invited.has(entry.account.id) ? "已复制" : "邀请"}
                   </button>
                 </div>
               );

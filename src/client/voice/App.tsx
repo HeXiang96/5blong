@@ -13,6 +13,7 @@ import { shouldShowWhatsNew } from "./whats-new";
 import { SettingsView } from "./components/SettingsView";
 import { AccountDialog, FriendsDrawer } from "./components/AccountPanels";
 import { FriendRequestToast } from "./components/FriendRequestToast";
+import { buildInviteText, copyText } from "./invite-text";
 import { LocalAccountAdapter, seedDemoAccounts } from "./account/local-adapter";
 import { useAccount } from "./account/use-account";
 import { Banner } from "./components/ui";
@@ -282,6 +283,8 @@ export function App() {
       <RoomView
         selfAccountId={account.me?.id ?? null}
         onOpenAccount={() => setAccountOpen(true)}
+        friendRequestCount={account.snapshot.incoming.length}
+        onOpenFriends={() => setFriendsOpen(true)}
         friendAccountIds={new Set(account.snapshot.friends.map((entry) => entry.account.id))}
         onAddFriend={(accountId) =>
           accountAdapter.addFriend(accountId).then((result) => {
@@ -494,7 +497,15 @@ export function App() {
         snapshot={account.snapshot}
         onClose={() => setFriendsOpen(false)}
         onChanged={() => void account.refresh()}
-        roomCode={null}
+        roomCode={voice.invite?.code ?? null}
+        onInvite={() =>
+          copyText(
+            buildInviteText(voice.invite?.code ?? "", {
+              count: voice.members.length,
+              topic: voice.topic,
+            }),
+          )
+        }
       />
     </>
   );

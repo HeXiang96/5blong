@@ -136,6 +136,8 @@ function Fixture() {
     // ?anon=1 模拟未登录：菜单里应出现"登录后可加好友"
     selfAccountId: params.get("anon") === "1" ? null : "48231907",
     onOpenAccount: () => record("open-account"),
+    friendRequestCount: params.get("requests") ? Number(params.get("requests")) : 0,
+    onOpenFriends: () => record("open-friends"),
     friendAccountIds: new Set(params.get("friend") === "1" ? ["53720018"] : []),
     onAddFriend: async (accountId) => {
       record("add-friend", accountId);

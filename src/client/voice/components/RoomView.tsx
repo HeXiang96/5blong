@@ -191,6 +191,8 @@ export function RoomView({
   friendAccountIds,
   onAddFriend,
   onOpenAccount,
+  friendRequestCount = 0,
+  onOpenFriends,
 }: {
   status: EngineStatus;
   members: Member[];
@@ -297,6 +299,10 @@ export function RoomView({
   onAddFriend?: (accountId: string) => Promise<boolean>;
   /** 打开登录面板（未登录时"加好友"位置的引导） */
   onOpenAccount?: () => void;
+  /** 待处理的好友请求数（顶栏红点） */
+  friendRequestCount?: number;
+  /** 打开好友面板（房间里也能看谁在线、发邀请） */
+  onOpenFriends?: () => void;
 }) {
   const self = members.find((member) => member.local) ?? null;
   const muted = self?.muted ?? true;
@@ -1109,6 +1115,19 @@ export function RoomView({
           <span className="vx-sign-count" title={`房间人数上限 ${maxMembers} 人`}>
             <Users size={14} /> {members.length}/{maxMembers}
           </span>
+
+          {selfAccountId && onOpenFriends ? (
+            <button
+              type="button"
+              className="vx-sign-friends"
+              onClick={onOpenFriends}
+              title={friendRequestCount > 0 ? `好友（${friendRequestCount} 条请求）` : "好友"}
+            >
+              <UserPlus size={14} />
+              <span>好友</span>
+              {friendRequestCount > 0 ? <i className="vx-sign-friends-dot" /> : null}
+            </button>
+          ) : null}
 
           {invite ? (
             <button

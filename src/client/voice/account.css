@@ -591,3 +591,33 @@
 :is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-freq-dismiss {
   color: #cbb28a;
 }
+
+/* 房间顶栏的「好友」按钮（木牌上，和房间控件同风格） */
+.vx-sign-friends {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(120, 78, 34, 0.45);
+  background: rgba(255, 253, 246, 0.72);
+  color: #5b3d18;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.vx-sign-friends:hover {
+  background: #fffdf6;
+}
+.vx-sign-friends-dot {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #c2410c;
+  box-shadow: 0 0 0 2px rgba(255, 253, 246, 0.9);
+}
