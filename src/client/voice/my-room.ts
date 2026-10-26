@@ -61,6 +61,26 @@ export function renewRoomKey(accountId: string): string {
   return keys[accountId]!;
 }
 
+/**
+ * 数字 ID 被改过（后台操作）之后，把本机的房间钥匙搬到新 ID 名下。
+ *
+ * 为什么必须搬：钥匙只存本机、按账号 ID 分桶。ID 一变，客户端就会觉得"这台机器上
+ * 没有我的钥匙"，于是新造一把——房号没变，但**之前发出去的邀请链接全部失效**
+ * （访客用旧钥匙签证明，房主拿新钥匙算，对不上）。
+ *
+ * 幂等：目标已有钥匙就什么都不做；源不存在就返回 false（换设备/清过缓存）。
+ */
+export function migrateRoomKey(fromAccountId: string, toAccountId: string): boolean {
+  if (!fromAccountId || !toAccountId || fromAccountId === toAccountId) return false;
+  const keys = book().keys;
+  const source = keys[fromAccountId];
+  if (!source) return false;
+  if (!keys[toAccountId]) keys[toAccountId] = source;
+  delete keys[fromAccountId];
+  writeJson(KEY, { keys });
+  return true;
+}
+
 /** 校验用户手填的固定房号（6 位数字）。 */
 export function normalizeFixedRoomCode(raw: string): string | null {
   const code = normalizeCode(raw);

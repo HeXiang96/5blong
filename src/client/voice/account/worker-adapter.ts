@@ -220,8 +220,16 @@ export class WorkerAccountAdapter implements AccountAdapter {
     };
   }
 
-  async sendInvite(accountId: string, roomCode: string): Promise<AuthResult> {
-    return this.friendAction("/invites", accountId, "POST", { id: accountId, code: roomCode });
+  async sendInvite(accountId: string, roomCode: string, roomKey?: string): Promise<AuthResult> {
+    return this.friendAction("/invites", accountId, "POST", {
+      id: accountId,
+      code: roomCode,
+      ...(roomKey ? { roomKey } : {}),
+    });
+  }
+
+  async ackIdChange(): Promise<void> {
+    await this.request("/me/ack-id-change", { method: "POST" });
   }
 
   async invites(): Promise<RoomInvite[]> {

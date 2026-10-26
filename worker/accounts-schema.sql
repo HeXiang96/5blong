@@ -95,3 +95,22 @@ CREATE TABLE IF NOT EXISTS room_holds (
   expires_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_room_holds_token ON room_holds (token);
+
+-- 管理员操作审计：改房号 / 改数字 ID 这类"绕过用户端限制"的动作必须留痕。
+CREATE TABLE IF NOT EXISTS admin_audit (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  at INTEGER NOT NULL,
+  actor TEXT NOT NULL,
+  action TEXT NOT NULL,
+  target TEXT NOT NULL,
+  detail TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_admin_audit_at ON admin_audit (at DESC);
+
+-- 改过数字 ID 时记住旧 ID：客户端据此把本机的房间钥匙搬到新 ID 名下
+-- （roomKey 只存客户端，服务端搬不了；不搬的话老邀请链接会全部失效）。
+ALTER TABLE accounts ADD COLUMN prev_id TEXT;
+
+-- 邀请里带上房间钥匙：私密房只给房号等于"告诉你门牌却不给钥匙"，
+-- 对方点「加入」只会被要求临时密码。钥匙仅好友可见、随邀请一起过期（24 小时）。
+ALTER TABLE room_invites ADD COLUMN room_key TEXT;

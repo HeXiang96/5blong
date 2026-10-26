@@ -404,7 +404,7 @@ export class LocalAccountAdapter implements AccountAdapter {
     return { state: "online", lastSeen: at.at, roomCode: at.roomCode };
   }
 
-  async sendInvite(accountId: string, roomCode: string): Promise<AuthResult> {
+  async sendInvite(accountId: string, roomCode: string, roomKey?: string): Promise<AuthResult> {
     const me = this.current();
     if (!me) return { error: "not-found" };
     if (me.id === accountId) return { error: "self" };
@@ -413,10 +413,18 @@ export class LocalAccountAdapter implements AccountAdapter {
     // 与线上口径一致：只给好友发邀请（陌生人走好友请求那套）
     if (!(this.graph().friends[me.id] ?? []).includes(accountId)) return { error: "not-found" };
     const book = read<Record<string, Record<string, { code: string; at: number }>>>(INVITES_KEY, {});
-    (book[accountId] ??= {})[me.id] = { code: roomCode, at: Date.now() };
+    (book[accountId] ??= {})[me.id] = {
+      code: roomCode,
+      at: Date.now(),
+      ...(roomKey ? { roomKey } : {}),
+    };
     write(INVITES_KEY, book);
     this.emit();
     return { account: target };
+  }
+
+  async ackIdChange(): Promise<void> {
+    // 本地适配器不会改数字 ID（只有后台能改），这里不需要做什么
   }
 
   async invites(): Promise<RoomInvite[]> {

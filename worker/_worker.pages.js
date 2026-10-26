@@ -94,6 +94,10 @@ export default {
     if (url.pathname === "/game-admin") {
       return handleGameAdmin(request, env);
     }
+    // /accounts-admin → 账号后台（用户名/昵称/房号/数字 ID；永不显示密码）
+    if (url.pathname === "/accounts-admin") {
+      return handleAccountsAdmin(request, env);
+    }
 
     // /rooms → 在线房间面板（令牌保护；与反馈页分开，避免一页太臃肿）
     if (url.pathname === "/rooms") {
@@ -1117,6 +1121,235 @@ async function authenticateStaff(url, env) {
   return { role: "staff", name: row.name || "运营" };
 }
 
+/**
+ * 账号后台：/accounts-admin?staff=TOKEN
+ *
+ * 业主需求（2026-10-26）：列出用户名 / 昵称 / 认领的房号，能在后台改房号、改数字 ID。
+ * 三条硬规矩：
+ *   1. **永不显示密码**：SQL 里就不选 salt/hash，页面上也没有任何"查看密码"的入口
+ *      （哈希本来就不可逆，能"看到"的只可能是被拖库的东西）；
+ *   2. 改房号要绕过"每个账号只能改一次"的用户限制——这是管理员的特权，
+ *      改完仍保持锁定状态，且会写审计；
+ *   3. 改数字 ID 是账号主键，会级联到好友/请求/会话/在线/邀请，只在 main 令牌下允许，
+ *      用 D1 batch（一个事务）做完，避免改一半。
+ */
+const ADMIN_ID_RE = /^\d{8}$/;
+
+async function adminAudit(env, actor, action, target, detail) {
+  try {
+    await env.DB.prepare(
+      "INSERT INTO admin_audit (at, actor, action, target, detail) VALUES (?, ?, ?, ?, ?)",
+    )
+      .bind(Date.now(), actor, action, target, detail)
+      .run();
+  } catch {
+    // 审计表缺失也不能挡住操作（老库没建表时）
+  }
+}
+
+/** GET/POST /accounts-admin?staff=TOKEN */
+async function handleAccountsAdmin(request, env) {
+  try {
+    return await accountsAdminInner(request, env);
+  } catch (error) {
+    return adminPage(
+      "账号后台 · 出错",
+      `<pre>${escapeHtml(String((error && error.stack) || error))}</pre>`,
+      500,
+    );
+  }
+}
+
+async function accountsAdminInner(request, env) {
+  const url = new URL(request.url);
+  const who = await authenticateStaff(url, env);
+  if (!who) {
+    return adminPage("账号后台 · 无权访问", "<p>令牌无效或已被吊销。</p>", 401);
+  }
+  // flash 走 URL（PRG 模式：POST 后 303 回来，刷新不会重复提交）
+  const flash = (url.searchParams.get("flash") ?? "").split("|").filter(Boolean);
+  const tokenQuery = `?staff=${encodeURIComponent(url.searchParams.get("staff") ?? "")}`;
+
+  if (request.method === "POST") {
+    const form = await request.formData();
+    const action = String(form.get("action") ?? "");
+    const id = String(form.get("id") ?? "").trim();
+
+    if (action === "set_room") {
+      const raw = String(form.get("code") ?? "").trim();
+      const clear = form.get("clear") === "1" || raw === "";
+      if (clear) {
+        await env.DB.prepare(
+          "UPDATE accounts SET room_code = NULL, room_code_at = NULL, room_changes = 0, updated_at = ? WHERE id = ?",
+        )
+          .bind(Date.now(), id)
+          .run();
+        await adminAudit(env, who.name, "room_clear", id, "管理员清空固定房号（号回池）");
+        flash.push(`已清空 ${id} 的房号，这个号回到池子里`);
+      } else if (!/^\d{6}$/.test(raw)) {
+        flash.push("房号必须是 6 位数字");
+      } else {
+        const occupied = await env.DB.prepare(
+          "SELECT id FROM accounts WHERE room_code = ? AND id <> ?",
+        )
+          .bind(raw, id)
+          .first();
+        if (occupied) {
+          flash.push(`房号 ${raw} 已被账号 ${occupied.id} 认领，先清掉那边`);
+        } else {
+          await env.DB.prepare(
+            "UPDATE accounts SET room_code = ?, room_code_at = ?, room_changes = 1, updated_at = ? WHERE id = ?",
+          )
+            .bind(raw, Date.now(), Date.now(), id)
+            .run();
+          await adminAudit(env, who.name, "room_set", id, `管理员把房号改成 ${raw}`);
+          flash.push(`已把 ${id} 的房号改成 ${raw}`);
+        }
+      }
+    }
+
+    if (action === "set_id") {
+      if (who.role !== "main") {
+        flash.push("只有业主令牌能改数字 ID");
+      } else {
+        const next = String(form.get("newid") ?? "").trim();
+        if (!ADMIN_ID_RE.test(next)) {
+          flash.push("新数字 ID 必须是 8 位数字");
+        } else if (next === id) {
+          flash.push("新旧 ID 一样，什么都没做");
+        } else {
+          const taken = await env.DB.prepare("SELECT 1 AS x FROM accounts WHERE id = ?")
+            .bind(next)
+            .first();
+          if (taken) {
+            flash.push(`数字 ID ${next} 已被占用`);
+          } else {
+            await env.DB.batch([
+              env.DB.prepare("UPDATE account_sessions SET account_id = ? WHERE account_id = ?").bind(next, id),
+              env.DB.prepare("UPDATE friendships SET account_id = ? WHERE account_id = ?").bind(next, id),
+              env.DB.prepare("UPDATE friendships SET friend_id = ? WHERE friend_id = ?").bind(next, id),
+              env.DB.prepare("UPDATE friend_requests SET from_id = ? WHERE from_id = ?").bind(next, id),
+              env.DB.prepare("UPDATE friend_requests SET to_id = ? WHERE to_id = ?").bind(next, id),
+              env.DB.prepare("UPDATE room_invites SET from_id = ? WHERE from_id = ?").bind(next, id),
+              env.DB.prepare("UPDATE room_invites SET to_id = ? WHERE to_id = ?").bind(next, id),
+              // presence 是主键，先把旧行删掉再插新的，避免主键冲突
+              env.DB.prepare("DELETE FROM account_presence WHERE account_id = ?").bind(id),
+              // prev_id：客户端下次 /me 会拿到它，用来把本机 roomKey 迁到新 ID
+              env.DB.prepare("UPDATE accounts SET id = ?, prev_id = ?, updated_at = ? WHERE id = ?").bind(
+                next,
+                id,
+                Date.now(),
+                id,
+              ),
+            ]);
+            await adminAudit(env, who.name, "id_set", id, `管理员把数字 ID 改成 ${next}`);
+            flash.push(`已把数字 ID ${id} 改成 ${next}（好友与会话已同步）`);
+          }
+        }
+      }
+    }
+
+    return new Response(null, {
+      status: 303,
+      headers: {
+        location: `/accounts-admin${tokenQuery}${
+          flash.length ? `&flash=${encodeURIComponent(flash.join("|"))}` : ""
+        }`,
+      },
+    });
+  }
+
+  const rows =
+    (
+      await env.DB.prepare(
+        "SELECT a.id, a.username, a.name, a.room_code, a.room_changes, a.created_at, " +
+          "p.last_seen, p.room_code AS live_room FROM accounts a " +
+          "LEFT JOIN account_presence p ON p.account_id = a.id ORDER BY a.created_at DESC LIMIT 200",
+      ).all()
+    ).results ?? [];
+
+  const now = Date.now();
+  const fmt = (ms) => (ms ? new Date(Number(ms)).toLocaleString("zh-CN", { hour12: false }) : "—");
+  const online = (last) => last && now - Number(last) < 3 * 60_000;
+
+  const body = rows.length
+    ? `<table class="a-table">
+  <thead><tr>
+    <th>数字 ID</th><th>用户名</th><th>昵称</th><th>认领房号</th><th>状态</th><th>注册</th><th>操作</th>
+  </tr></thead>
+  <tbody>
+  ${rows
+    .map((row) => {
+      const locked = Boolean(row.room_code) && Number(row.room_changes ?? 0) >= 1;
+      return `<tr>
+    <td><code>${escapeHtml(row.id)}</code></td>
+    <td>${escapeHtml(row.username ?? "")}</td>
+    <td>${escapeHtml(row.name ?? "")}</td>
+    <td>${
+      row.room_code
+        ? `<b class="a-room">${escapeHtml(row.room_code)}</b>${locked ? ' <span class="a-tag">已锁定</span>' : ' <span class="a-tag a-tag-ok">可改一次</span>'}`
+        : '<span class="a-empty">未认领</span>'
+    }</td>
+    <td>${
+      online(row.last_seen)
+        ? `在线${row.live_room ? ` · 在 ${escapeHtml(row.live_room)} 房` : ""}`
+        : `<span class="a-empty">离线${row.last_seen ? ` · ${fmt(row.last_seen)}` : ""}</span>`
+    }</td>
+    <td class="a-when">${fmt(row.created_at)}</td>
+    <td class="a-ops">
+      <form method="post">
+        <input type="hidden" name="action" value="set_room" />
+        <input type="hidden" name="id" value="${escapeHtml(row.id)}" />
+        <input class="a-input" name="code" maxlength="6" inputmode="numeric" placeholder="6 位房号"
+               value="${escapeHtml(row.room_code ?? "")}" />
+        <button>改房号</button>
+        <button name="clear" value="1" class="a-ghost">清空回池</button>
+      </form>
+      ${
+        who.role === "main"
+          ? `<form method="post" class="a-idform">
+        <input type="hidden" name="action" value="set_id" />
+        <input type="hidden" name="id" value="${escapeHtml(row.id)}" />
+        <input class="a-input" name="newid" maxlength="8" inputmode="numeric" placeholder="新 8 位 ID" />
+        <button class="a-danger">改数字 ID</button>
+      </form>`
+          : `<span class="a-empty">改数字 ID 需要业主令牌</span>`
+      }
+    </td>
+  </tr>`;
+    })
+    .join("\n")}
+  </tbody>
+</table>`
+    : '<p class="a-empty">还没有账号。注册后这里会出现。</p>';
+
+  const content = `
+<style>
+  .a-summary { color: #6b6257; margin: 0 0 14px; }
+  .a-table { width: 100%; border-collapse: collapse; background: #fff; border: 1px solid #e3ded4; border-radius: 12px; overflow: hidden; }
+  .a-table th, .a-table td { text-align: left; padding: 9px 10px; border-bottom: 1px solid #f0ebe2; vertical-align: middle; font-size: 13.5px; }
+  .a-table th { background: #faf7f1; font-weight: 600; color: #5b5348; white-space: nowrap; }
+  .a-table tr:last-child td { border-bottom: none; }
+  .a-room { font-family: ui-monospace, Menlo, monospace; font-size: 15px; letter-spacing: .06em; }
+  .a-tag { background: #f1e6cf; color: #8a5b1c; border-radius: 999px; padding: 1px 8px; font-size: 11.5px; white-space: nowrap; }
+  .a-tag-ok { background: #e2f0e4; color: #2f6b3a; }
+  .a-when { color: #8a8175; font-size: 12.5px; white-space: nowrap; }
+  .a-empty { color: #9a9186; font-size: 12.5px; }
+  .a-ops { display: flex; flex-direction: column; gap: 6px; }
+  .a-ops form { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .a-input { width: 108px; border: 1px solid #d8cfc0; border-radius: 8px; padding: 5px 8px; font-size: 13px; background: #fffdf9; }
+  .a-ghost { color: #8a5b1c; }
+  .a-danger { border-color: #e0b4ac; color: #9c3222; }
+  .a-flash { background: #fdf6e6; border: 1px solid #ecdcb4; border-radius: 10px; padding: 10px 12px; margin-bottom: 14px; }
+  .a-flash div + div { margin-top: 4px; }
+</style>
+<p class="a-summary">共 ${rows.length} 个账号 · 以 ${escapeHtml(who.name)}（${who.role === "main" ? "业主" : "员工"}）身份查看 · <b>密码不在此页展示（数据库里只有不可逆哈希）</b></p>
+${flash.length ? `<div class="a-flash">${flash.map((line) => `<div>${escapeHtml(line)}</div>`).join("")}</div>` : ""}
+${body}`;
+
+  return adminPage("账号后台", content, 200);
+}
+
 /** GET/POST /game-admin?staff=TOKEN */
 async function handleGameAdmin(request, env) {
   try {
@@ -1428,6 +1661,8 @@ function toProfile(row) {
      * 改完这个号就永久属于该账号，别人抢同一号会被唯一索引挡下。
      */
     roomCodeLocked: Boolean(row.room_code) && Number(row.room_changes ?? 0) >= 1,
+    // 只在"刚被改过 ID"时出现：客户端用它迁移本机的房间钥匙
+    ...(row.prev_id ? { previousId: row.prev_id } : {}),
   };
 }
 
@@ -1540,6 +1775,18 @@ async function accountLogout(request, env) {
   return accountJson(request, { ok: true }, 200, {
     "Set-Cookie": sessionCookie(request, "", 0),
   });
+}
+
+/**
+ * 客户端迁完本机房间钥匙后调一次，清掉 prev_id。
+ * 不清的问题：每次 /me 都会带着旧 ID，客户端反复尝试迁移（幂等但多余），
+ * 账号面板也会一直提示"ID 变过"。
+ */
+async function accountAckIdChange(request, env) {
+  const me = await currentAccount(request, env);
+  if (!me) return accountJson(request, { ok: false }, 401);
+  await env.DB.prepare("UPDATE accounts SET prev_id = NULL WHERE id = ?").bind(me.id).run();
+  return accountJson(request, { ok: true }, 200);
 }
 
 /**
@@ -1876,11 +2123,17 @@ async function accountSendInvite(request, env) {
     .first();
   // 只给好友发：陌生人靠好友请求那套，别让邀请变成骚扰通道
   if (!friend) return accountJson(request, { error: "not-found" }, 403);
+  /*
+   * 钥匙（roomKey）只在私密房才带：普通房知道房号就能进，没必要把钥匙落库。
+   * 带上它，「加入」才是**一键直达**——否则对方只会被要求临时密码。
+   */
+  const roomKey = String(body?.roomKey ?? "").trim();
+  const safeKey = /^[A-Za-z0-9_-]{16,128}$/.test(roomKey) ? roomKey : null;
   await env.DB.prepare(
-    "INSERT INTO room_invites (from_id, to_id, code, at) VALUES (?, ?, ?, ?) " +
-      "ON CONFLICT(from_id, to_id) DO UPDATE SET code = excluded.code, at = excluded.at",
+    "INSERT INTO room_invites (from_id, to_id, code, at, room_key) VALUES (?, ?, ?, ?, ?) " +
+      "ON CONFLICT(from_id, to_id) DO UPDATE SET code = excluded.code, at = excluded.at, room_key = excluded.room_key",
   )
-    .bind(me.id, toId, code, Date.now())
+    .bind(me.id, toId, code, Date.now(), safeKey)
     .run();
   return accountJson(request, { ok: true }, 200);
 }
@@ -1892,7 +2145,7 @@ async function accountInvites(request, env) {
   // 只保留 24 小时内的：再久的房间基本早就散了，留着只会让人白点一次
   const alive = Date.now() - 24 * 3600_000;
   const rows = await env.DB.prepare(
-    "SELECT a.*, i.code AS invite_code, i.at AS invite_at FROM room_invites i " +
+    "SELECT a.*, i.code AS invite_code, i.at AS invite_at, i.room_key AS invite_key FROM room_invites i " +
       "JOIN accounts a ON a.id = i.from_id WHERE i.to_id = ? AND i.at > ? ORDER BY i.at DESC LIMIT 20",
   )
     .bind(me.id, alive)
@@ -1904,6 +2157,7 @@ async function accountInvites(request, env) {
         from: toProfile(row),
         code: row.invite_code,
         at: row.invite_at,
+        ...(row.invite_key ? { roomKey: row.invite_key } : {}),
       })),
     },
     200,
@@ -1935,6 +2189,9 @@ async function handleAccount(request, env, url) {
       return accountJson(request, { account: toProfile(await currentAccount(request, env)) }, 200);
     }
     if (path === "/me" && request.method === "PATCH") return await accountUpdateProfile(request, env);
+    if (path === "/me/ack-id-change" && request.method === "POST") {
+      return await accountAckIdChange(request, env);
+    }
     if (path === "/room-claim" && request.method === "GET") return await accountRoomClaim(request, env, url);
     if (path === "/room-hold" && request.method === "POST") return await accountHoldRoom(request, env);
     if (path === "/room-hold" && request.method === "DELETE") return await accountReleaseHold(request, env, url);

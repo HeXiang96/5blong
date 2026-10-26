@@ -331,3 +331,165 @@ describe("房号占位（认领号不能被临时房占用）", () => {
     expect(take.data.account.roomCode).toBe("777004");
   });
 });
+
+interface AdminOptions {
+  method?: string;
+  form?: Record<string, string>;
+  staff?: string;
+}
+
+/** 管理员页面不在 /api 下，单独包一层。 */
+function adminRequest(path: string, { method = "GET", form, staff }: AdminOptions = {}) {
+  const body = form ? new URLSearchParams(form).toString() : undefined;
+  return worker.fetch(
+    new Request(`https://5blong.pages.dev${path}`, {
+      method,
+      headers: body ? { "Content-Type": "application/x-www-form-urlencoded" } : {},
+      ...(body ? { body } : {}),
+      redirect: "manual",
+    }),
+    { ...env, FEEDBACK_TOKEN: staff ?? "owner-token-123" },
+  );
+}
+
+describe("账号后台 /accounts-admin", () => {
+  it("列表显示用户名/昵称/房号，且绝不出现密码哈希", async () => {
+    const a = await register("adminlist");
+    await call("/me", { method: "PATCH", body: { roomCode: "910001" }, token: a.token });
+
+    const res = await adminRequest("/accounts-admin?staff=owner-token-123");
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("adminlist");
+    expect(html).toContain("910001");
+    // 密码相关字段一个都不许出现
+    expect(html).not.toContain("pbkdf2$");
+    expect(html).not.toContain('name="password"');
+    const stored = env.DB.raw.prepare("SELECT hash FROM accounts WHERE username = ?").get("adminlist");
+    expect(html).not.toContain(String(stored.hash).slice(-24));
+  });
+
+  it("没令牌看不了", async () => {
+    const res = await adminRequest("/accounts-admin");
+    expect(res.status).toBe(401);
+  });
+
+  it("管理员能改已锁定的房号，也能清空回池，并留审计", async () => {
+    const a = await register("adminroom");
+    await call("/me", { method: "PATCH", body: { roomCode: "910002" }, token: a.token });
+    await call("/me", { method: "PATCH", body: { roomCode: "910003" }, token: a.token }); // 用掉唯一一次
+
+    const changed = await adminRequest("/accounts-admin?staff=owner-token-123", {
+      method: "POST",
+      form: { action: "set_room", id: a.account.id, code: "910009" },
+    });
+    expect(changed.status).toBe(303);
+
+    const me = await json(await call("/me", { token: a.token }));
+    expect(me.data.account.roomCode).toBe("910009");
+    expect(me.data.account.roomCodeLocked).toBe(true); // 管理员改完仍是锁定态
+
+    const audit = env.DB.raw
+      .prepare("SELECT action, detail FROM admin_audit WHERE target = ? ORDER BY id DESC")
+      .all(a.account.id);
+    expect(audit.map((row: any) => row.action)).toContain("room_set");
+
+    await adminRequest("/accounts-admin?staff=owner-token-123", {
+      method: "POST",
+      form: { action: "set_room", id: a.account.id, clear: "1" },
+    });
+    expect((await json(await call("/me", { token: a.token }))).data.account.roomCode).toBeUndefined();
+  });
+
+  it("管理员能改数字 ID，好友与会话一起搬过去", async () => {
+    const a = await register("adminid");
+    const b = await register("adminid2");
+    await call("/friends", { method: "POST", body: { id: b.account.id }, token: a.token });
+    await call("/friends/accept", { method: "POST", body: { id: a.account.id }, token: b.token });
+
+    const res = await adminRequest("/accounts-admin?staff=owner-token-123", {
+      method: "POST",
+      form: { action: "set_id", id: a.account.id, newid: "12345678" },
+    });
+    expect(res.status).toBe(303);
+
+    // 新 ID 能直接用原 cookie 访问（sessions 已级联）
+    const me = await json(await call("/me", { token: a.token }));
+    expect(me.data.account.id).toBe("12345678");
+    // B 那边看到的还是同一个好友，只是 ID 变了
+    const bList = await json(await call("/friends", { token: b.token }));
+    expect(bList.data.friends.map((item: any) => item.account.id)).toEqual(["12345678"]);
+  });
+
+  it("非 main 的员工令牌不能改数字 ID", async () => {
+    const hash = await (async () => {
+      const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode("staff-token-456"));
+      // 与 worker 的 sha256Hex 一致：取前 32 位十六进制
+      return Array.from(new Uint8Array(digest))
+        .map((byte) => byte.toString(16).padStart(2, "0"))
+        .join("")
+        .slice(0, 32);
+    })();
+    env.DB.raw.exec(
+      "CREATE TABLE IF NOT EXISTS staff_tokens (id TEXT PRIMARY KEY, name TEXT, scope TEXT, token_hash TEXT, created_at INTEGER, expires_at INTEGER, revoked INTEGER DEFAULT 0)",
+    );
+    env.DB.raw
+      .prepare(
+        "INSERT INTO staff_tokens (id, name, scope, token_hash, created_at, expires_at, revoked) VALUES (?, ?, ?, ?, ?, ?, 0)",
+      )
+      .run("s1", "运营", "game", hash, Date.now(), Date.now() + 86_400_000);
+
+    const a = await register("adminstaff");
+    const res = await adminRequest("/accounts-admin?staff=staff-token-456", {
+      method: "POST",
+      form: { action: "set_id", id: a.account.id, newid: "22223333" },
+    });
+    expect(res.status).toBe(303);
+    const me = await json(await call("/me", { token: a.token }));
+    expect(me.data.account.id).toBe(a.account.id); // 没被改
+  });
+});
+
+describe("邀请一键直达 / 改 ID 后客户端同步", () => {
+  it("私密房邀请带着房间钥匙，对方拿到的是完整邀请", async () => {
+    const a = await register("inviter");
+    const b = await register("invitee");
+    await call("/friends", { method: "POST", body: { id: b.account.id }, token: a.token });
+    await call("/friends/accept", { method: "POST", body: { id: a.account.id }, token: b.token });
+
+    const key = "abcdefghijklmnopqrstuvwx";
+    await call("/invites", {
+      method: "POST",
+      body: { id: b.account.id, code: "930001", roomKey: key },
+      token: a.token,
+    });
+    const list = await json(await call("/invites", { token: b.token }));
+    expect(list.data.invites[0].code).toBe("930001");
+    expect(list.data.invites[0].roomKey).toBe(key);
+
+    // 钥匙格式不对就不落库（不因为一个脏字段把邀请搞坏）
+    await call("/invites", {
+      method: "POST",
+      body: { id: b.account.id, code: "930001", roomKey: "短" },
+      token: a.token,
+    });
+    const after = await json(await call("/invites", { token: b.token }));
+    expect(after.data.invites[0].roomKey).toBeUndefined();
+  });
+
+  it("改完数字 ID 会带出 previousId，客户端确认后清掉", async () => {
+    const me = await register("idmover");
+    await adminRequest("/accounts-admin?staff=owner-token-123", {
+      method: "POST",
+      form: { action: "set_id", id: me.account.id, newid: "31415926" },
+    });
+
+    const after = await json(await call("/me", { token: me.token }));
+    expect(after.data.account.id).toBe("31415926");
+    expect(after.data.account.previousId).toBe(me.account.id);
+
+    await call("/me/ack-id-change", { method: "POST", token: me.token });
+    const cleared = await json(await call("/me", { token: me.token }));
+    expect(cleared.data.account.previousId).toBeUndefined();
+  });
+});

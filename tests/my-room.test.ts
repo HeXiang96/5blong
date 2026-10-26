@@ -11,6 +11,7 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 import {
   ensureRoomKey,
   loadRoomKey,
+  migrateRoomKey,
   normalizeFixedRoomCode,
   renewRoomKey,
 } from "../src/client/voice/my-room";
@@ -96,5 +97,33 @@ describe("固定房号绑定在账号上（一次性认领 + 只能改一次）"
     // 5) 非法格式同样拒绝，且不会把已有房号冲掉（新账号还没号）
     expect((await adapter.updateProfile({ roomCode: "1234" })).error).toBe("room-taken");
     expect(adapter.current()?.roomCode).toBeUndefined();
+  });
+});
+
+describe("数字 ID 被后台改过后的钥匙迁移", () => {
+  const uid = () => String(Math.floor(10_000_000 + Math.random() * 89_000_000));
+
+  it("钥匙从旧 ID 搬到新 ID：老邀请链接继续有效", () => {
+    const oldId = uid();
+    const newId = uid();
+    const key = ensureRoomKey(oldId);
+    expect(migrateRoomKey(oldId, newId)).toBe(true);
+    expect(loadRoomKey(newId)).toBe(key);
+    expect(loadRoomKey(oldId)).toBeNull();
+  });
+
+  it("幂等：新 ID 已有钥匙时不覆盖；源不存在/同号返回 false", () => {
+    const oldId = uid();
+    const takenId = uid();
+    ensureRoomKey(oldId);
+    const theirs = ensureRoomKey(takenId);
+
+    expect(migrateRoomKey(oldId, takenId)).toBe(true);
+    expect(loadRoomKey(takenId)).toBe(theirs); // 不覆盖新 ID 已有钥匙
+    expect(loadRoomKey(oldId)).toBeNull();
+
+    expect(migrateRoomKey(uid(), uid())).toBe(false); // 源本来就没有
+    const same = uid();
+    expect(migrateRoomKey(same, same)).toBe(false);
   });
 });

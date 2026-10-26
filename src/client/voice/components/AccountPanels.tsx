@@ -466,6 +466,8 @@ export function FriendsDrawer({
                   <span className="vx-friend-sub">
                     邀请你进语音房 <i className="vx-friend-room">{invite.code}</i> ·{" "}
                     {minutesAgo(invite.at)}
+                    {/* 带钥匙的邀请点一下就进；只带房号的是旧版邀请/普通房 */}
+                    {invite.roomKey ? <b className="vx-friend-onepress"> · 点「加入」直接进</b> : null}
                   </span>
                 </div>
                 <button

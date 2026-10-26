@@ -2,8 +2,8 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react"
 
 import { preloadRnnoise } from "./engine";
 import { shouldShowOnboarding } from "./onboarding";
-import { isJoinInFlight, makeRoomCode, randomIndex } from "./protocol";
-import { ensureRoomKey, normalizeFixedRoomCode } from "./my-room";
+import { hostPeerIdForCode, isJoinInFlight, makeRoomCode, randomIndex } from "./protocol";
+import { ensureRoomKey, migrateRoomKey, normalizeFixedRoomCode } from "./my-room";
 import { useVoice } from "./use-voice";
 import { ConfirmView, LandingView, SessionSummaryCard } from "./components/pages";
 import { RoomView } from "./components/RoomView";
@@ -96,6 +96,23 @@ export function App() {
     };
   }, [account.me?.id, accountAdapter]);
 
+  /**
+   * 后台改过数字 ID：把本机房间钥匙搬到新 ID 名下，再告诉服务端已迁移。
+   * 不做这一步，房号还在、但之前发出去的邀请链接会全部失效。
+   */
+  useEffect(() => {
+    const me = account.me;
+    if (!me?.previousId || me.previousId === me.id) return;
+    const moved = migrateRoomKey(me.previousId, me.id);
+    void accountAdapter.ackIdChange();
+    voice.setNotice({
+      kind: "info",
+      text: moved
+        ? `你的账号 ID 已更新为 ${me.id}，房间钥匙已迁过来，旧邀请链接继续有效`
+        : `你的账号 ID 已更新为 ${me.id}`,
+    });
+  }, [account.me?.id, account.me?.previousId, accountAdapter, voice]);
+
   /*
    * 在线心跳：登录后每 30 秒报一次（在房间里带上房号）。
    * 没有这一步，好友面板里所有人永远是"离线"——「谁在线 / 在 235417 房」全靠它。
@@ -114,7 +131,14 @@ export function App() {
       setInvites((list) => list.filter((item) => item.from.id !== invite.from.id));
       void accountAdapter.dismissInvite(invite.from.id);
       setFriendsOpen(false);
-      voice.submitJoinInput(invite.code);
+      /*
+       * 带钥匙就按"完整邀请链接"进（一键直达）；没钥匙（普通房 / 老邀请）只给房号。
+       * 这里拼的是协议内用的 fragment 形式：#c=房号&h=房主ID&k=钥匙
+       */
+      const raw = invite.roomKey
+        ? `#c=${invite.code}&h=${hostPeerIdForCode(invite.code)}&k=${invite.roomKey}`
+        : invite.code;
+      voice.submitJoinInput(raw);
     },
     [accountAdapter, voice],
   );
@@ -136,13 +160,14 @@ export function App() {
     async (target: AccountProfile) => {
       const code = voice.invite?.code;
       if (!code) return false;
-      const result = await accountAdapter.sendInvite(target.id, code);
+      // 私密房必须连钥匙一起推：只给房号，对方点「加入」只会被要求临时密码
+      const roomKey = voice.privateRoom ? voice.invite?.roomKey : undefined;
+      const result = await accountAdapter.sendInvite(target.id, code, roomKey);
       if (!result.error) {
-        const pass = voice.privateRoom ? voice.guestPass : "";
         voice.setNotice({
           kind: "info",
-          text: pass
-            ? `已邀请 ${target.name}；这是私密房，记得把临时密码 ${pass} 也发给他`
+          text: voice.privateRoom
+            ? `已邀请 ${target.name}：他在好友面板的「邀请」里点一下就能进来`
             : `已邀请 ${target.name}，他在好友面板的「邀请」里能看到`,
         });
         return true;

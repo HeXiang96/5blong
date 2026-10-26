@@ -33,6 +33,11 @@ export interface AccountProfile {
    * 别人再想改成同一个号会被服务端的唯一索引挡下（提示"已被认领"）。
    */
   roomCodeLocked?: boolean;
+  /**
+   * 后台刚把数字 ID 改过时带上的旧 ID。
+   * 客户端据此把本机房间钥匙搬到新 ID 名下（不然老邀请链接会全失效）。
+   */
+  previousId?: string;
 }
 
 export type PresenceState = "online" | "offline";
@@ -69,6 +74,11 @@ export interface RoomInvite {
   code: string;
   /** 发邀请的时间（ms） */
   at: number;
+  /**
+   * 私密房的房间钥匙（房主发邀请时一起带过来）。
+   * 有它就能一键直达；没有（普通房 / 老版本发的邀请）就只带着房号。
+   */
+  roomKey?: string;
 }
 
 export interface FriendsSnapshot {
@@ -113,9 +123,11 @@ export interface AccountAdapter {
   heartbeat(roomCode?: string): void;
 
   /** 邀请好友进我这间房（只有房主会调；写入一条持久记录，不靠弹窗） */
-  sendInvite(accountId: string, roomCode: string): Promise<AuthResult>;
+  sendInvite(accountId: string, roomCode: string, roomKey?: string): Promise<AuthResult>;
   /** 我收到的邀请（按时间新→旧）。已处理过的不会再出现。 */
   invites(): Promise<RoomInvite[]>;
+  /** 客户端迁完本机钥匙后调一次，让服务端清掉 previousId */
+  ackIdChange(): Promise<void>;
   /** 处理掉一条邀请（加入或忽略都算），之后列表里不再出现 */
   dismissInvite(fromAccountId: string): Promise<void>;
 }

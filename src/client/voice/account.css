@@ -761,3 +761,12 @@ html[data-theme="light"][data-daypart="night"] .vx-sign-pass-on:hover {
 .vx-pass-acts .vx-btn-primary {
   color: #fff;
 }
+
+/* 邀请条目上的"可直接进"提示：带钥匙的邀请才是真正的一键直达 */
+.vx-friend-onepress {
+  color: var(--vx-accent-strong, #965f1f);
+  font-weight: 600;
+}
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-friend-onepress {
+  color: #ffd9a1;
+}

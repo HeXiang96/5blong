@@ -687,3 +687,14 @@ describe("「房间码 + 临时密码」的输入解析", () => {
     expect(parseJoinInput("12345 831204")).toBeNull(); // 码长度不对
   });
 });
+
+describe("带钥匙的邀请（私密房一键直达）", () => {
+  it("#c=房号&h=房主ID&k=钥匙 能解析成完整进房目标", () => {
+    const raw = "#c=302114&h=5b-h-302114&k=abcdefghijklmnopqrstuvwx";
+    expect(parseJoinInput(raw)).toEqual({
+      code: "302114",
+      hostId: "5b-h-302114",
+      roomKey: "abcdefghijklmnopqrstuvwx",
+    });
+  });
+});
