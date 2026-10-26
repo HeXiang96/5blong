@@ -589,6 +589,8 @@ export type GuestMessage =
    * - off     不看（页面隐藏 / 主动收起），完全不发
    */
   | { t: "screen-watch"; state: ScreenWatchState }
+  /** 进房之后才登录：补报账号 ID，房主更新名册后其他人立刻可加好友 */
+  | { t: "account"; accountId: string }
   | { t: "ping"; ts: number }
   | { t: "pong"; ts: number };
 
@@ -709,6 +711,10 @@ export function parseGuestMessage(data: unknown): GuestMessage | null {
       return { t: "screen-share-stop" };
     case "screen-watch": {
       return isScreenWatchState(msg["state"]) ? { t: "screen-watch", state: msg["state"] } : null;
+    }
+    case "account": {
+      const accountId = str(msg["accountId"], 8);
+      return /^\d{8}$/.test(accountId) ? { t: "account", accountId } : null;
     }
     case "screen-pref": {
       // 观众的画质偏好：形状不对就丢弃（旧房主收到也会安全忽略）

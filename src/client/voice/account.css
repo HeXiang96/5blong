@@ -503,3 +503,91 @@
   background: rgba(255, 236, 200, 0.14);
   color: #f4e4c2;
 }
+
+/* ---------------- 房间内好友请求提示 ----------------
+   底部控制栏上方居中；只占自身大小，其余区域穿透，不挡操作。 */
+.vx-freq {
+  position: fixed;
+  left: 50%;
+  bottom: 96px;
+  transform: translateX(-50%);
+  z-index: 45;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  max-width: min(420px, calc(100vw - 32px));
+  padding: 8px 10px 8px 9px;
+  border-radius: 13px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.55) 0%, rgba(255, 255, 255, 0) 40%),
+    linear-gradient(180deg, #fffdf6 0%, #f6e9d0 100%);
+  border: 1px solid rgba(120, 78, 34, 0.28);
+  box-shadow: 0 10px 26px rgba(70, 44, 14, 0.24);
+  color: #4a3212;
+  animation: vx-freq-in 0.18s ease-out;
+}
+
+@keyframes vx-freq-in {
+  from { opacity: 0; transform: translate(-50%, 6px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+
+.vx-freq-main {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  margin-right: 2px;
+}
+.vx-freq-main b {
+  font-size: 12.5px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.vx-freq-main span {
+  font-size: 10.5px;
+  color: #8a7355;
+}
+
+.vx-freq-accept {
+  flex: 0 0 auto;
+  padding: 6px 13px;
+  border-radius: 999px;
+  border: 1px solid rgba(120, 78, 34, 0.5);
+  background: linear-gradient(180deg, #d9a35c, #b87a35);
+  color: #fff8ea;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.vx-freq-accept:hover {
+  filter: brightness(1.05);
+}
+.vx-freq-dismiss {
+  flex: 0 0 auto;
+  padding: 6px 8px;
+  border: none;
+  background: none;
+  color: #8a7355;
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.vx-freq-dismiss:hover {
+  color: #5b3d18;
+}
+
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-freq {
+  background:
+    linear-gradient(180deg, rgba(255, 236, 200, 0.08) 0%, rgba(255, 236, 200, 0) 40%),
+    linear-gradient(180deg, #33291b 0%, #271f14 100%);
+  border-color: rgba(255, 226, 170, 0.24);
+  color: #f4e4c2;
+}
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-freq-main span,
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-freq-dismiss {
+  color: #cbb28a;
+}

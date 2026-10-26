@@ -1491,6 +1491,20 @@ export class VoiceMesh {
         this.routeScreenWatch(guest.member.id, message.state);
         break;
       }
+      case "account": {
+        /*
+         * 访客进房之后才登录：把账号 ID 补进他的成员记录，然后重播名册。
+         * 不这么做的话，别人看他永远是"没有 ID"，菜单里的「加好友」不出现
+         * ——这正是 2026-10-26 "登录了也加不了房主/成员"的一半原因。
+         */
+        const record = this.members.get(guest.member.id);
+        if (record) {
+          this.members.set(record.id, { ...record, accountId: message.accountId });
+          this.emitMembers();
+          this.broadcastHost({ t: "roster", members: this.roster() });
+        }
+        break;
+      }
       case "ping": {
         this.send(conn, { t: "pong", ts: message.ts });
         break;
@@ -1877,6 +1891,9 @@ export class VoiceMesh {
     this.emitMembers();
     if (this.hosting && this.joined) {
       this.broadcastHost({ t: "roster", members: this.roster() });
+    } else if (this.joined && this.hostConn) {
+      // 访客没有广播权：向房主补报一次，由房主更新名册并重播
+      if (next) this.send(this.hostConn, { t: "account", accountId: next });
     }
   }
 

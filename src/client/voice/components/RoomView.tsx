@@ -864,6 +864,15 @@ export function RoomView({
                   </>
                 ) : null}
 
+                {selfAccountId && !audioMenu.accountId ? (
+                  <>
+                    <div className="vx-menu-divider" />
+                    <button type="button" className="vx-menu-btn" disabled title="对方没登录账号，无法加好友">
+                      <UserPlus size={14} /> 对方未登录，无法加好友
+                    </button>
+                  </>
+                ) : null}
+
                 {selfAccountId && audioMenu.accountId && audioMenu.accountId !== selfAccountId ? (
                   <>
                     <div className="vx-menu-divider" />

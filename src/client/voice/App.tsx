@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 
 import { preloadRnnoise } from "./engine";
 import { shouldShowOnboarding } from "./onboarding";
@@ -12,6 +12,7 @@ import { WhatsNewDialog } from "./components/WhatsNewDialog";
 import { shouldShowWhatsNew } from "./whats-new";
 import { SettingsView } from "./components/SettingsView";
 import { AccountDialog, FriendsDrawer } from "./components/AccountPanels";
+import { FriendRequestToast } from "./components/FriendRequestToast";
 import { LocalAccountAdapter, seedDemoAccounts } from "./account/local-adapter";
 import { useAccount } from "./account/use-account";
 import { Banner } from "./components/ui";
@@ -43,6 +44,12 @@ export function App() {
   const account = useAccount(accountAdapter);
   const [accountOpen, setAccountOpen] = useState(false);
   const [friendsOpen, setFriendsOpen] = useState(false);
+  /*
+   * 房间内收到好友请求：排一条轻提示，能就地同意（不用退出房间去好友面板）。
+   * seen 记录已经提示过的账号，避免每次刷新重复弹。
+   */
+  const [incomingQueue, setIncomingQueue] = useState<string[]>([]);
+  const seenRequests = useRef<Set<string>>(new Set());
 
   const voice = useVoice();
 
@@ -50,6 +57,16 @@ export function App() {
   useEffect(() => {
     voice.setAccountId(account.me?.id ?? null);
   }, [account.me?.id, voice.setAccountId]);
+
+  // 发现"新的"好友请求 → 入队（同一个账号只提示一次）
+  useEffect(() => {
+    const fresh = account.snapshot.incoming
+      .map((request) => request.account.id)
+      .filter((id) => !seenRequests.current.has(id));
+    if (fresh.length === 0) return;
+    for (const id of fresh) seenRequests.current.add(id);
+    setIncomingQueue((queue) => [...queue, ...fresh]);
+  }, [account.snapshot.incoming]);
 
   /*
    * 登录后昵称/头像跟随账号（2026-10-26 反馈："房间里的名字和外面不同步"）。
@@ -433,6 +450,30 @@ export function App() {
           ) : null}
         </>
       )}
+      {/*
+        房间内的好友请求提示：一条轻卡片，8 秒自动收起；
+        点「同意」就地完成，不用退出房间。只在房间里出现，首页不打扰。
+      */}
+      {incomingQueue.length > 0
+        ? (() => {
+            const request = account.snapshot.incoming.find(
+              (item) => item.account.id === incomingQueue[0],
+            );
+            if (!request) return null;
+            return (
+              <FriendRequestToast
+                request={request}
+                onAccept={() => {
+                  const id = request.account.id;
+                  setIncomingQueue((queue) => queue.filter((item) => item !== id));
+                  void accountAdapter.acceptFriend(id).then(() => account.refresh());
+                }}
+                onDismiss={() => setIncomingQueue((queue) => queue.slice(1))}
+              />
+            );
+          })()
+        : null}
+
       {gameLayer}
 
       {/* 账号 / 好友：与房间逻辑完全解耦，关闭即回到原来的界面 */}
