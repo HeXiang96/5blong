@@ -89,7 +89,22 @@ function useDaypart(): Daypart {
     };
     update();
     const timer = window.setInterval(update, 60_000);
-    return () => window.clearInterval(timer);
+    /*
+     * 窗口最小化时 setInterval 会被系统/浏览器压住（桌面端尤其明显）：
+     * 傍晚开着的客户端，放到半夜回来，场景还停在白天——天空是奶油色 + 太阳，
+     * 草地也还是白天那套绿，两截都"没入夜"（2026-10-26 反馈的截图）。
+     * 所以只要重新可见 / 拿到焦点 / 用户点了任何地方，都立刻补算一次。
+     */
+    const refresh = () => update();
+    document.addEventListener("visibilitychange", refresh);
+    window.addEventListener("focus", refresh);
+    window.addEventListener("pointerdown", refresh, { passive: true });
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", refresh);
+      window.removeEventListener("focus", refresh);
+      window.removeEventListener("pointerdown", refresh);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   return daypart;

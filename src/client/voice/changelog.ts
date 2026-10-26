@@ -20,6 +20,14 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.8.8",
+    date: "2026-10-26",
+    lines: [
+      "夜里开着窗口挂一会儿，回来场景会自动入夜",
+      "首页卡片跟随夜晚变暗，不再一半黑一半亮",
+    ],
+  },
+  {
     version: "1.8.7",
     date: "2026-10-25",
     lines: [
