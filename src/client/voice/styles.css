@@ -3522,9 +3522,14 @@ html[data-theme="dark"] .vx-link-warn-text {
 }
 
 /* ================================================================
- * 主页：频道分层（2026-10-22）
+ * 首页：频道分层（2026-10-22）
  * 语言沿用现有体系：纸面 + 木框（同底部公告栏）。
  * 卡片一律不加描边——深色下任何边框都是一条亮线，分层靠底色差 + 投影。
+ *
+ * 这些卡片是**硬编码的奶油木色**，而"浅色主题 + 夜晚时段"会把整页色板翻成暗色
+ * （见文件顶部的 --vx-* 覆盖）。如果只写 html[data-theme="dark"]，夜里就会出现
+ * "场景全黑、卡片还是亮奶油"的割裂（2026-10-26 截图反馈），所以深色规则统一用
+ * :is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) 匹配。
  * ================================================================ */
 
 .vx-channels {
@@ -3669,10 +3674,10 @@ html[data-theme="dark"] .vx-link-warn-text {
 }
 
 /* ------------------------------ 深色 ------------------------------ */
-html[data-theme="dark"] .vx-channel {
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-channel {
   color: #f4e4c2;
 }
-html[data-theme="dark"] .vx-channel-main {
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-channel-main {
   background:
     linear-gradient(180deg, rgba(255, 236, 200, 0.07) 0%, rgba(255, 236, 200, 0) 34%),
     linear-gradient(180deg, #33291b 0%, #271f14 100%);
@@ -3680,30 +3685,30 @@ html[data-theme="dark"] .vx-channel-main {
     0 1px 0 rgba(255, 255, 255, 0.06) inset,
     0 8px 20px rgba(0, 0, 0, 0.42);
 }
-html[data-theme="dark"] .vx-channel-sub {
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-channel-sub {
   background: rgba(255, 236, 200, 0.05);
 }
-html[data-theme="dark"] .vx-channel-head {
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-channel-head {
   color: #f4e4c2;
 }
-html[data-theme="dark"] .vx-channel-desc,
-html[data-theme="dark"] .vx-channel-link,
-html[data-theme="dark"] .vx-channel-invite {
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-channel-desc,
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-channel-link,
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-channel-invite {
   color: #cbb28a;
 }
-html[data-theme="dark"] .vx-code-input {
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-code-input {
   background: rgba(0, 0, 0, 0.28);
   color: #f4e4c2;
 }
-html[data-theme="dark"] .vx-code-input:focus {
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-code-input:focus {
   box-shadow:
     0 1px 2px rgba(0, 0, 0, 0.2) inset,
     0 0 0 3px rgba(207, 150, 80, 0.28);
 }
-html[data-theme="dark"] .vx-code-input::placeholder {
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-code-input::placeholder {
   color: #9c8763;
 }
-html[data-theme="dark"] .vx-channel-error {
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-channel-error {
   color: #ff8a72;
 }
 
@@ -3811,7 +3816,7 @@ html[data-theme="dark"] .vx-channel-error {
 }
 
 /* ------------------------------ 深色 ------------------------------ */
-html[data-theme="dark"] .vx-id-chip {
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-id-chip {
   border-color: rgba(255, 226, 170, 0.28);
   background:
     repeating-linear-gradient(92deg, rgba(255, 226, 170, 0.05) 0 2px, rgba(255, 226, 170, 0) 2px 9px),
@@ -3820,24 +3825,24 @@ html[data-theme="dark"] .vx-id-chip {
     0 1px 0 rgba(255, 255, 255, 0.12) inset,
     0 2px 6px rgba(0, 0, 0, 0.35);
 }
-html[data-theme="dark"] .vx-id-name {
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-id-name {
   color: #f4e4c2;
   text-shadow: 0 1px 0 rgba(0, 0, 0, 0.35);
 }
-html[data-theme="dark"] .vx-id-name:hover {
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-id-name:hover {
   background: rgba(255, 236, 200, 0.14);
 }
-html[data-theme="dark"] .vx-id-input {
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-id-input {
   background: #3a2c15;
   border-color: rgba(255, 226, 170, 0.3);
   color: #f4e4c2;
 }
-html[data-theme="dark"] .vx-id-copy {
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-id-copy {
   border-color: rgba(255, 226, 170, 0.3);
   background: rgba(255, 236, 200, 0.12);
   color: #f4e4c2;
 }
-html[data-theme="dark"] .vx-id-copy:hover {
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-id-copy:hover {
   background: rgba(255, 236, 200, 0.22);
 }
 
@@ -4051,6 +4056,19 @@ html:not([data-theme="dark"]) .vx-landing .vx-pen-frame-sky {
 }
 html:not([data-theme="dark"]) .vx-landing .vx-pen-frame[data-daypart="morning"] .vx-pen-frame-sky {
   background: linear-gradient(180deg, #f3e0d6 0%, #f5e7d0 42%, #eee1cb 100%);
+}
+
+/*
+ * 夜晚必须压过上面这条"压亮度"规则（2026-10-26 修）。
+ *
+ * 上面那些 `html:not([data-theme="dark"]) .vx-landing .vx-pen-frame-sky` 的选择器
+ * 比 pen-scene.css 里的 `.vx-pen-frame[data-daypart="night"] .vx-pen-frame-sky`
+ * **特异性高**（多了 html[data-theme] 和 .vx-landing），所以入夜后：
+ * 草地/远山都变深了，天空却还停在白天的奶油色——上半部分和草原完全割裂。
+ * 这里用同特异性的夜晚规则收回来。
+ */
+html:not([data-theme="dark"]) .vx-landing .vx-pen-frame[data-daypart="night"] .vx-pen-frame-sky {
+  background: linear-gradient(180deg, #171c2c 0%, #1d2130 48%, #242022 100%);
 }
 html:not([data-theme="dark"]) .vx-landing .vx-sun {
   box-shadow: 0 0 0 12px rgba(250, 220, 140, 0.12), 0 0 30px 6px rgba(250, 220, 140, 0.18);
