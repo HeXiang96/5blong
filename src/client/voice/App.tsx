@@ -45,6 +45,11 @@ export function App() {
   const [friendsOpen, setFriendsOpen] = useState(false);
 
   const voice = useVoice();
+
+  // 账号 ID 只用于「加好友」：登录/退出时同步给引擎，不参与任何进房校验
+  useEffect(() => {
+    voice.setAccountId(account.me?.id ?? null);
+  }, [account.me?.id, voice.setAccountId]);
   /*
    * 开黑圈是**独立子系统**：引擎、状态、界面都不复用语音房
    * （语音房的连接拓扑/共享/猪圈互动对开黑圈都不适用）。
@@ -246,6 +251,14 @@ export function App() {
     return (
       <>
       <RoomView
+        selfAccountId={account.me?.id ?? null}
+        friendAccountIds={new Set(account.snapshot.friends.map((entry) => entry.account.id))}
+        onAddFriend={(accountId) =>
+          accountAdapter.addFriend(accountId).then((result) => {
+            void account.refresh();
+            return !result.error;
+          })
+        }
         status={voice.status}
         members={voice.members}
         speaking={voice.speaking}

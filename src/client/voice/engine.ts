@@ -226,6 +226,11 @@ export interface Member {
   deafened?: boolean;
   /** 该端是否报了 AV1 **硬件解码**（决定共享者能不能上 AV1；缺省 = 不能）。 */
   av1Decode?: boolean;
+  /**
+   * 对方账号 ID（8 位，可选）。只用于「加好友」按钮——未登录 / 旧客户端没有，
+   * **不参与任何进房或权限判断**。
+   */
+  accountId?: string;
 }
 
 export interface ChatMessage {
@@ -1551,6 +1556,7 @@ export class VoiceMesh {
     const member: Member = {
       id: peerId,
       personId: message.personId,
+      ...(message.accountId ? { accountId: message.accountId } : {}),
       sessionId: message.sessionId,
       name: message.name,
       avatar: message.avatar,
@@ -1795,6 +1801,7 @@ export class VoiceMesh {
       // 能力字段必须随名册广播：共享者（可能是房主、也可能是访客）要据此判断
       // "是不是所有人都能硬解 AV1"，只有全员支持才敢上 AV1。
       av1Decode: member.av1Decode === true,
+      ...(member.accountId ? { accountId: member.accountId } : {}),
     }));
   }
 
@@ -1846,6 +1853,11 @@ export class VoiceMesh {
   // -------------------------------------------------------------- 屏幕共享（围炉看 TV）
 
   /** 当前屏幕共享状态（null = 没人在共享，电视收起来了）。 */
+  /** 登录状态变化时调用；不影响任何已有连接，只是下次广播带上它。 */
+  setAccountId(id: string | null): void {
+    this.accountId = id && /^\d{8}$/.test(id) ? id : null;
+  }
+
   getScreenShareState(): ScreenShareState | null {
     return this.screenShareState;
   }
@@ -2386,6 +2398,7 @@ export class VoiceMesh {
       t: "hello",
       personId: this.me.personId,
       sessionId: this.me.sessionId,
+      ...(this.accountId ? { accountId: this.accountId } : {}),
       name: this.me.name,
       avatar: this.me.avatar,
       color: this.me.color,
@@ -2589,6 +2602,7 @@ export class VoiceMesh {
           serverMuted: message.member.serverMuted ?? false,
           deafened: message.member.deafened ?? false,
           ...(message.member.av1Decode === true ? { av1Decode: true } : {}),
+          ...(message.member.accountId ? { accountId: message.member.accountId } : {}),
           local: false,
         });
         this.emitMembers();
@@ -3235,6 +3249,8 @@ export class VoiceMesh {
    * 每位观众的"看不看共享"（共享者视角，2026-10-25）：
    * watch=满码率 / preview=低码率缩略 / off=完全不发（关掉那一路，省上行）。
    */
+  /** 本机账号 ID（未登录为 null）：只随 hello/名册广播，给"加好友"用。 */
+  private accountId: string | null = null;
   private screenWatch = new Map<string, ScreenWatchState>();
   /** 我自己作为观众时的观看状态。 */
   private myScreenWatch: ScreenWatchState = "preview";

@@ -47,6 +47,7 @@ import {
   VolumeX,
   X,
   Gift,
+  UserPlus,
 } from "lucide-react";
 
 import type { ChatMessage, EngineStatus, MediaLinkState, Member } from "../engine";
@@ -101,6 +102,8 @@ import pigWalkUrl from "../assets/pig-walk.webp?url";
 interface AudioMenuState {
   peerId: string;
   personId: string;
+  /** 对方账号 ID（8 位）；未登录 / 旧客户端没有 → 不显示"加好友" */
+  accountId?: string;
   self: boolean;
   isHost: boolean;
   /** 被选中的成员是否被房主强制禁言。 */
@@ -184,6 +187,9 @@ export function RoomView({
   shareLatency,
   onSetShareLatency,
   onWatchScreen,
+  selfAccountId = null,
+  friendAccountIds,
+  onAddFriend,
 }: {
   status: EngineStatus;
   members: Member[];
@@ -282,6 +288,12 @@ export function RoomView({
   onSetShareLatency: (mode: "low" | "balanced" | "smooth") => void;
   /** 观众看不看共享：灯箱打开=watch（满码率），关掉=preview（低码率缩略）。 */
   onWatchScreen: (state: "watch" | "preview" | "off") => void;
+  /** 自己的账号 ID（未登录 null）：决定要不要显示"加好友" */
+  selfAccountId?: string | null;
+  /** 已经是好友的账号 ID 集合 */
+  friendAccountIds?: Set<string>;
+  /** 加好友（只在双方都登录时可用；不影响房内任何权限） */
+  onAddFriend?: (accountId: string) => Promise<boolean>;
 }) {
   const self = members.find((member) => member.local) ?? null;
   const muted = self?.muted ?? true;
@@ -606,6 +618,8 @@ export function RoomView({
   const listRef = useRef<HTMLDivElement | null>(null);
   const [draft, setDraft] = useState("");
   const [audioMenu, setAudioMenu] = useState<AudioMenuState | null>(null);
+  /** 本次打开菜单里是否已发出好友请求（按菜单实例重置） */
+  const [friendSent, setFriendSent] = useState(false);
   /** 当前面板对应成员的网络链路状态（连接中/失败时给"重新连接"入口）。 */
   const menuLinkState = audioMenu && !audioMenu.self ? mediaStates[audioMenu.peerId] : undefined;
   const [voiceOpen, setVoiceOpen] = useState(false);
@@ -615,9 +629,11 @@ export function RoomView({
     const audio = member.local
       ? { volume: micVolume, muted: false }
       : onGetPeerAudio(member.id);
+    setFriendSent(false);
     setAudioMenu({
       peerId: member.id,
       personId: member.personId,
+      ...(member.accountId ? { accountId: member.accountId } : {}),
       self: member.local,
       isHost: member.isHost,
       serverMuted: member.serverMuted ?? false,
@@ -825,6 +841,32 @@ export function RoomView({
                         <RefreshCw size={14} /> 重新连接
                       </button>
                     </div>
+                  </>
+                ) : null}
+
+                {selfAccountId && audioMenu.accountId && audioMenu.accountId !== selfAccountId ? (
+                  <>
+                    <div className="vx-menu-divider" />
+                    <button
+                      type="button"
+                      className="vx-menu-btn"
+                      disabled={friendAccountIds?.has(audioMenu.accountId) || friendSent}
+                      onClick={() => {
+                        const target = audioMenu.accountId;
+                        if (!target || !onAddFriend) return;
+                        void onAddFriend(target).then((ok) => {
+                          if (ok) setFriendSent(true);
+                        });
+                      }}
+                      title="用账号加对方为好友（与房主/闭听权限无关）"
+                    >
+                      <UserPlus size={14} />
+                      {friendAccountIds?.has(audioMenu.accountId)
+                        ? "已是好友"
+                        : friendSent
+                          ? "请求已发送"
+                          : "加好友"}
+                    </button>
                   </>
                 ) : null}
 

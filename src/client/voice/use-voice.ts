@@ -226,6 +226,8 @@ export function useVoice() {
   const penPositionsRef = useRef(new Map<string, { x: number; at: number }>());
 
   const engineRef = useRef<VoiceMesh | null>(null);
+  /** 登录账号 ID（未登录 null）：只随 hello/名册广播，不进任何校验分支。 */
+  const accountIdRef = useRef<string | null>(null);
   const chatOpenRef = useRef(false);
   const joinedRef = useRef(false);
   const identityRef = useRef(identity);
@@ -375,6 +377,8 @@ export function useVoice() {
     engineRef.current = engine;
     // 观众侧延迟档位：引擎持有一份，画面连接建立时按它排队
     engine.setScreenLatency(settingsRef.current.shareLatency);
+    // 账号 ID 只用于"加好友"，每次新建引擎都要补上（不参与进房）
+    engine.setAccountId(accountIdRef.current);
     return engine;
   }, [makeEngine]);
 
@@ -1277,6 +1281,12 @@ export function useVoice() {
    * 观众：告诉共享者"我现在怎么看看共享"。
    * watch=灯箱打开（满码率）/ preview=在房间挂着（低码率缩略）/ off=不看（完全不发）。
    */
+  /** 登录/退出时由 App 调用；已有连接不受影响，只是下次广播带上它。 */
+  const setAccountId = useCallback((id: string | null) => {
+    accountIdRef.current = id;
+    engineRef.current?.setAccountId(id);
+  }, []);
+
   const setScreenWatch = useCallback((state: "watch" | "preview" | "off") => {
     // 本地留一份：SFU 订阅层要按它切换（watch=满档、preview=低层）
     setScreenWatchState(state);
@@ -1701,5 +1711,6 @@ export function useVoice() {
     shareLatency: settings.shareLatency,
     setShareLatency,
     setScreenWatch,
+    setAccountId,
   };
 }

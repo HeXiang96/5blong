@@ -77,7 +77,7 @@ function Fixture() {
     status: "connected",
     members: [
       { id: "self", personId: "1000000001", sessionId: "local", name: "本机房主", avatar: "", color: "#f2704f", muted: false, hasMic: true, isHost: host, local: true },
-      { id: "guest", personId: "1000000002", sessionId: "guest", name: "测试成员", avatar: "", color: "#e05f8a", muted: false, hasMic: true, isHost: !host, local: false, serverMuted: params.get("muted") === "1" },
+      { id: "guest", personId: "1000000002", sessionId: "guest", name: "测试成员", avatar: "", color: "#e05f8a", muted: false, hasMic: true, isHost: !host, local: false, serverMuted: params.get("muted") === "1", accountId: "53720018" },
     ],
     speaking: params.get("speak") ? ["guest"] : [], messages: [], invite: { code: "123456", hostId: "self", roomKey: "fixture" }, notice: null,
     chatOpen, unread: 0, displayNames: new Map(), isHost: host, maxMembers: 13,
@@ -133,6 +133,12 @@ function Fixture() {
     onSetShareAppPid: (pid) => record("share-app", pid),
     shareLatency: "balanced" as const,
     onSetShareLatency: (mode) => record("share-latency", mode),
+    selfAccountId: "48231907",
+    friendAccountIds: new Set(params.get("friend") === "1" ? ["53720018"] : []),
+    onAddFriend: async (accountId) => {
+      record("add-friend", accountId);
+      return true;
+    },
     onWatchScreen: (state) => record("share-watch", state),
     shareViewMode: "auto" as const,
     onSetShareViewMode: (mode) => record("share-view-mode", mode),

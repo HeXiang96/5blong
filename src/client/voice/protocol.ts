@@ -541,6 +541,11 @@ export function parseScreenSharePublication(input: unknown): ScreenSharePublicat
 export interface WireMember {  id: string;
   /** 本机个人 ID，仅用于重名消歧展示，不作为身份凭据。 */
   personId: string;
+  /**
+   * 账号 ID（8 位）。只有登录了才有——**它只用于「加好友」，绝不参与进房校验**
+   * （未登录、旧客户端一律没有，房内一切照常）。
+   */
+  accountId?: string;
   /** 会话级短标识：同一个人开两个窗口也能区分开。 */
   sessionId: string;
   name: string;
@@ -563,7 +568,7 @@ export interface WireMember {  id: string;
 
 /** 访客 → 房主。 */
 export type GuestMessage =
-  | { t: "hello"; personId: string; sessionId: string; name: string; avatar: string; color: string; hasMic: boolean; muted: boolean; av1Decode?: boolean; nonce: string; proof: string }
+  | { t: "hello"; personId: string; sessionId: string; name: string; avatar: string; color: string; hasMic: boolean; muted: boolean; av1Decode?: boolean; accountId?: string; nonce: string; proof: string }
   | { t: "identity"; name: string; avatar: string; color: string }
   | { t: "joined" }
   | { t: "chat"; text: string }
@@ -665,6 +670,10 @@ export function parseGuestMessage(data: unknown): GuestMessage | null {
         hasMic: msg["hasMic"] === true,
         muted: msg["muted"] === true,
         ...(msg["av1Decode"] === true ? { av1Decode: true } : {}),
+        ...(() => {
+          const accountId = str(msg["accountId"], 8);
+          return /^\d{8}$/.test(accountId) ? { accountId } : {};
+        })(),
         nonce: str(msg["nonce"], 64),
         proof: str(msg["proof"], 128),
       };
@@ -897,6 +906,10 @@ function parseMember(value: unknown): WireMember | null {
     serverMuted: m["serverMuted"] === true,
     deafened: m["deafened"] === true,
     ...(m["av1Decode"] === true ? { av1Decode: true } : {}),
+    ...(() => {
+      const accountId = str(m["accountId"], 8);
+      return /^\d{8}$/.test(accountId) ? { accountId } : {};
+    })(),
   };
 }
 
