@@ -412,6 +412,15 @@ export class VoiceMesh {
   private guestPass = "";
   /** 访客侧的临时密码（断线重连时要用同一把 key 重新签 proof）。 */
   private passKey = "";
+  /**
+   * 临时密码的爆破防护（房主侧）：失败时间戳 + 冷却截止时间。
+   * 6 位数字只有 100 万种，而房主 ID 由房号推导 —— 知道房号就能一直试，
+   * 所以要有速率惩罚（见 handleHello）。
+   */
+  private passFailures: number[] = [];
+  private passLockedUntil = 0;
+  /** 阈值做成实例字段：测试可覆写，正式代码用默认值。 */
+  private passGuard = { threshold: 50, windowMs: 60_000, lockMs: 60_000 };
   private me: Member | null = null;
   private joined = false;
 
@@ -1554,6 +1563,18 @@ export class VoiceMesh {
     message: Extract<ReturnType<typeof parseGuestMessage>, { t: "hello" }>,
   ): Promise<void> {
     const peerId = conn.peer;
+    /*
+     * 临时密码是 6 位数字（100 万种），房主 ID 又由房号推导——
+     * 也就是说**知道房号的人可以一直试密码**。这里做两件事把爆破成本抬起来：
+     *   ① 每次失败后逐步加一点延迟（拖慢穷举，正常用户感觉不到）；
+     *   ② 一个窗口内失败太多就冷处理一段时间。
+     * 阈值可被测试覆写（正常使用远远达不到）。
+     */
+    const guard = this.passGuard;
+    const now = Date.now();
+    const lockedOut = now < this.passLockedUntil;
+    const slowDown = Math.min(this.passFailures.length, 5) * 120;
+
     const expected = await signGuestProof(this.roomKey, message.nonce, peerId, this.code);
     /*
      * 私密房：临时密码是"另一种来法的钥匙"，同样只用来签 HMAC（明文不上信令）。
@@ -1570,9 +1591,15 @@ export class VoiceMesh {
      * 这是"随手开一间、报个号就能进"的产品底线，别动。
      * 私密房：裸码不放行，必须有邀请链接或临时密码的证明（见 decideAdmission）。
      */
-    const proofValid = codeOnly
-      ? !this.privateRoom
-      : expected === message.proof || (!!expectedByPass && expectedByPass === message.proof);
+    // 两把钥匙分开判：邀请链接的 roomKey 证明、临时密码证明
+    const keyProofOk = !codeOnly && expected === message.proof;
+    const passProofOk = !codeOnly && !!expectedByPass && expectedByPass === message.proof;
+    /*
+     * 冷却期内只认邀请链接：密码那一路整体关闭（包括正确的密码），
+     * 这样爆破收益归零；真朋友这时可以让房主发个链接。
+     */
+    const effectiveProofOk = lockedOut ? keyProofOk : keyProofOk || passProofOk;
+    const proofValid = codeOnly ? !this.privateRoom : effectiveProofOk;
     const verdict = decideAdmission({
       hostReady: !this.destroyed && !!this.hostId,
       closed: this.destroyed,
@@ -1581,6 +1608,7 @@ export class VoiceMesh {
       codeMatches: isRoomCode(this.code),
       proofValid,
       privateRoom: this.privateRoom,
+      // "带没带证明"和"证明对不对"要分开：前者决定提示"要密码"，后者才是"密码错"
       proofProvided: !codeOnly,
       existing: this.guests.has(peerId),
       /*
@@ -1590,6 +1618,19 @@ export class VoiceMesh {
        */
       memberCount: this.guests.size + 1,
     });
+
+    // 私密房失败记账：只统计"密码不对"（裸码是明确要密码，邀请链接错是别人的事）
+    if (this.privateRoom && !verdict.ok && !codeOnly && !keyProofOk) {
+      this.passFailures.push(now);
+      const fresh = this.passFailures.filter((at) => now - at <= guard.windowMs);
+      this.passFailures = fresh;
+      if (fresh.length >= guard.threshold) {
+        this.passLockedUntil = now + guard.lockMs;
+        this.passFailures = [];
+      }
+    }
+    // 失败后逐步加一点延迟：拖慢穷举，正常用户察觉不到（最多 600ms）
+    if (slowDown > 0 && !verdict.ok) await new Promise((resolve) => setTimeout(resolve, slowDown));
 
     if (this.destroyed) return;
 

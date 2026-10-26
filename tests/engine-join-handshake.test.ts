@@ -576,3 +576,48 @@ describe("私密房门禁（我的房间）", () => {
     expect(lastMembers(hostHolder)).toHaveLength(2);
   });
 });
+
+/**
+ * 临时密码爆破防护（房主侧）：6 位数字只有 100 万种，而房主 ID 由房号推导，
+ * 知道房号的人能一直试。这里验证失败会记账、超阈值后冷处理、冷却期过后恢复。
+ */
+describe("私密房 · 临时密码爆破防护", () => {
+  it("连续失败到阈值后，连正确密码也暂时进不来；冷却结束才恢复", async () => {
+    const { host, invite } = await startHost({ private: true });
+    const pass = host.renewGuestPass();
+    // 阈值调小、冷却调短，避免测试里等一分钟
+    (host as any).passGuard = { threshold: 3, windowMs: 10_000, lockMs: 250 };
+
+    for (let i = 0; i < 3; i += 1) {
+      const { holder } = await startGuest({
+        code: invite.code,
+        hostId: "",
+        roomKey: "",
+        pass: "000000",
+      });
+      await sleep(60);
+      expect(lastStatus(holder)).not.toBe("connected");
+    }
+
+    // 冷却期内：正确密码也不放行（只剩邀请链接那条路能用）
+    const blocked = await startGuest({
+      code: invite.code,
+      hostId: "",
+      roomKey: "",
+      pass,
+    });
+    await sleep(80);
+    expect(lastStatus(blocked.holder)).not.toBe("connected");
+
+    // 冷却结束后恢复
+    await sleep(400);
+    const recovered = await startGuest({
+      code: invite.code,
+      hostId: "",
+      roomKey: "",
+      pass,
+    });
+    await sleep(400);
+    expect(lastStatus(recovered.holder)).toBe("connected");
+  });
+});
