@@ -307,6 +307,11 @@ interface FriendsDrawerProps {
   roomCode?: string | null;
   /** 邀请：复制一条邀请文案（真正的推送通道还没接） */
   onInvite?: (account: AccountProfile) => Promise<boolean>;
+  /**
+   * 能不能邀请：**只有房主可以**（2026-10-26 业主口径）。
+   * 成员可以自己复制房间码发给朋友，但"从好友列表拉人"是房主的动作。
+   */
+  canInvite?: boolean;
 }
 
 export function FriendsDrawer({
@@ -317,6 +322,7 @@ export function FriendsDrawer({
   onChanged,
   roomCode,
   onInvite,
+  canInvite = false,
 }: FriendsDrawerProps) {
   const [tab, setTab] = useState<"friends" | "requests" | "add">("friends");
   const [query, setQuery] = useState("");
@@ -442,6 +448,7 @@ export function FriendsDrawer({
                       )}
                     </span>
                   </div>
+                  {canInvite ? (
                   <button
                     type="button"
                     className="vx-friend-act"
@@ -469,6 +476,7 @@ export function FriendsDrawer({
                   >
                     {invited.has(entry.account.id) ? "已复制" : "邀请"}
                   </button>
+                  ) : null}
                 </div>
               );
             })
@@ -564,7 +572,11 @@ export function FriendsDrawer({
       </div>
 
       <div className="vx-friends-foot">
-        <span>{snapshot.outgoing.length > 0 ? `已发出 ${snapshot.outgoing.length} 条请求` : ""}</span>
+        {roomCode && !canInvite ? (
+          <span>本房由房主邀请好友，你可以用顶部「复制邀请」把房间码发给朋友</span>
+        ) : (
+          <span>{snapshot.outgoing.length > 0 ? `已发出 ${snapshot.outgoing.length} 条请求` : ""}</span>
+        )}
       </div>
     </aside>
   );

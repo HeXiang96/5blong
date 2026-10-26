@@ -498,6 +498,7 @@ export function App() {
         onClose={() => setFriendsOpen(false)}
         onChanged={() => void account.refresh()}
         roomCode={voice.invite?.code ?? null}
+        canInvite={voice.members.some((member) => member.local && member.isHost)}
         onInvite={() =>
           copyText(
             buildInviteText(voice.invite?.code ?? "", {
