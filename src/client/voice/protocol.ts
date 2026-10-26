@@ -686,17 +686,27 @@ export interface PenPose {
 
 export type WireMessage = GuestMessage | HostMessage;
 
-export type RejectReason =
-  | "bad-key"
+/**
+ * 所有拒绝原因。
+ *
+ * ⚠️ 新增原因**只改这一处**：类型与解析白名单原本是两份，
+ * 2026-10-26 就踩过——私密房加了 needs-pass/bad-pass，类型改了、白名单忘了，
+ * 结果 reject 消息在解析阶段被整条丢掉，访客只看到"一直在连接"。
+ */
+export const REJECT_REASONS = [
+  "bad-key",
   /** 私密房（「我的房间」）：没带任何证明，得用邀请链接或临时密码 */
-  | "needs-pass"
+  "needs-pass",
   /** 私密房：临时密码不对（或房主已经关掉了临时密码） */
-  | "bad-pass"
-  | "full"
-  | "closed"
-  | "locked"
-  | "duplicate"
-  | "version";
+  "bad-pass",
+  "full",
+  "closed",
+  "locked",
+  "duplicate",
+  "version",
+] as const;
+
+export type RejectReason = (typeof REJECT_REASONS)[number];
 
 const LIMITS = {
   name: 24,
@@ -832,8 +842,9 @@ export function parseHostMessage(data: unknown): HostMessage | null {
     }
     case "reject": {
       const reason = msg["reason"];
-      const reasons: RejectReason[] = ["bad-key", "full", "closed", "locked", "duplicate", "version"];
-      if (typeof reason !== "string" || !reasons.includes(reason as RejectReason)) return null;
+      if (typeof reason !== "string") return null;
+      // 与类型同源的白名单：漏加一个原因，整条 reject 会被丢掉（踩过）
+      if (!(REJECT_REASONS as readonly string[]).includes(reason)) return null;
       return { t: "reject", reason: reason as RejectReason };
     }
     case "kick": {

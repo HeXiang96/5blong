@@ -1329,14 +1329,15 @@ function accountCorsHeaders(request) {
     "Access-Control-Max-Age": "86400",
     Vary: "Origin",
   };
-  // 带 cookie 的跨域请求不允许 ACAO: *，必须回显具体 Origin
-  if (origin && origin !== self) {
-    headers["Access-Control-Allow-Origin"] = origin;
-    headers["Access-Control-Allow-Credentials"] = "true";
-  } else if (origin) {
+  /*
+   * 带 cookie 的跨域请求不允许 ACAO: *，必须回显具体 Origin。
+   * 同源请求（浏览器不带 Origin）不需要 ACAO，带上反而容易被误判成宽松策略。
+   */
+  if (origin) {
     headers["Access-Control-Allow-Origin"] = origin;
     headers["Access-Control-Allow-Credentials"] = "true";
   }
+  void self;
   return headers;
 }
 
@@ -1370,17 +1371,35 @@ function randomHex(bytes) {
   return hexOf(crypto.getRandomValues(new Uint8Array(bytes)).buffer);
 }
 
-async function pbkdf2Hex(password, salt) {
+/**
+ * 生成密码哈希：`pbkdf2$<迭代次数>$<hex>`。
+ *
+ * 为什么把迭代次数写进串里：Workers 免费计划有 CPU 时间上限，万一 12 万次在线上
+ * 被卡（表现为 1102 错误），调低这个常量即可——老用户的哈希自带次数，照样能验过。
+ */
+async function pbkdf2Hex(password, salt, rounds = PBKDF2_ROUNDS) {
   const encoder = new TextEncoder();
   const key = await crypto.subtle.importKey("raw", encoder.encode(password), "PBKDF2", false, [
     "deriveBits",
   ]);
   const bits = await crypto.subtle.deriveBits(
-    { name: "PBKDF2", salt: encoder.encode(salt), iterations: PBKDF2_ROUNDS, hash: "SHA-256" },
+    { name: "PBKDF2", salt: encoder.encode(salt), iterations: rounds, hash: "SHA-256" },
     key,
     256,
   );
-  return hexOf(bits);
+  return `pbkdf2$${rounds}$${hexOf(bits)}`;
+}
+
+/** 校验密码：兼容没有前缀的旧格式（纯 hex，按默认次数）。 */
+async function verifyPassword(password, salt, stored) {
+  const match = /^pbkdf2\$(\d+)\$([0-9a-f]+)$/.exec(String(stored ?? ""));
+  if (match) {
+    const rounds = Number(match[1]);
+    const hash = await pbkdf2Hex(password, salt, rounds);
+    return hash === stored;
+  }
+  const hash = await pbkdf2Hex(password, salt);
+  return hash.endsWith(`$${String(stored ?? "")}`) || hash.split("$")[2] === stored;
 }
 
 const ACCOUNT_USERNAME_RE = /^[a-zA-Z][a-zA-Z0-9_]{2,15}$/;
@@ -1441,7 +1460,9 @@ async function createSession(request, env, accountId) {
 /** 8 位数字账号 ID：好友用它加人，也是「我的房间」的绑定键。 */
 async function makeAccountId(env) {
   for (let attempt = 0; attempt < 40; attempt += 1) {
-    const id = String(Math.floor(10_000_000 + Math.random() * 89_999_999));
+    // 账号 ID 是主键也是加好友的凭据之一，别用可预测的 Math.random
+    const bucket = crypto.getRandomValues(new Uint32Array(1))[0] % 90_000_000;
+    const id = String(10_000_000 + bucket);
     const taken = await env.DB.prepare("SELECT 1 AS x FROM accounts WHERE id = ?").bind(id).first();
     if (!taken) return id;
   }
@@ -1493,8 +1514,9 @@ async function accountLogin(request, env) {
     .first();
   // 账号不存在与密码错给同一个错误，不泄漏"这个名字注册过"
   if (!row) return accountJson(request, { error: "bad-credentials" }, 401);
-  const hash = await pbkdf2Hex(password, row.salt);
-  if (hash !== row.hash) return accountJson(request, { error: "bad-credentials" }, 401);
+  if (!(await verifyPassword(password, row.salt, row.hash))) {
+    return accountJson(request, { error: "bad-credentials" }, 401);
+  }
   const token = await createSession(request, env, row.id);
   return accountJson(request, { account: toProfile(row), token }, 200, {
     "Set-Cookie": sessionCookie(request, token, Math.floor(SESSION_TTL_MS / 1000)),

@@ -18,7 +18,7 @@ import { buildInviteText } from "./invite-text";
 import { LocalAccountAdapter, seedDemoAccounts } from "./account/local-adapter";
 import { WorkerAccountAdapter } from "./account/worker-adapter";
 import { useAccount } from "./account/use-account";
-import type { AccountProfile, RoomInvite } from "./account/types";
+import { ACCOUNT_ERROR_TEXT, type AccountProfile, type RoomInvite } from "./account/types";
 import { Banner } from "./components/ui";
 import { gameCodeFromUrl } from "../game/game-links";
 /*
@@ -40,7 +40,8 @@ export function App() {
     if (!forceLocal) return new WorkerAccountAdapter();
     const adapter = new LocalAccountAdapter();
     // 预览入口：?account=demo 时种两个演示账号，一个人也能点完加好友闭环
-    if (params.has("account=demo") && !sessionStorage.getItem("5blong.demoSeeded")) {
+    // 注意：URL 是 ?account=demo，键是 account、值是 demo —— 不能写成 params.has("account=demo")
+    if (params.get("account") === "demo" && !sessionStorage.getItem("5blong.demoSeeded")) {
       // 只种一次并刷新一次，避免死循环
       sessionStorage.setItem("5blong.demoSeeded", "1");
       void seedDemoAccounts().then(() => window.location.reload());
@@ -94,6 +95,18 @@ export function App() {
       window.clearInterval(timer);
     };
   }, [account.me?.id, accountAdapter]);
+
+  /*
+   * 在线心跳：登录后每 30 秒报一次（在房间里带上房号）。
+   * 没有这一步，好友面板里所有人永远是"离线"——「谁在线 / 在 235417 房」全靠它。
+   */
+  useEffect(() => {
+    if (!account.me) return;
+    const room = voice.invite?.code;
+    accountAdapter.heartbeat(room);
+    const timer = window.setInterval(() => accountAdapter.heartbeat(room), 30_000);
+    return () => window.clearInterval(timer);
+  }, [account.me?.id, voice.invite?.code, accountAdapter]);
 
   /** 加入邀请：先消掉这条记录，再走正常的进房流程（私密房会就地要临时密码）。 */
   const joinInvite = useCallback(
@@ -179,7 +192,11 @@ export function App() {
       const code = normalizeFixedRoomCode(raw);
       if (!code) return false;
       const result = await accountAdapter.updateProfile({ roomCode: code });
-      if (result.error) return false;
+      if (result.error) {
+        // 别只回 false：被占用和已锁定要让人分清（前者还能换，后者没机会了）
+        voice.setNotice({ kind: "error", text: ACCOUNT_ERROR_TEXT[result.error] });
+        return false;
+      }
       void account.refresh();
       voice.setNotice({ kind: "info", text: `固定房号已改成 ${code}` });
       return true;

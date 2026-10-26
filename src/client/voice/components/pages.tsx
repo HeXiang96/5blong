@@ -183,10 +183,15 @@ export function LandingView({
       return;
     }
     onDismissError?.();
-    // 私密房：房主给的临时密码跟着一起提交（协议里是"房号 密码"两段）
-    const pass = passDraft.trim();
+    /*
+     * 私密房：房主给的临时密码跟着一起提交（协议里是"房号 密码"两段）。
+     * ⚠️ 只有 needsPass 时才拼密码——否则残留的密码会跟着普通房的裸码一起发出去，
+     * 引擎拿它签出证明、房主那边对不上，反而被拒成"房间密钥不正确"。
+     */
+    const pass = needsPass ? passDraft.trim() : "";
     const ok = onJoin(pass ? `${code} ${pass}` : code);
     setParseError(ok ? null : JOIN_PARSE_ERROR);
+    if (ok) setPassDraft("");
   };
   const [editing, setEditing] = useState(false);
   const [draftName, setDraftName] = useState(identity.name);
@@ -498,15 +503,24 @@ export function LandingView({
             <button type="button" className="vx-btn vx-btn-primary" onClick={onCreate} disabled={joining}>
               <Plus size={18} /> 创建语音房
             </button>
-            {myRoom && onStartMyRoom ? (
+            {/*
+              登录了但没有固定房号时，这条按钮是"认领"入口——没有它这个账号永远拿不到房号
+              （第一次点会分配一个 6 位号，之后一直用它）。
+            */}
+            {account && onStartMyRoom ? (
               <button
                 type="button"
                 className="vx-btn vx-btn-ghost vx-myroom-open"
                 onClick={onStartMyRoom}
                 disabled={joining}
-                title="你的固定房号（私密房）：只认邀请链接或临时密码"
+                title={
+                  myRoom
+                    ? "你的固定房号（私密房）：只认邀请链接或临时密码"
+                    : "登录账号专属：分配一个永久属于你的房号（私密房）"
+                }
               >
-                <Play size={15} /> 我的房间 {myRoom.code} · 开始
+                <Play size={15} />
+                {myRoom ? `我的房间 ${myRoom.code} · 开始` : "认领我的房间（拿一个固定房号）"}
               </button>
             ) : null}
             {myRoom ? (

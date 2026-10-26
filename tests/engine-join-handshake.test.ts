@@ -286,9 +286,12 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 function makeEvents() {
   const statuses: Array<{ status: string; detail?: string }> = [];
   const membersSnapshots: any[][] = [];
+  /** 被拒原因（引擎的 rejected 事件）：UI 据此展开"临时密码"输入行 */
+  const reasons: string[] = [];
   return {
     statuses,
     membersSnapshots,
+    reasons,
     events: {
       status: (status: string, detail?: string) => statuses.push({ status, detail }),
       members: (members: any[]) => membersSnapshots.push(members),
@@ -303,6 +306,9 @@ function makeEvents() {
       playbackBlocked: () => {},
       rosterChange: () => {},
       mediaState: (_peerId?: string, _state?: string) => {},
+      rejected: (reason: string) => {
+        reasons.push(reason);
+      },
     },
   };
 }
@@ -322,7 +328,9 @@ afterEach(() => {
   for (const engine of engines) engine.destroy();
 });
 
-const startHost = async (): Promise<{ host: VoiceMesh; holder: any; invite: any }> => {
+const startHost = async (
+  prefer?: { private?: boolean },
+): Promise<{ host: VoiceMesh; holder: any; invite: any }> => {
   const holder = makeEvents();
   const host = new VoiceMesh(holder.events as any);
   engines.push(host);
@@ -330,7 +338,7 @@ const startHost = async (): Promise<{ host: VoiceMesh; holder: any; invite: any 
   holder.events.ready = (v: any) => {
     invite = v;
   };
-  await host.host(identity, defaultSettings(), false);
+  await host.host(identity, defaultSettings(), false, prefer);
   return { host, holder, invite };
 };
 
@@ -338,6 +346,7 @@ const startGuest = async (target: {
   code: string;
   hostId: string;
   roomKey: string;
+  pass?: string;
 }): Promise<{ guest: VoiceMesh; holder: any }> => {
   const holder = makeEvents();
   const guest = new VoiceMesh(holder.events as any);
@@ -502,3 +511,68 @@ function inviteCode(host: VoiceMesh): string {
 function hostPeerIdForCodePublic(code: string): string {
   return "5b-h-" + code;
 }
+
+/**
+ * 私密房（登录账号的「我的房间」）门禁 —— 2026-10-26 这轮改动的核心行为，
+ * 用真实引擎跑（信令与 PeerJS 已打桩），比手点界面硬：
+ *   ① 裸输房号 → 必须被拒，且原因是 needs-pass（不是笼统的 bad-key）
+ *   ② 房号 + 临时密码 → 进得来
+ *   ③ 房主关掉密码后，同一个密码立刻失效（bad-pass）
+ *   ④ 普通房老行为不变：裸码照样进
+ */
+describe("私密房门禁（我的房间）", () => {
+  it("裸输房号进不去，给的原因是 needs-pass", async () => {
+    const { holder: hostHolder, invite } = await startHost({ private: true });
+    const { holder: guestHolder } = await startGuest({
+      code: invite.code,
+      hostId: "",
+      roomKey: "",
+    });
+
+    await sleep(30);
+    expect(lastStatus(guestHolder)).not.toBe("connected");
+    expect(lastMembers(hostHolder)).toHaveLength(1);
+    expect(guestHolder.reasons).toContain("needs-pass");
+  });
+
+  it("房号 + 临时密码能进；关掉密码后同一个密码立刻失效", async () => {
+    const { host, holder: hostHolder, invite } = await startHost({ private: true });
+    const pass = host.renewGuestPass();
+    expect(pass).toMatch(/^\d{6}$/);
+
+    const { holder: guestHolder } = await startGuest({
+      code: invite.code,
+      hostId: "",
+      roomKey: "",
+      pass,
+    });
+    await sleep(30);
+    expect(lastStatus(guestHolder)).toBe("connected");
+    expect(lastMembers(hostHolder)).toHaveLength(2);
+
+    host.closeGuestPass();
+    expect(host.getGuestPass()).toBe("");
+    const { holder: lateHolder } = await startGuest({
+      code: invite.code,
+      hostId: "",
+      roomKey: "",
+      pass,
+    });
+    // 拒绝要走完"HNAC 校验 → 下发 reject"，比直接 connected 稍慢，给足时间
+    await sleep(300);
+    expect(lastStatus(lateHolder)).not.toBe("connected");
+    expect(lateHolder.reasons).toContain("bad-pass");
+  });
+
+  it("普通房不受影响：裸码仍然直接进", async () => {
+    const { holder: hostHolder, invite } = await startHost();
+    const { holder: guestHolder } = await startGuest({
+      code: invite.code,
+      hostId: "",
+      roomKey: "",
+    });
+    await sleep(30);
+    expect(lastStatus(guestHolder)).toBe("connected");
+    expect(lastMembers(hostHolder)).toHaveLength(2);
+  });
+});

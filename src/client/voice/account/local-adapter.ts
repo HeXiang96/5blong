@@ -410,6 +410,8 @@ export class LocalAccountAdapter implements AccountAdapter {
     if (me.id === accountId) return { error: "self" };
     const target = this.findById(accountId);
     if (!target) return { error: "not-found" };
+    // 与线上口径一致：只给好友发邀请（陌生人走好友请求那套）
+    if (!(this.graph().friends[me.id] ?? []).includes(accountId)) return { error: "not-found" };
     const book = read<Record<string, Record<string, { code: string; at: number }>>>(INVITES_KEY, {});
     (book[accountId] ??= {})[me.id] = { code: roomCode, at: Date.now() };
     write(INVITES_KEY, book);
