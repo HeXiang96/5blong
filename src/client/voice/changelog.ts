@@ -20,6 +20,12 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    // bump 自动插入（发版时保证首条 = 本次版本）；内容按需补充，留空 = 公告栏展示上一条有内容版本
+    version: "1.8.9",
+    date: "2026-10-26",
+    lines: [],
+  },
+  {
     version: "1.8.8",
     date: "2026-10-26",
     lines: [
