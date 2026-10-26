@@ -22,7 +22,21 @@ import {
 
 const ACCOUNTS_KEY = "5blong.accounts.v1";
 const FRIENDS_KEY = "5blong.friends.v1";
+/**
+ * 登录态存 sessionStorage 而不是 localStorage：
+ * 同一个浏览器开两个窗口 = 两个独立会话，可以拿一个当"朋友"，把
+ * 「加好友 → 同意 → 看到对方在线」整条路演示出来。
+ * （上线换成 Worker 的 httpOnly cookie 后，这个差异就不存在了。）
+ */
 const SESSION_KEY = "5blong.session.v1";
+const sessionStore = {
+  get: (): string | null => sessionStorage.getItem(SESSION_KEY) ?? localStorage.getItem(SESSION_KEY),
+  set: (id: string): void => sessionStorage.setItem(SESSION_KEY, id),
+  clear: (): void => {
+    sessionStorage.removeItem(SESSION_KEY);
+    localStorage.removeItem(SESSION_KEY);
+  },
+};
 const AVATAR_KEY = "5blong.avatar.";
 const CHANNEL = "5blong.account";
 
@@ -167,7 +181,7 @@ export class LocalAccountAdapter implements AccountAdapter {
   }
 
   current(): AccountProfile | null {
-    const id = localStorage.getItem(SESSION_KEY);
+    const id = sessionStore.get();
     if (!id) return null;
     const accounts = read<Record<string, StoredAccount>>(ACCOUNTS_KEY, {});
     const stored = accounts[id];
@@ -200,7 +214,7 @@ export class LocalAccountAdapter implements AccountAdapter {
     };
     accounts[id] = account;
     write(ACCOUNTS_KEY, accounts);
-    localStorage.setItem(SESSION_KEY, id);
+    sessionStore.set(id);
     this.beat();
     this.emit();
     return { account: stripAccount(account) };
@@ -214,14 +228,14 @@ export class LocalAccountAdapter implements AccountAdapter {
     if (!found) return { error: "bad-credentials" };
     const hash = await hashPassword(input.password, found.salt);
     if (hash !== found.hash) return { error: "bad-credentials" };
-    localStorage.setItem(SESSION_KEY, found.id);
+    sessionStore.set(found.id);
     this.beat();
     this.emit();
     return { account: stripAccount(found) };
   }
 
   logout(): void {
-    localStorage.removeItem(SESSION_KEY);
+    sessionStore.clear();
     this.emit();
   }
 
