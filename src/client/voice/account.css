@@ -327,9 +327,17 @@
   padding: 26px 16px;
   text-align: center;
 }
-.vx-friends-empty span {
-  font-size: 24px;
-  opacity: 0.85;
+/* 空状态插画：产品吉祥物（动画 WebP），别用 emoji */
+.vx-empty-pig {
+  width: 64px;
+  height: 64px;
+  object-fit: contain;
+  margin-bottom: 2px;
+}
+/* 叶子（请求为空）仍是线描 */
+.vx-friends-empty svg {
+  color: rgba(168, 111, 44, 0.55);
+  margin-bottom: 4px;
 }
 .vx-friends-empty b {
   font-size: 13px;
@@ -416,6 +424,9 @@
   border-color: rgba(255, 226, 170, 0.28);
   background: rgba(255, 236, 200, 0.1);
   color: #f4e4c2;
+}
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-friends-empty svg {
+  color: rgba(226, 186, 128, 0.6);
 }
 :is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-friend-room {
   background: rgba(207, 150, 80, 0.24);

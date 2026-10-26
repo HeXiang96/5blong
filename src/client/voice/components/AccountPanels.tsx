@@ -7,9 +7,34 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Copy, LogOut, Search, UserPlus, X } from "lucide-react";
 
+import landingPigUrl from "../assets/landing-pig.webp?url";
+
 import { Avatar } from "./ui";
 import type { AccountAdapter, AccountError, AccountProfile, FriendsSnapshot } from "../account/types";
 import { ACCOUNT_ERROR_TEXT, validatePassword, validateUsername } from "../account/types";
+
+/**
+ * 空状态插画：线描小猪 / 叶子。
+ *
+ * 原来用的是 🐷 emoji，和整套手绘木牌风格完全不搭（2026-10-26 反馈）。
+ * 这里改用极简线描，颜色走 currentColor，深浅主题自动跟随。
+ */
+function EmptyArt({ variant }: { variant: "pig" | "leaf" }) {
+  if (variant === "leaf") {
+    return (
+      <svg viewBox="0 0 64 64" width="44" height="44" aria-hidden fill="none"
+        stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M46 18c-16 0-28 9-28 22 0 3 1 6 2 8 14 0 26-12 26-30z" />
+        <path d="M20 48c6-9 14-16 24-21" />
+      </svg>
+    );
+  }
+  /*
+   * 用产品自己的吉祥物（落地页那只动画猪），比手画线描可爱、也更一致。
+   * 同一个资源已在首页加载过，这里不会额外多一次网络请求。
+   */
+  return <img className="vx-empty-pig" src={landingPigUrl} alt="" width={64} height={64} />;
+}
 
 interface AccountDialogProps {
   open: boolean;
@@ -379,7 +404,7 @@ export function FriendsDrawer({
         {tab === "friends" ? (
           snapshot.friends.length === 0 ? (
             <div className="vx-friends-empty">
-              <span aria-hidden>🐷</span>
+              <EmptyArt variant="pig" />
               <b>还没有好友</b>
               <p>用 8 位 ID 搜人，或在房间里点成员加好友</p>
             </div>
@@ -438,7 +463,7 @@ export function FriendsDrawer({
         {tab === "requests" ? (
           snapshot.incoming.length === 0 ? (
             <div className="vx-friends-empty">
-              <span aria-hidden>🍃</span>
+              <EmptyArt variant="leaf" />
               <b>没有待处理的请求</b>
               <p>别人加你时会出现在这里</p>
             </div>
