@@ -1047,22 +1047,41 @@ export function useVoice() {
     return () => window.clearTimeout(timer);
   }, [ended, resetRoom, teardown]);
 
-  const createRoom = useCallback(async () => {
-    // 房间状态整体重置，但先把 invite 清掉避免闪一下旧房间码。
-    resetRoom();
-    setTopicState("");
-    setNotice(null);
-    setJoinError(null);
-    setInvite(null);
-    setView("room");
-    const engine = startEngine();
-    // 尊重"进房默认静音"开关（评审 #2：原来三处全硬编码 true，开关是死的）
-    await engine.host(identityRef.current, settings, settings.joinMuted);
-    const mine = engine.invite;
-    // 记下"我的房间"：房主关掉客户端后，首页可以用同一房号+钥匙重建，
-    // 访客不用重新加（房号推导出的房主 peer id 断开后会被释放）。
-    if (mine) saveLastRoom(mine.code, "host", mine.roomKey);
-  }, [resetRoom, settings, startEngine]);
+  /**
+   * 开一间房。
+   *
+   * `prefer` 是「我的房间」（固定房号）：只有登录账号才有，由 App 从账号档案取出来
+   * 传进来（房号归账号、钥匙归设备，见 my-room.ts）。不传 = 随机房号的一次性房间。
+   *
+   * 房号被占用时引擎会换临时码（见 host 的重试循环），这里如实说明，并且**不动账号
+   * 上的房号**：对方一关，号还是你的。
+   */
+  const createRoom = useCallback(
+    async (prefer?: { code: string; roomKey: string }) => {
+      // 房间状态整体重置，但先把 invite 清掉避免闪一下旧房间码。
+      resetRoom();
+      setTopicState("");
+      setNotice(null);
+      setJoinError(null);
+      setInvite(null);
+      setView("room");
+      const engine = startEngine();
+      // 尊重"进房默认静音"开关（评审 #2：原来三处全硬编码 true，开关是死的）
+      await engine.host(identityRef.current, settings, settings.joinMuted, prefer);
+      const mine = engine.invite;
+      // 记下"上次房间"：房主关掉客户端后，首页可以用同一房号+钥匙重建。
+      if (mine) {
+        saveLastRoom(mine.code, "host", mine.roomKey);
+        if (prefer && mine.code !== prefer.code) {
+          setNotice({
+            kind: "error",
+            text: `你的房号 ${prefer.code} 这会儿被别人的房间占着，这间临时开在 ${mine.code}。等对方关掉再点就能回到自己的号。`,
+          });
+        }
+      }
+    },
+    [resetRoom, settings, startEngine],
+  );
 
 
   const joinRoom = useCallback(

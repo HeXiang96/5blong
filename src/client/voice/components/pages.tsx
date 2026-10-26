@@ -1,5 +1,17 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { Copy, Download, History, LogIn, Palette, Plus, Settings as SettingsIcon, Users } from "lucide-react";
+import {
+  Copy,
+  Download,
+  History,
+  LogIn,
+  Palette,
+  Pencil,
+  Play,
+  Plus,
+  RefreshCw,
+  Settings as SettingsIcon,
+  Users,
+} from "lucide-react";
 import { boardEntries } from "../changelog";
 import { SCENE_THEMES, type SceneThemeId } from "../scene-theme";
 import type { LastRoom, SessionSummary } from "../session-stats";
@@ -12,6 +24,7 @@ import {
   JOIN_PARSE_ERROR,
   JOIN_WAIT_HINT,
   ROOM_CODE_LEN,
+  isNewRoomCode,
   isRoomCode,
 } from "../protocol";
 import { Avatar, Spinner, Toggle } from "./ui";
@@ -60,6 +73,9 @@ export function LandingView({
   onDismissError,
   lastRoom = null,
   onResumeLastRoom,
+  myRoom = null,
+  onRenewMyRoom,
+  onClaimMyRoom,
   account = null,
   friendRequests = 0,
   onOpenAccount,
@@ -94,6 +110,12 @@ export function LandingView({
   onOpenFriends?: () => void;
   /** 恢复上次的房间（房主用原房号重新开房 / 访客按码重进） */
   onResumeLastRoom?: () => void;
+  /** 本机固定房号「我的房间」（null = 还没认领，第一次开房时自动认领） */
+  myRoom?: { code: string } | null;
+  /** 换一个固定房号（旧邀请链接随之失效） */
+  onRenewMyRoom?: () => void;
+  /** 手填一个自己喜欢的房号（"我要 520131"）；被占用/格式不对返回 false */
+  onClaimMyRoom?: (code: string) => Promise<boolean> | boolean;
   /** 开黑圈：创建（需要创建码）/ 加入（输房间码）。 */
   onCreateGame: () => void;
   onJoinGame: () => void;
@@ -119,6 +141,25 @@ export function LandingView({
   const [parseError, setParseError] = useState<string | null>(null);
   /** 首页内联房间码（不再弹一层窗：输码是最高频动作）。 */
   const [codeDraft, setCodeDraft] = useState("");
+  /** 「我的房间」改房号：就地编辑，不弹窗（弹窗会挡住刚看到的房号）。 */
+  const [roomEditing, setRoomEditing] = useState(false);
+  const [roomDraft, setRoomDraft] = useState("");
+  const [roomError, setRoomError] = useState<string | null>(null);
+
+  const commitRoomCode = async () => {
+    const code = roomDraft.trim();
+    if (!isNewRoomCode(code)) {
+      setRoomError(`固定房号要 ${ROOM_CODE_LEN} 位数字`);
+      return;
+    }
+    const ok = onClaimMyRoom ? await onClaimMyRoom(code) : false;
+    if (!ok) {
+      setRoomError("这个房号已经被别的账号用了，换一个试试");
+      return;
+    }
+    setRoomEditing(false);
+    setRoomError(null);
+  };
 
   /** 内联房间码 → 直接进房；格式不对就地提示，不打断。 */
   const joinByCode = () => {
@@ -403,14 +444,79 @@ export function LandingView({
               </p>
             ) : null}
             <button type="button" className="vx-btn vx-btn-primary" onClick={onCreate} disabled={joining}>
-              <Plus size={18} /> 创建语音房
+              {myRoom ? <Play size={17} /> : <Plus size={18} />}
+              {myRoom ? `我的房间 ${myRoom.code} · 开始` : "创建语音房"}
             </button>
+            {myRoom ? (
+              <div className="vx-myroom-tools">
+                {roomEditing ? (
+                  <>
+                    <input
+                      className="vx-code-input vx-myroom-input"
+                      value={roomDraft}
+                      autoFocus
+                      inputMode="numeric"
+                      autoComplete="off"
+                      aria-label="自定义房号"
+                      onChange={(event) => {
+                        setRoomError(null);
+                        setRoomDraft(event.target.value.replace(/\D/g, "").slice(0, ROOM_CODE_LEN));
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") void commitRoomCode();
+                        if (event.key === "Escape") setRoomEditing(false);
+                      }}
+                    />
+                    <button type="button" className="vx-link-btn" onClick={() => void commitRoomCode()}>
+                      保存
+                    </button>
+                    <button
+                      type="button"
+                      className="vx-link-btn"
+                      onClick={() => {
+                        setRoomEditing(false);
+                        setRoomError(null);
+                      }}
+                    >
+                      取消
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      className="vx-link-btn vx-channel-link"
+                      onClick={() => {
+                        setRoomDraft(myRoom.code);
+                        setRoomEditing(true);
+                      }}
+                      title="房号可以自己挑（6 位数字），别人念错了也进不来别人的房"
+                    >
+                      <Pencil size={14} /> 改房号
+                    </button>
+                    <button
+                      type="button"
+                      className="vx-link-btn vx-channel-link"
+                      onClick={onRenewMyRoom}
+                      title="随机换一个房号（之前发出去的邀请链接会失效）"
+                    >
+                      <RefreshCw size={14} /> 换个号
+                    </button>
+                  </>
+                )}
+              </div>
+            ) : null}
+            {roomError ? (
+              <p className="vx-channel-error" role="alert">
+                {roomError}
+              </p>
+            ) : null}
             <div className="vx-channel-foot">
               {/* 内联输入只吃数字；收到完整邀请链接的人走原弹窗（能解析链接）。 */}
               <button type="button" className="vx-link-btn vx-channel-invite" onClick={() => setJoinOpen(true)}>
                 有邀请链接？
               </button>
-              {lastRoom && !joining ? (
+              {lastRoom && !joining && !(lastRoom.role === "host" && lastRoom.code === myRoom?.code) ? (
               <button
                 type="button"
                 className="vx-link-btn vx-channel-link"

@@ -19,6 +19,14 @@ export interface AccountProfile {
   /** 头像版本（换头像时变化，用于缓存失效） */
   avatarVersion: number;
   createdAt: number;
+  /**
+   * 固定房号「我的房间 235417」——**绑定在账号上**（2026-10-26 业主口径）。
+   *
+   * - 只有登录账号才有固定房：没登录就是随机房号，退出登录也不该占着别人的号；
+   * - 换设备登录同一个账号，房号还是这一个（服务端存；本地适配器存在 localStorage）；
+   * - 缺省 = 这个账号还没领号，第一次开房时分配。
+   */
+  roomCode?: string;
 }
 
 export type PresenceState = "online" | "offline";
@@ -56,6 +64,7 @@ export type AccountError =
   | "not-found"
   | "already-friend"
   | "self"
+  | "room-taken"
   | "unknown";
 
 export interface AuthResult {
@@ -69,7 +78,9 @@ export interface AccountAdapter {
   register(input: { username: string; password: string; name?: string }): Promise<AuthResult>;
   login(input: { username: string; password: string }): Promise<AuthResult>;
   logout(): void;
-  updateProfile(patch: Partial<Pick<AccountProfile, "name" | "avatar" | "username">>): Promise<AuthResult>;
+  updateProfile(
+    patch: Partial<Pick<AccountProfile, "name" | "avatar" | "username" | "roomCode">>,
+  ): Promise<AuthResult>;
   search(query: string): Promise<AccountProfile[]>;
   addFriend(accountId: string): Promise<AuthResult>;
   acceptFriend(accountId: string): Promise<AuthResult>;
@@ -99,5 +110,6 @@ export const ACCOUNT_ERROR_TEXT: Record<AccountError, string> = {
   "not-found": "没找到这个账号（检查 8 位 ID 或用户名）",
   "already-friend": "你们已经是好友了",
   self: "不能加自己为好友",
+  "room-taken": "这个房号已经被别的账号占了，换一个试试",
   unknown: "出了点问题，稍后再试",
 };

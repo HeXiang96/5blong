@@ -2,7 +2,8 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react"
 
 import { preloadRnnoise } from "./engine";
 import { shouldShowOnboarding } from "./onboarding";
-import { isJoinInFlight } from "./protocol";
+import { isJoinInFlight, makeRoomCode, randomIndex } from "./protocol";
+import { ensureRoomKey, normalizeFixedRoomCode, renewRoomKey } from "./my-room";
 import { useVoice } from "./use-voice";
 import { ConfirmView, LandingView, SessionSummaryCard } from "./components/pages";
 import { RoomView } from "./components/RoomView";
@@ -15,6 +16,7 @@ import { AccountDialog, FriendsDrawer } from "./components/AccountPanels";
 import { FriendRequestToast } from "./components/FriendRequestToast";
 import { buildInviteText, copyText } from "./invite-text";
 import { LocalAccountAdapter, seedDemoAccounts } from "./account/local-adapter";
+import { WorkerAccountAdapter } from "./account/worker-adapter";
 import { useAccount } from "./account/use-account";
 import { Banner } from "./components/ui";
 import { gameCodeFromUrl } from "../game/game-links";
@@ -27,15 +29,17 @@ const GameEntry = lazy(() => import("../game/GameEntry").then((m) => ({ default:
 export function App() {
   /*
    * 账号是**可选增强层**：不登录一切照旧。
-   * 本地适配器用于预览与单机演示；上线时换成 Worker 实现，UI 不用改。
+   * - 线上：WorkerAccountAdapter（Pages Worker 的 /api/account，数据在 D1）；
+   * - 本地 vite dev：没有 Worker，用 LocalAccountAdapter 演示（两个窗口 = 两台设备）；
+   * - `?local-account=1` 可在线上强制用本地适配器（调试用，不影响别人）。
    */
   const [accountAdapter] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    const forceLocal = import.meta.env.DEV || params.has("local-account");
+    if (!forceLocal) return new WorkerAccountAdapter();
     const adapter = new LocalAccountAdapter();
     // 预览入口：?account=demo 时种两个演示账号，一个人也能点完加好友闭环
-    if (
-      window.location.search.includes("account=demo") &&
-      !sessionStorage.getItem("5blong.demoSeeded")
-    ) {
+    if (params.has("account=demo") && !sessionStorage.getItem("5blong.demoSeeded")) {
       // 只种一次并刷新一次，避免死循环
       sessionStorage.setItem("5blong.demoSeeded", "1");
       void seedDemoAccounts().then(() => window.location.reload());
@@ -53,6 +57,70 @@ export function App() {
   const seenRequests = useRef<Set<string>>(new Set());
 
   const voice = useVoice();
+
+  /*
+   * 固定房号「我的房间 235417」**只属于登录账号**（业主 2026-10-26 口径）：
+   * - 房号存在账号档案里（accountAdapter.updateProfile({ roomCode })），换设备登录
+   *   同一个账号还是这个号；
+   * - 房间钥匙存在本机、按账号分开（my-room.ts）——它只给邀请链接签证明；
+   * - 未登录 → 开的是随机房号的一次性房间，首页也不会出现「我的房间」。
+   */
+  const myRoomCode = account.me?.roomCode ?? null;
+
+  /** 主操作：有账号就开自己那间，没登录就随手开一间。 */
+  const startRoom = useCallback(async () => {
+    const me = account.me;
+    if (!me) {
+      await voice.createRoom();
+      return;
+    }
+    let code = me.roomCode ?? "";
+    if (!code) {
+      // 第一次开房才分配房号：不登录不占号，登录了也只占一个。
+      const fresh = makeRoomCode(randomIndex);
+      const result = await accountAdapter.updateProfile({ roomCode: fresh });
+      if (result.account) {
+        code = fresh;
+        void account.refresh();
+      } else {
+        // 极少见（本机存储写不进去）：这次先开随机房，下次再试
+        voice.setNotice({ kind: "error", text: "房号没能存进账号，这次先开一间临时的" });
+      }
+    }
+    await voice.createRoom(code ? { code, roomKey: ensureRoomKey(me.id) } : undefined);
+  }, [account, accountAdapter, voice]);
+
+  /** 手填固定房号（6 位）。被别的账号占了就返回 false，让首页就地报错。 */
+  const claimRoomCode = useCallback(
+    async (raw: string) => {
+      const me = account.me;
+      if (!me) return false;
+      const code = normalizeFixedRoomCode(raw);
+      if (!code) return false;
+      const result = await accountAdapter.updateProfile({ roomCode: code });
+      if (result.error) return false;
+      void account.refresh();
+      voice.setNotice({ kind: "info", text: `固定房号已改成 ${code}` });
+      return true;
+    },
+    [account, accountAdapter, voice],
+  );
+
+  /** 随机换一个固定房号（换号连钥匙一起换：旧邀请链接指向的房已经不存在了）。 */
+  const renewRoomCode = useCallback(async () => {
+    const me = account.me;
+    if (!me) return;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const code = makeRoomCode(randomIndex);
+      const result = await accountAdapter.updateProfile({ roomCode: code });
+      if (result.error) continue;
+      renewRoomKey(me.id);
+      void account.refresh();
+      voice.setNotice({ kind: "info", text: `已换成新房间号 ${code}，之前发出去的邀请链接作废了` });
+      return;
+    }
+    voice.setNotice({ kind: "error", text: "换号失败了，稍后再试" });
+  }, [account, accountAdapter, voice]);
 
   // 账号 ID 只用于「加好友」：登录/退出时同步给引擎，不参与任何进房校验
   useEffect(() => {
@@ -469,7 +537,7 @@ export function App() {
           <LandingView
             identity={voice.identity}
             onIdentityChange={voice.setIdentity}
-            onCreate={() => void voice.createRoom()}
+            onCreate={() => void startRoom()}
             onJoin={voice.submitJoinInput}
             onSettings={voice.openSettings}
             sceneTheme={voice.sceneTheme}
@@ -484,6 +552,9 @@ export function App() {
             onDismissError={() => voice.setJoinError(null)}
             lastRoom={voice.lastRoom}
             onResumeLastRoom={() => void voice.resumeLastRoom()}
+            myRoom={myRoomCode ? { code: myRoomCode } : null}
+            onRenewMyRoom={() => void renewRoomCode()}
+            onClaimMyRoom={claimRoomCode}
             account={account.me}
             friendRequests={account.snapshot.incoming.length}
             onOpenAccount={() => setAccountOpen(true)}

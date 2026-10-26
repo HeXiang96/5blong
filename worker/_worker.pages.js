@@ -54,6 +54,12 @@ export default {
       return handleAdmin(request, env);
     }
 
+    // /api/account/* → 账号 / 好友 / 固定房号（D1，表结构见 worker/accounts-schema.sql）。
+    // 「我的房间」的房号就是 accounts.room_code，绑在 8 位数字账号 ID 上。
+    if (url.pathname === "/api/account" || url.pathname.startsWith("/api/account/")) {
+      return handleAccount(request, env, url);
+    }
+
     // /peerjs* → 信令：转到我们**自建的信令服务**（service binding SIGNAL）。
     // 背景：公共 PeerJS 云会对握手返回 Cloudflare 1020（按浏览器签名封禁），
     // 部分用户完全进不去房间；借道转发也无效（它连我们 Worker 的请求一起拦）。
@@ -1291,3 +1297,473 @@ async function handleGameAdminInner(request, env) {
 }
 
 
+
+// ---------------------------------------------------------------------------
+// /api/account/* —— 账号 / 好友 / 固定房号（D1）
+//
+// 为什么和静态站同域：网页端不需要 CORS、cookie 是 first-party（httpOnly 才真的
+// 防 XSS 偷令牌）；桌面端（tauri.localhost）跨域，这里按 Origin 回 ARC + credentials
+// 兜住，另外还接受 Authorization: Bearer（WebView2 对第三方 cookie 不稳）。
+//
+// 数据口径见 worker/accounts-schema.sql：账号主键是 8 位数字 ID，
+// 「我的房间」的房号是 accounts.room_code，绑在这个 ID 上。
+// ---------------------------------------------------------------------------
+
+const ACCOUNT_PREFIX = "/api/account";
+const SESSION_COOKIE = "5blong_sess";
+const SESSION_TTL_MS = 30 * 24 * 3600_000;
+/** 心跳超过这个时间没更新就算离线（客户端 30 秒一跳，留两倍容差）。 */
+const PRESENCE_ONLINE_MS = 75_000;
+const MAX_AVATAR_CHARS = 120_000;
+/** 与客户端（PBKDF2 12 万次）保持一致，别单方面调低——那会让老密码全部失效。 */
+const PBKDF2_ROUNDS = 120_000;
+
+function accountCorsHeaders(request) {
+  const origin = request.headers.get("Origin");
+  const self = new URL(request.url).origin;
+  const headers = {
+    "Content-Type": "application/json; charset=utf-8",
+    "Cache-Control": "no-store",
+    "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    "Access-Control-Max-Age": "86400",
+    Vary: "Origin",
+  };
+  // 带 cookie 的跨域请求不允许 ACAO: *，必须回显具体 Origin
+  if (origin && origin !== self) {
+    headers["Access-Control-Allow-Origin"] = origin;
+    headers["Access-Control-Allow-Credentials"] = "true";
+  } else if (origin) {
+    headers["Access-Control-Allow-Origin"] = origin;
+    headers["Access-Control-Allow-Credentials"] = "true";
+  }
+  return headers;
+}
+
+function accountJson(request, data, status = 200, extraHeaders = {}) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { ...accountCorsHeaders(request), ...extraHeaders },
+  });
+}
+
+function readCookie(request, name) {
+  const raw = request.headers.get("Cookie");
+  if (!raw) return "";
+  for (const part of raw.split(";")) {
+    const index = part.indexOf("=");
+    if (index < 0) continue;
+    if (part.slice(0, index).trim() === name) return decodeURIComponent(part.slice(index + 1).trim());
+  }
+  return "";
+}
+
+function sessionCookie(request, token, maxAgeSeconds) {
+  const secure = new URL(request.url).protocol === "https:" ? "; Secure" : "";
+  return `${SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAgeSeconds}${secure}`;
+}
+
+const hexOf = (buffer) =>
+  [...new Uint8Array(buffer)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+
+function randomHex(bytes) {
+  return hexOf(crypto.getRandomValues(new Uint8Array(bytes)).buffer);
+}
+
+async function pbkdf2Hex(password, salt) {
+  const encoder = new TextEncoder();
+  const key = await crypto.subtle.importKey("raw", encoder.encode(password), "PBKDF2", false, [
+    "deriveBits",
+  ]);
+  const bits = await crypto.subtle.deriveBits(
+    { name: "PBKDF2", salt: encoder.encode(salt), iterations: PBKDF2_ROUNDS, hash: "SHA-256" },
+    key,
+    256,
+  );
+  return hexOf(bits);
+}
+
+const ACCOUNT_USERNAME_RE = /^[a-zA-Z][a-zA-Z0-9_]{2,15}$/;
+const ACCOUNT_ROOM_CODE_RE = /^\d{6}$/;
+
+function toProfile(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    username: row.username,
+    name: row.name,
+    avatar: row.avatar ?? "",
+    avatarVersion: row.avatar_version ?? 0,
+    createdAt: row.created_at,
+    // 固定房号：只有登录账号才有；NULL 时不带这个字段（与客户端契约一致）
+    ...(row.room_code ? { roomCode: row.room_code } : {}),
+  };
+}
+
+async function accountById(env, id) {
+  return env.DB.prepare("SELECT * FROM accounts WHERE id = ?").bind(id).first();
+}
+
+async function currentAccount(request, env) {
+  const header = request.headers.get("Authorization") ?? "";
+  const bearer = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
+  const token = bearer || readCookie(request, SESSION_COOKIE);
+  if (!token) return null;
+  const session = await env.DB.prepare(
+    "SELECT account_id, expires_at FROM account_sessions WHERE token = ?",
+  )
+    .bind(token)
+    .first();
+  if (!session || session.expires_at < Date.now()) return null;
+  return accountById(env, session.account_id);
+}
+
+async function createSession(request, env, accountId) {
+  const token = randomHex(32);
+  const now = Date.now();
+  await env.DB.prepare(
+    "INSERT INTO account_sessions (token, account_id, expires_at, created_at) VALUES (?, ?, ?, ?)",
+  )
+    .bind(token, accountId, now + SESSION_TTL_MS, now)
+    .run();
+  // 顺手清掉这个账号过期的会话，别让表越滚越大
+  await env.DB.prepare("DELETE FROM account_sessions WHERE account_id = ? AND expires_at < ?")
+    .bind(accountId, now)
+    .run();
+  return token;
+}
+
+/** 8 位数字账号 ID：好友用它加人，也是「我的房间」的绑定键。 */
+async function makeAccountId(env) {
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    const id = String(Math.floor(10_000_000 + Math.random() * 89_999_999));
+    const taken = await env.DB.prepare("SELECT 1 AS x FROM accounts WHERE id = ?").bind(id).first();
+    if (!taken) return id;
+  }
+  // 极端情况（号池快满）：退回时间戳后 8 位，仍保证唯一性检查
+  return String(Date.now()).slice(-8);
+}
+
+function clampName(value) {
+  return String(value ?? "").trim().slice(0, 24);
+}
+
+async function accountRegister(request, env) {
+  const body = await request.json().catch(() => null);
+  const username = String(body?.username ?? "").trim();
+  const password = String(body?.password ?? "");
+  if (!ACCOUNT_USERNAME_RE.test(username)) return accountJson(request, { error: "username-invalid" }, 400);
+  if (password.length < 8 || password.length > 64 || new Set(password).size < 4) {
+    return accountJson(request, { error: "password-weak" }, 400);
+  }
+  const taken = await env.DB.prepare("SELECT 1 AS x FROM accounts WHERE lower(username) = lower(?)")
+    .bind(username)
+    .first();
+  if (taken) return accountJson(request, { error: "username-taken" }, 409);
+
+  const id = await makeAccountId(env);
+  const salt = randomHex(16);
+  const hash = await pbkdf2Hex(password, salt);
+  const now = Date.now();
+  const name = clampName(body?.name) || username;
+  await env.DB.prepare(
+    "INSERT INTO accounts (id, username, name, salt, hash, avatar, avatar_version, created_at, updated_at) " +
+      "VALUES (?, ?, ?, ?, ?, '', 0, ?, ?)",
+  )
+    .bind(id, username, name, salt, hash, now, now)
+    .run();
+  const token = await createSession(request, env, id);
+  const row = await accountById(env, id);
+  return accountJson(request, { account: toProfile(row), token }, 200, {
+    "Set-Cookie": sessionCookie(request, token, Math.floor(SESSION_TTL_MS / 1000)),
+  });
+}
+
+async function accountLogin(request, env) {
+  const body = await request.json().catch(() => null);
+  const username = String(body?.username ?? "").trim();
+  const password = String(body?.password ?? "");
+  const row = await env.DB.prepare("SELECT * FROM accounts WHERE lower(username) = lower(?)")
+    .bind(username)
+    .first();
+  // 账号不存在与密码错给同一个错误，不泄漏"这个名字注册过"
+  if (!row) return accountJson(request, { error: "bad-credentials" }, 401);
+  const hash = await pbkdf2Hex(password, row.salt);
+  if (hash !== row.hash) return accountJson(request, { error: "bad-credentials" }, 401);
+  const token = await createSession(request, env, row.id);
+  return accountJson(request, { account: toProfile(row), token }, 200, {
+    "Set-Cookie": sessionCookie(request, token, Math.floor(SESSION_TTL_MS / 1000)),
+  });
+}
+
+async function accountLogout(request, env) {
+  const header = request.headers.get("Authorization") ?? "";
+  const bearer = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
+  const token = bearer || readCookie(request, SESSION_COOKIE);
+  if (token) {
+    await env.DB.prepare("DELETE FROM account_sessions WHERE token = ?").bind(token).run();
+  }
+  return accountJson(request, { ok: true }, 200, {
+    "Set-Cookie": sessionCookie(request, "", 0),
+  });
+}
+
+async function accountUpdateProfile(request, env) {
+  const me = await currentAccount(request, env);
+  if (!me) return accountJson(request, { error: "not-found" }, 401);
+  const body = await request.json().catch(() => null);
+  if (!body || typeof body !== "object") return accountJson(request, { error: "bad json" }, 400);
+
+  const patch = {};
+  if (body.username !== undefined) {
+    const username = String(body.username).trim();
+    if (!ACCOUNT_USERNAME_RE.test(username)) return accountJson(request, { error: "username-invalid" }, 400);
+    const taken = await env.DB.prepare(
+      "SELECT 1 AS x FROM accounts WHERE lower(username) = lower(?) AND id <> ?",
+    )
+      .bind(username, me.id)
+      .first();
+    if (taken) return accountJson(request, { error: "username-taken" }, 409);
+    patch.username = username;
+  }
+  if (body.name !== undefined) {
+    const name = clampName(body.name);
+    if (name) patch.name = name;
+  }
+  if (body.avatar !== undefined) {
+    const avatar = String(body.avatar ?? "");
+    if (avatar.length > MAX_AVATAR_CHARS) return accountJson(request, { error: "avatar too large" }, 413);
+    if (avatar && !avatar.startsWith("data:image/")) return accountJson(request, { error: "bad avatar" }, 400);
+    patch.avatar = avatar;
+  }
+  if (body.roomCode !== undefined) {
+    /*
+     * 「我的房间」绑定账号：房号存在 accounts.room_code，靠唯一索引兜住"一个号只能一个账号"。
+     * 只是格式不对 → 用 room-taken 一并回给客户端（客户端文案是同一句"换一个试试"）。
+     */
+    const roomCode = String(body.roomCode ?? "").trim();
+    if (!ACCOUNT_ROOM_CODE_RE.test(roomCode)) return accountJson(request, { error: "room-taken" }, 409);
+    const occupied = await env.DB.prepare(
+      "SELECT id FROM accounts WHERE room_code = ? AND id <> ?",
+    )
+      .bind(roomCode, me.id)
+      .first();
+    if (occupied) return accountJson(request, { error: "room-taken" }, 409);
+    patch.roomCode = roomCode;
+  }
+
+  const sets = [];
+  const values = [];
+  if (patch.username !== undefined) {
+    sets.push("username = ?");
+    values.push(patch.username);
+  }
+  if (patch.name !== undefined) {
+    sets.push("name = ?");
+    values.push(patch.name);
+  }
+  if (patch.avatar !== undefined) {
+    sets.push("avatar = ?", "avatar_version = avatar_version + 1");
+    values.push(patch.avatar);
+  }
+  if (patch.roomCode !== undefined) {
+    sets.push("room_code = ?", "room_code_at = ?");
+    values.push(patch.roomCode, Date.now());
+  }
+  if (sets.length === 0) return accountJson(request, { account: toProfile(me) }, 200);
+  sets.push("updated_at = ?");
+  values.push(Date.now(), me.id);
+  try {
+    await env.DB.prepare(`UPDATE accounts SET ${sets.join(", ")} WHERE id = ?`).bind(...values).run();
+  } catch (error) {
+    // 唯一索引兜底（并发抢同一个房号/用户名）
+    const message = String(error?.message ?? "");
+    if (message.includes("room_code")) return accountJson(request, { error: "room-taken" }, 409);
+    if (message.includes("username")) return accountJson(request, { error: "username-taken" }, 409);
+    throw error;
+  }
+  return accountJson(request, { account: toProfile(await accountById(env, me.id)) }, 200);
+}
+
+async function accountSearch(request, env, url) {
+  const me = await currentAccount(request, env);
+  const keyword = (url.searchParams.get("q") ?? "").trim();
+  if (!keyword) return accountJson(request, { accounts: [] }, 200);
+  const like = `%${keyword.toLowerCase()}%`;
+  const rows = await env.DB.prepare(
+    "SELECT * FROM accounts WHERE id <> ? AND (id = ? OR lower(username) LIKE ? OR lower(name) LIKE ?) " +
+      "ORDER BY id LIMIT 8",
+  )
+    .bind(me?.id ?? "", keyword, like, like)
+    .all();
+  return accountJson(request, { accounts: (rows.results ?? []).map(toProfile) }, 200);
+}
+
+async function accountSnapshot(request, env) {
+  const me = await currentAccount(request, env);
+  if (!me) return accountJson(request, { friends: [], incoming: [], outgoing: [] }, 200);
+  const friends = await env.DB.prepare(
+    "SELECT a.*, f.since AS since, p.last_seen AS last_seen, p.room_code AS p_room " +
+      "FROM friendships f JOIN accounts a ON a.id = f.friend_id " +
+      "LEFT JOIN account_presence p ON p.account_id = a.id " +
+      "WHERE f.account_id = ? ORDER BY f.since DESC",
+  )
+    .bind(me.id)
+    .all();
+  const incoming = await env.DB.prepare(
+    "SELECT a.*, r.at AS at FROM friend_requests r JOIN accounts a ON a.id = r.from_id " +
+      "WHERE r.to_id = ? ORDER BY r.at DESC",
+  )
+    .bind(me.id)
+    .all();
+  const outgoing = await env.DB.prepare(
+    "SELECT a.*, r.at AS at FROM friend_requests r JOIN accounts a ON a.id = r.to_id " +
+      "WHERE r.from_id = ? ORDER BY r.at DESC",
+  )
+    .bind(me.id)
+    .all();
+  const now = Date.now();
+  const presence = (row) =>
+    row.last_seen && now - row.last_seen <= PRESENCE_ONLINE_MS
+      ? { state: "online", lastSeen: row.last_seen, ...(row.p_room ? { roomCode: row.p_room } : {}) }
+      : { state: "offline", lastSeen: row.last_seen ?? 0 };
+  return accountJson(
+    request,
+    {
+      friends: (friends.results ?? []).map((row) => ({
+        account: toProfile(row),
+        since: row.since ?? now,
+        presence: presence(row),
+      })),
+      incoming: (incoming.results ?? []).map((row) => ({ account: toProfile(row), at: row.at ?? now })),
+      outgoing: (outgoing.results ?? []).map((row) => ({ account: toProfile(row), at: row.at ?? now })),
+    },
+    200,
+  );
+}
+
+async function accountAddFriend(request, env) {
+  const me = await currentAccount(request, env);
+  if (!me) return accountJson(request, { error: "not-found" }, 401);
+  const body = await request.json().catch(() => null);
+  const targetId = String(body?.id ?? "").trim();
+  if (!/^\d{8}$/.test(targetId)) return accountJson(request, { error: "not-found" }, 404);
+  if (targetId === me.id) return accountJson(request, { error: "self" }, 400);
+  const target = await accountById(env, targetId);
+  if (!target) return accountJson(request, { error: "not-found" }, 404);
+
+  const friend = await env.DB.prepare(
+    "SELECT 1 AS x FROM friendships WHERE account_id = ? AND friend_id = ?",
+  )
+    .bind(me.id, targetId)
+    .first();
+  if (friend) return accountJson(request, { error: "already-friend" }, 409);
+
+  // 对方已经请求过我 → 直接互相成为好友（少一次点击）
+  const reverse = await env.DB.prepare(
+    "SELECT 1 AS x FROM friend_requests WHERE from_id = ? AND to_id = ?",
+  )
+    .bind(targetId, me.id)
+    .first();
+  const now = Date.now();
+  if (reverse) {
+    await env.DB.batch([
+      env.DB.prepare("INSERT OR IGNORE INTO friendships (account_id, friend_id, since) VALUES (?, ?, ?)").bind(me.id, targetId, now),
+      env.DB.prepare("INSERT OR IGNORE INTO friendships (account_id, friend_id, since) VALUES (?, ?, ?)").bind(targetId, me.id, now),
+      env.DB.prepare("DELETE FROM friend_requests WHERE (from_id = ? AND to_id = ?) OR (from_id = ? AND to_id = ?)").bind(me.id, targetId, targetId, me.id),
+    ]);
+    return accountJson(request, { account: toProfile(target) }, 200);
+  }
+
+  await env.DB.prepare("INSERT OR IGNORE INTO friend_requests (from_id, to_id, at) VALUES (?, ?, ?)")
+    .bind(me.id, targetId, now)
+    .run();
+  return accountJson(request, { account: toProfile(target) }, 200);
+}
+
+async function accountAcceptFriend(request, env) {
+  const me = await currentAccount(request, env);
+  if (!me) return accountJson(request, { error: "not-found" }, 401);
+  const body = await request.json().catch(() => null);
+  const fromId = String(body?.id ?? "").trim();
+  const pending = await env.DB.prepare(
+    "SELECT 1 AS x FROM friend_requests WHERE from_id = ? AND to_id = ?",
+  )
+    .bind(fromId, me.id)
+    .first();
+  if (!pending) return accountJson(request, { error: "not-found" }, 404);
+  const now = Date.now();
+  await env.DB.batch([
+    env.DB.prepare("INSERT OR IGNORE INTO friendships (account_id, friend_id, since) VALUES (?, ?, ?)").bind(me.id, fromId, now),
+    env.DB.prepare("INSERT OR IGNORE INTO friendships (account_id, friend_id, since) VALUES (?, ?, ?)").bind(fromId, me.id, now),
+    env.DB.prepare("DELETE FROM friend_requests WHERE from_id = ? AND to_id = ?").bind(fromId, me.id),
+  ]);
+  return accountJson(request, { account: toProfile(await accountById(env, fromId)) }, 200);
+}
+
+async function accountRejectFriend(request, env) {
+  const me = await currentAccount(request, env);
+  if (!me) return accountJson(request, { error: "not-found" }, 401);
+  const body = await request.json().catch(() => null);
+  const fromId = String(body?.id ?? "").trim();
+  await env.DB.prepare("DELETE FROM friend_requests WHERE from_id = ? AND to_id = ?")
+    .bind(fromId, me.id)
+    .run();
+  return accountJson(request, { ok: true }, 200);
+}
+
+async function accountRemoveFriend(request, env, targetId) {
+  const me = await currentAccount(request, env);
+  if (!me) return accountJson(request, { error: "not-found" }, 401);
+  await env.DB.batch([
+    env.DB.prepare("DELETE FROM friendships WHERE account_id = ? AND friend_id = ?").bind(me.id, targetId),
+    env.DB.prepare("DELETE FROM friendships WHERE account_id = ? AND friend_id = ?").bind(targetId, me.id),
+  ]);
+  return accountJson(request, { ok: true }, 200);
+}
+
+async function accountPresence(request, env) {
+  const me = await currentAccount(request, env);
+  if (!me) return accountJson(request, { ok: false }, 200);
+  const body = await request.json().catch(() => null);
+  // 只收 6 位新码与 4 位老码；其它一律当"不在房间"
+  const room = String(body?.roomCode ?? "").trim();
+  const roomCode = /^\d{4}$|^\d{6}$/.test(room) ? room : "";
+  await env.DB.prepare(
+    "INSERT INTO account_presence (account_id, last_seen, room_code) VALUES (?, ?, ?) " +
+      "ON CONFLICT(account_id) DO UPDATE SET last_seen = excluded.last_seen, room_code = excluded.room_code",
+  )
+    .bind(me.id, Date.now(), roomCode || null)
+    .run();
+  return accountJson(request, { ok: true }, 200);
+}
+
+async function handleAccount(request, env, url) {
+  if (request.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers: accountCorsHeaders(request) });
+  }
+  if (!env.DB) return accountJson(request, { error: "accounts not configured" }, 503);
+
+  const path = url.pathname.slice(ACCOUNT_PREFIX.length) || "/";
+  try {
+    if (path === "/register" && request.method === "POST") return await accountRegister(request, env);
+    if (path === "/login" && request.method === "POST") return await accountLogin(request, env);
+    if (path === "/logout" && request.method === "POST") return await accountLogout(request, env);
+    if (path === "/me" && request.method === "GET") {
+      return accountJson(request, { account: toProfile(await currentAccount(request, env)) }, 200);
+    }
+    if (path === "/me" && request.method === "PATCH") return await accountUpdateProfile(request, env);
+    if (path === "/search" && request.method === "GET") return await accountSearch(request, env, url);
+    if (path === "/friends" && request.method === "GET") return await accountSnapshot(request, env);
+    if (path === "/friends" && request.method === "POST") return await accountAddFriend(request, env);
+    if (path === "/friends/accept" && request.method === "POST") return await accountAcceptFriend(request, env);
+    if (path === "/friends/reject" && request.method === "POST") return await accountRejectFriend(request, env);
+    const removeMatch = /^\/friends\/(\d{8})$/.exec(path);
+    if (removeMatch && request.method === "DELETE") return await accountRemoveFriend(request, env, removeMatch[1]);
+    if (path === "/presence" && request.method === "POST") return await accountPresence(request, env);
+    return accountJson(request, { error: "not found" }, 404);
+  } catch (error) {
+    console.error("[account]", error?.stack ?? error?.message ?? error);
+    return accountJson(request, { error: "internal" }, 500);
+  }
+}

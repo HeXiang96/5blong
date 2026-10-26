@@ -39,8 +39,12 @@ createRoot(document.getElementById("root")!).render(
       onCopyId={() => {}}
       sceneTheme={(params.get("scene") as SceneThemeId | null) ?? ""}
       onSetSceneTheme={() => {}}
-      lastRoom={params.get("empty") ? null : { code: "4821", role: "host", savedAt: Date.now() }}
+      lastRoom={params.get("empty") ? null : { code: "482193", role: "guest", savedAt: Date.now() }}
       onResumeLastRoom={() => {}}
+      // 固定房号：?nomyroom 看"还没认领"的形态（主按钮回到「创建语音房」）
+      myRoom={params.has("nomyroom") ? null : { code: "235417" }}
+      onRenewMyRoom={() => {}}
+      onClaimMyRoom={() => true}
       onCreateGame={() => {}}
       onJoinGame={() => {}}
     />

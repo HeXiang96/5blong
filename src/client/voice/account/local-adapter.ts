@@ -19,6 +19,7 @@ import {
   validatePassword,
   validateUsername,
 } from "./types";
+import { isNewRoomCode } from "../protocol";
 
 const ACCOUNTS_KEY = "5blong.accounts.v1";
 const FRIENDS_KEY = "5blong.friends.v1";
@@ -111,6 +112,7 @@ const stripAccount = (stored: StoredAccount): AccountProfile => ({
   avatar: stored.avatar,
   avatarVersion: stored.avatarVersion,
   createdAt: stored.createdAt,
+  ...(stored.roomCode ? { roomCode: stored.roomCode } : {}),
 });
 
 /**
@@ -240,7 +242,7 @@ export class LocalAccountAdapter implements AccountAdapter {
   }
 
   async updateProfile(
-    patch: Partial<Pick<AccountProfile, "name" | "avatar" | "username">>,
+    patch: Partial<Pick<AccountProfile, "name" | "avatar" | "username" | "roomCode">>,
   ): Promise<AuthResult> {
     const me = this.current();
     if (!me) return { error: "not-found" };
@@ -256,6 +258,21 @@ export class LocalAccountAdapter implements AccountAdapter {
       );
       if (taken) return { error: "username-taken" };
       stored.username = username;
+    }
+    /*
+     * 固定房号（「我的房间 235417」）存在账号上：
+     * - 只接受 6 位新码（4 位老码空间太小，不做固定号）；
+     * - 同一时间一个房号只能属于一个账号，否则两人开房必撞——本地适配器靠扫表兜住，
+     *   换 Worker 后由服务端的唯一索引兜（本地这层校验留着也无害）。
+     */
+    if (patch.roomCode !== undefined) {
+      const roomCode = patch.roomCode.trim();
+      if (!isNewRoomCode(roomCode)) return { error: "room-taken" };
+      const occupied = Object.values(accounts).some(
+        (item) => item.id !== me.id && item.roomCode === roomCode,
+      );
+      if (occupied) return { error: "room-taken" };
+      stored.roomCode = roomCode;
     }
     if (patch.name !== undefined) stored.name = patch.name.slice(0, 24) || stored.name;
     if (patch.avatar !== undefined) {

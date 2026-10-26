@@ -3673,6 +3673,27 @@ html[data-theme="dark"] .vx-link-warn-text {
   color: #b4452f;
 }
 
+/* 「我的房间」房号工具行：改房号 / 换个号。低调，不与上面那个主按钮抢眼。
+   房号本身在主按钮里念出来（我的房间 235417 · 开始），这里只放改号入口。 */
+.vx-myroom-tools {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: -2px;
+}
+.vx-myroom-tools .vx-link-btn {
+  font-size: 11px;
+}
+/* 复用 .vx-code-input 的配色（深色/雪原/万圣/春节都已有覆盖），只改尺寸 */
+.vx-myroom-input {
+  flex: 0 0 128px;
+  width: 128px;
+  padding: 6px 10px;
+  font-size: 13px;
+  letter-spacing: 0.14em;
+}
+
 /* ------------------------------ 深色 ------------------------------ */
 :is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-channel {
   color: #f4e4c2;
