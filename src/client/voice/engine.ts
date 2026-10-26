@@ -45,6 +45,7 @@ import {
   type WireMember,
 } from "./protocol";
 import { applyAudioProfile, opusSdpTransform } from "./audio-profile";
+import { forgetAutoplayElement, onAutoplayBlocked } from "./media-unlock";
 import { backgroundTimerMode } from "./background-ticker";
 import { sessionScopedId, type Identity } from "./identity";
 import {
@@ -4017,9 +4018,20 @@ export class VoiceMesh {
      * 表现就是"别人说话我听不见"。现在把失败上报给界面。
      */
     void element.play().catch((error) => {
-      this.pushRoomEvent("error", "浏览器拦截了自动播放（对方听不到声音的常见原因）");
+      /*
+       * 被自动播放策略拦了（WebView2 同样会拦：`--autoplay-policy` 不在它的
+       * 支持白名单里，被静默忽略）。**不能只是再 play 一次**——没有用户手势，
+       * 第二次照样被拒，结果就是永久听不见。
+       *
+       * 正确顺序：先静音播起来（时间线正常），再挂一次性手势监听，
+       * 用户点一下任意位置就自动开声。
+       */
+      this.pushRoomEvent("error", "自动播放被系统拦下了：点一下窗口即可恢复声音");
       this.events.playbackBlocked(peerId, String(error?.message ?? error));
-      void resumeAudio(this.ctx).then(() => element.play().catch(() => {}));
+      element.muted = true;
+      void element.play().catch(() => {});
+      onAutoplayBlocked(element);
+      void resumeAudio(this.ctx);
     });
   }
 
@@ -4075,6 +4087,9 @@ export class VoiceMesh {
       element.pause();
       element.srcObject = null;
       element.remove();
+      // 元素要销毁了：从"等手势开声"名单里摘掉，避免泄漏与误唤醒
+      const dying = this.audio.get(peerId);
+      if (dying) forgetAutoplayElement(dying);
       this.audio.delete(peerId);
     }
     // 不论元素在不在，增益链都要拆（否则节点一直挂在 AudioContext 上）

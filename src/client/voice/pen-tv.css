@@ -910,3 +910,16 @@ html.vx-lightbox-open .vx-stage * {
 .vx-share-menu {
   scrollbar-width: thin;
 }
+
+/* 自动播放被拦时的"点一下开声"提示（2026-10-26） */
+.vx-tv-tap-hint {
+  border-color: rgba(255, 196, 92, 0.7);
+  background: rgba(255, 196, 92, 0.18);
+  color: #ffe1a8;
+  animation: vx-tap-hint-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes vx-tap-hint-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.62; }
+}

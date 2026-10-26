@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
+
+import { forgetAutoplayElement, onAutoplayBlocked } from "../media-unlock";
 import { Maximize2, Minimize2, Volume2, VolumeX, X } from "lucide-react";
 
 import { FIRE_POS, PROJ_POS, SCREEN_POS, feetViewportPx } from "../pen";
@@ -319,6 +321,8 @@ export function PenTvLightbox({
    * 场景里的小幕布依旧保持静音防双声（与本记忆无关）。
    */
   const [muted, setMuted] = useState(() => loadTvAudio().muted);
+  /** 自动播放被拦：声音还没解锁，界面上给一个"点一下开启"的提示。 */
+  const [needsTap, setNeedsTap] = useState(false);
   const [volume, setVolume] = useState(() => loadTvAudio().volume);
   /** 最大化：铺满整窗 + 尽量申请系统全屏（有人喜欢放最大看，偏好记住）。 */
   const [big, setBig] = useState(() => loadTvAudio().big === true);
@@ -390,10 +394,21 @@ export function PenTvLightbox({
     if (!video) return;
     if (stream) {
       video.srcObject = stream;
-      void video.play().catch(() => {});
+      void video.play().catch(() => {
+        /*
+         * 被自动播放策略拦了。先静音播（保证有画面），再等用户任意一次点击开声
+         * ——见 media-unlock.ts 的说明（WebView2 也拦）。
+         */
+        video.muted = true;
+        void video.play().catch(() => {});
+        onAutoplayBlocked(video, () => setNeedsTap(false));
+        setNeedsTap(true);
+      });
     } else {
       video.srcObject = null;
+      setNeedsTap(false);
     }
+    return () => forgetAutoplayElement(video);
   }, [stream]);
 
   useEffect(() => {
@@ -572,6 +587,29 @@ export function PenTvLightbox({
                     </button>
                   ))}
                 </div>
+              ) : null}
+              {/*
+                自动播放被拦时给一条**显式**提示：以前这里静默失败，
+                用户只看到"声音已开"却没声音（2026-10-26 房间统计里那几条
+                "浏览器拦截了自动播放"就是它）。点一下即可开声。
+              */}
+              {needsTap && muted ? (
+                <button
+                  type="button"
+                  className="vx-tv-ctrl vx-tv-tap-hint"
+                  onClick={() => {
+                    setMuted(false);
+                    setNeedsTap(false);
+                    const video = videoRef.current;
+                    if (video) {
+                      video.muted = false;
+                      void video.play().catch(() => {});
+                    }
+                  }}
+                  title="系统拦了自动播放，点这里或点画面任意处即可开启声音"
+                >
+                  🔇 点一下开声
+                </button>
               ) : null}
               <div className="vx-tv-volume">
                 <button
