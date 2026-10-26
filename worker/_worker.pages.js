@@ -1397,6 +1397,11 @@ function toProfile(row) {
     createdAt: row.created_at,
     // 固定房号：只有登录账号才有；NULL 时不带这个字段（与客户端契约一致）
     ...(row.room_code ? { roomCode: row.room_code } : {}),
+    /*
+     * 房号是否已锁死（业主 2026-10-26）：每个账号只有**一次**改号机会，
+     * 改完这个号就永久属于该账号，别人抢同一号会被唯一索引挡下。
+     */
+    roomCodeLocked: Boolean(row.room_code) && Number(row.room_changes ?? 0) >= 1,
   };
 }
 
@@ -1543,6 +1548,10 @@ async function accountUpdateProfile(request, env) {
      */
     const roomCode = String(body.roomCode ?? "").trim();
     if (!ACCOUNT_ROOM_CODE_RE.test(roomCode)) return accountJson(request, { error: "room-taken" }, 409);
+    // 每个账号只有一次改号机会（业主 2026-10-26）：改过就锁死，前端连入口都不再显示
+    if (me.room_code && Number(me.room_changes ?? 0) >= 1) {
+      return accountJson(request, { error: "room-locked" }, 409);
+    }
     const occupied = await env.DB.prepare(
       "SELECT id FROM accounts WHERE room_code = ? AND id <> ?",
     )
@@ -1550,6 +1559,8 @@ async function accountUpdateProfile(request, env) {
       .first();
     if (occupied) return accountJson(request, { error: "room-taken" }, 409);
     patch.roomCode = roomCode;
+    // 已经有号 → 这次就是那唯一一次修改；首次领号不计数
+    patch.roomChanges = me.room_code ? 1 : 0;
   }
 
   const sets = [];
@@ -1567,8 +1578,8 @@ async function accountUpdateProfile(request, env) {
     values.push(patch.avatar);
   }
   if (patch.roomCode !== undefined) {
-    sets.push("room_code = ?", "room_code_at = ?");
-    values.push(patch.roomCode, Date.now());
+    sets.push("room_code = ?", "room_code_at = ?", "room_changes = ?");
+    values.push(patch.roomCode, Date.now(), patch.roomChanges ?? 0);
   }
   if (sets.length === 0) return accountJson(request, { account: toProfile(me) }, 200);
   sets.push("updated_at = ?");
@@ -1738,6 +1749,72 @@ async function accountPresence(request, env) {
   return accountJson(request, { ok: true }, 200);
 }
 
+/**
+ * 发一条房间邀请（只有房主会调）。
+ *
+ * 只写"谁 → 谁，进哪个房"，**不写密码**：临时密码是房主当面/群里另发的，
+ * 落到库里就等于永久凭证，房主关掉密码也收不回来了。
+ */
+async function accountSendInvite(request, env) {
+  const me = await currentAccount(request, env);
+  if (!me) return accountJson(request, { error: "not-found" }, 401);
+  const body = await request.json().catch(() => null);
+  const toId = String(body?.id ?? "").trim();
+  const code = String(body?.code ?? "").trim();
+  if (!/^\d{8}$/.test(toId)) return accountJson(request, { error: "not-found" }, 404);
+  if (toId === me.id) return accountJson(request, { error: "self" }, 400);
+  if (!/^\d{4}$|^\d{6}$/.test(code)) return accountJson(request, { error: "room-taken" }, 400);
+  const friend = await env.DB.prepare(
+    "SELECT 1 AS x FROM friendships WHERE account_id = ? AND friend_id = ?",
+  )
+    .bind(me.id, toId)
+    .first();
+  // 只给好友发：陌生人靠好友请求那套，别让邀请变成骚扰通道
+  if (!friend) return accountJson(request, { error: "not-found" }, 403);
+  await env.DB.prepare(
+    "INSERT INTO room_invites (from_id, to_id, code, at) VALUES (?, ?, ?, ?) " +
+      "ON CONFLICT(from_id, to_id) DO UPDATE SET code = excluded.code, at = excluded.at",
+  )
+    .bind(me.id, toId, code, Date.now())
+    .run();
+  return accountJson(request, { ok: true }, 200);
+}
+
+/** 我收到的邀请（好友刚发出的、还没处理的）。 */
+async function accountInvites(request, env) {
+  const me = await currentAccount(request, env);
+  if (!me) return accountJson(request, { invites: [] }, 200);
+  // 只保留 24 小时内的：再久的房间基本早就散了，留着只会让人白点一次
+  const alive = Date.now() - 24 * 3600_000;
+  const rows = await env.DB.prepare(
+    "SELECT a.*, i.code AS invite_code, i.at AS invite_at FROM room_invites i " +
+      "JOIN accounts a ON a.id = i.from_id WHERE i.to_id = ? AND i.at > ? ORDER BY i.at DESC LIMIT 20",
+  )
+    .bind(me.id, alive)
+    .all();
+  return accountJson(
+    request,
+    {
+      invites: (rows.results ?? []).map((row) => ({
+        from: toProfile(row),
+        code: row.invite_code,
+        at: row.invite_at,
+      })),
+    },
+    200,
+  );
+}
+
+/** 处理掉一条邀请（加入或忽略都一样：从列表里消失）。 */
+async function accountDismissInvite(request, env, fromId) {
+  const me = await currentAccount(request, env);
+  if (!me) return accountJson(request, { ok: false }, 401);
+  await env.DB.prepare("DELETE FROM room_invites WHERE from_id = ? AND to_id = ?")
+    .bind(fromId, me.id)
+    .run();
+  return accountJson(request, { ok: true }, 200);
+}
+
 async function handleAccount(request, env, url) {
   if (request.method === "OPTIONS") {
     return new Response(null, { status: 204, headers: accountCorsHeaders(request) });
@@ -1761,6 +1838,10 @@ async function handleAccount(request, env, url) {
     const removeMatch = /^\/friends\/(\d{8})$/.exec(path);
     if (removeMatch && request.method === "DELETE") return await accountRemoveFriend(request, env, removeMatch[1]);
     if (path === "/presence" && request.method === "POST") return await accountPresence(request, env);
+    if (path === "/invites" && request.method === "POST") return await accountSendInvite(request, env);
+    if (path === "/invites" && request.method === "GET") return await accountInvites(request, env);
+    const inviteMatch = /^\/invites\/(\d{8})$/.exec(path);
+    if (inviteMatch && request.method === "DELETE") return await accountDismissInvite(request, env, inviteMatch[1]);
     return accountJson(request, { error: "not found" }, 404);
   } catch (error) {
     console.error("[account]", error?.stack ?? error?.message ?? error);

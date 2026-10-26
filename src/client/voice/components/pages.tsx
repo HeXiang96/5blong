@@ -8,7 +8,6 @@ import {
   Pencil,
   Play,
   Plus,
-  RefreshCw,
   Settings as SettingsIcon,
   Users,
 } from "lucide-react";
@@ -74,9 +73,9 @@ export function LandingView({
   lastRoom = null,
   onResumeLastRoom,
   myRoom = null,
-  onRenewMyRoom,
   onClaimMyRoom,
   needsPass = false,
+  onStartMyRoom,
   account = null,
   friendRequests = 0,
   onOpenAccount,
@@ -111,10 +110,11 @@ export function LandingView({
   onOpenFriends?: () => void;
   /** 恢复上次的房间（房主用原房号重新开房 / 访客按码重进） */
   onResumeLastRoom?: () => void;
-  /** 本机固定房号「我的房间」（null = 还没认领，第一次开房时自动认领） */
-  myRoom?: { code: string } | null;
-  /** 换一个固定房号（旧邀请链接随之失效） */
-  onRenewMyRoom?: () => void;
+  /**
+   * 账号的固定房号「我的房间」（null = 未登录/还没领号）。
+   * `locked` = 那次唯一的改号机会已经用掉了（业主 2026-10-26）。
+   */
+  myRoom?: { code: string; locked?: boolean } | null;
   /** 手填一个自己喜欢的房号（"我要 520131"）；被占用/格式不对返回 false */
   onClaimMyRoom?: (code: string) => Promise<boolean> | boolean;
   /**
@@ -122,6 +122,11 @@ export function LandingView({
    * 私密房（登录账号的「我的房间」）只认邀请链接或「房间码 + 临时密码」。
    */
   needsPass?: boolean;
+  /**
+   * 开自己的固定房号（私密房）。**只在登录且已有房号时**由首页传进来。
+   * 层级上它是次要动作：临时房才是主流用法（业主 2026-10-26 口径）。
+   */
+  onStartMyRoom?: () => void;
   /** 开黑圈：创建（需要创建码）/ 加入（输房间码）。 */
   onCreateGame: () => void;
   onJoinGame: () => void;
@@ -162,7 +167,7 @@ export function LandingView({
     }
     const ok = onClaimMyRoom ? await onClaimMyRoom(code) : false;
     if (!ok) {
-      setRoomError("这个房号已经被别的账号用了，换一个试试");
+      setRoomError("这个房号已经被别人认领了，换一个；记住你只有这一次机会");
       return;
     }
     setRoomEditing(false);
@@ -485,10 +490,25 @@ export function LandingView({
                 {parseError}
               </p>
             ) : null}
+            {/*
+              层级（业主 2026-10-26 修正）：**临时房是主流**——随手开一间、念个号就能进，
+              永远是这个卡片上唯一的大主按钮。
+              「我的房间」是固定房号（私密房），只在登录后作为次级入口挂在下面。
+            */}
             <button type="button" className="vx-btn vx-btn-primary" onClick={onCreate} disabled={joining}>
-              {myRoom ? <Play size={17} /> : <Plus size={18} />}
-              {myRoom ? `我的房间 ${myRoom.code} · 开始` : "创建语音房"}
+              <Plus size={18} /> 创建语音房
             </button>
+            {myRoom && onStartMyRoom ? (
+              <button
+                type="button"
+                className="vx-btn vx-btn-ghost vx-myroom-open"
+                onClick={onStartMyRoom}
+                disabled={joining}
+                title="你的固定房号（私密房）：只认邀请链接或临时密码"
+              >
+                <Play size={15} /> 我的房间 {myRoom.code} · 开始
+              </button>
+            ) : null}
             {myRoom ? (
               <div className="vx-myroom-tools">
                 {roomEditing ? (
@@ -510,7 +530,7 @@ export function LandingView({
                       }}
                     />
                     <button type="button" className="vx-link-btn" onClick={() => void commitRoomCode()}>
-                      保存
+                      保存（仅此一次）
                     </button>
                     <button
                       type="button"
@@ -523,28 +543,23 @@ export function LandingView({
                       取消
                     </button>
                   </>
+                ) : myRoom.locked ? (
+                  /* 改号机会用完了：只说明现状，不再给任何入口（业主 2026-10-26） */
+                  <span className="vx-myroom-locked" title="每个账号只有一次改号机会">
+                    房号已锁定，永久属于这个账号
+                  </span>
                 ) : (
-                  <>
-                    <button
-                      type="button"
-                      className="vx-link-btn vx-channel-link"
-                      onClick={() => {
-                        setRoomDraft(myRoom.code);
-                        setRoomEditing(true);
-                      }}
-                      title="房号可以自己挑（6 位数字），别人念错了也进不来别人的房"
-                    >
-                      <Pencil size={14} /> 改房号
-                    </button>
-                    <button
-                      type="button"
-                      className="vx-link-btn vx-channel-link"
-                      onClick={onRenewMyRoom}
-                      title="随机换一个房号（之前发出去的邀请链接会失效）"
-                    >
-                      <RefreshCw size={14} /> 换个号
-                    </button>
-                  </>
+                  <button
+                    type="button"
+                    className="vx-link-btn vx-channel-link"
+                    onClick={() => {
+                      setRoomDraft(myRoom.code);
+                      setRoomEditing(true);
+                    }}
+                    title="只有一次改号机会：改好就永久绑定这个账号"
+                  >
+                    <Pencil size={14} /> 改房号（仅一次）
+                  </button>
                 )}
               </div>
             ) : null}
@@ -558,6 +573,7 @@ export function LandingView({
               <button type="button" className="vx-link-btn vx-channel-invite" onClick={() => setJoinOpen(true)}>
                 有邀请链接？
               </button>
+
               {lastRoom && !joining && !(lastRoom.role === "host" && lastRoom.code === myRoom?.code) ? (
               <button
                 type="button"

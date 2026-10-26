@@ -27,6 +27,12 @@ export interface AccountProfile {
    * - 缺省 = 这个账号还没领号，第一次开房时分配。
    */
   roomCode?: string;
+  /**
+   * 房号是否已经锁死（业主 2026-10-26）：
+   * 每个账号**只有一次**改号机会——首次领号不算改，改过之后这个号永久属于你，
+   * 别人再想改成同一个号会被服务端的唯一索引挡下（提示"已被认领"）。
+   */
+  roomCodeLocked?: boolean;
 }
 
 export type PresenceState = "online" | "offline";
@@ -50,6 +56,21 @@ export interface FriendRequest {
   at: number;
 }
 
+/**
+ * 好友发来的房间邀请（2026-10-26 业主口径）。
+ *
+ * 关键点：**它是一条会被存下来的记录**，不是一闪而过的弹窗——
+ * 对方没看见、在忙、关着电脑，回来在好友面板的「邀请」里还留着：
+ * "独步吟客 邀请你进语音房 235417 · 3 分钟前"。
+ */
+export interface RoomInvite {
+  from: AccountProfile;
+  /** 房间号（私密房还要密码才进得去，密码不在邀请里，得房主另给） */
+  code: string;
+  /** 发邀请的时间（ms） */
+  at: number;
+}
+
 export interface FriendsSnapshot {
   friends: FriendEntry[];
   incoming: FriendRequest[];
@@ -65,6 +86,7 @@ export type AccountError =
   | "already-friend"
   | "self"
   | "room-taken"
+  | "room-locked"
   | "unknown";
 
 export interface AuthResult {
@@ -89,6 +111,13 @@ export interface AccountAdapter {
   snapshot(): Promise<FriendsSnapshot>;
   /** 房间心跳：用于「在线 · 在 2354 房」这类展示，不参与进房校验 */
   heartbeat(roomCode?: string): void;
+
+  /** 邀请好友进我这间房（只有房主会调；写入一条持久记录，不靠弹窗） */
+  sendInvite(accountId: string, roomCode: string): Promise<AuthResult>;
+  /** 我收到的邀请（按时间新→旧）。已处理过的不会再出现。 */
+  invites(): Promise<RoomInvite[]>;
+  /** 处理掉一条邀请（加入或忽略都算），之后列表里不再出现 */
+  dismissInvite(fromAccountId: string): Promise<void>;
 }
 
 /** 用户名规则：3–16 位，字母数字下划线，首字符必须是字母。 */
@@ -110,6 +139,7 @@ export const ACCOUNT_ERROR_TEXT: Record<AccountError, string> = {
   "not-found": "没找到这个账号（检查 8 位 ID 或用户名）",
   "already-friend": "你们已经是好友了",
   self: "不能加自己为好友",
-  "room-taken": "这个房号已经被别的账号占了，换一个试试",
+  "room-taken": "这个房号已经被别人认领了，换一个试试",
+  "room-locked": "房号已经锁定：每个账号只有一次改号机会",
   unknown: "出了点问题，稍后再试",
 };

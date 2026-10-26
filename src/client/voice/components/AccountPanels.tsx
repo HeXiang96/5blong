@@ -10,7 +10,13 @@ import { Copy, LogOut, Search, UserPlus, X } from "lucide-react";
 import landingPigUrl from "../assets/landing-pig.webp?url";
 
 import { Avatar } from "./ui";
-import type { AccountAdapter, AccountError, AccountProfile, FriendsSnapshot } from "../account/types";
+import type {
+  AccountAdapter,
+  AccountError,
+  AccountProfile,
+  FriendsSnapshot,
+  RoomInvite,
+} from "../account/types";
 import { ACCOUNT_ERROR_TEXT, validatePassword, validateUsername } from "../account/types";
 
 /**
@@ -297,6 +303,15 @@ export function AccountDialog({
   );
 }
 
+/** 「3 分钟前」这类相对时间——邀请要留档，时间得说人话（超过一天直接给天数）。 */
+function minutesAgo(at: number): string {
+  const diff = Math.max(0, Date.now() - at);
+  if (diff < 60_000) return "刚刚";
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} 分钟前`;
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} 小时前`;
+  return `${Math.floor(diff / 86_400_000)} 天前`;
+}
+
 interface FriendsDrawerProps {
   open: boolean;
   adapter: AccountAdapter;
@@ -312,6 +327,15 @@ interface FriendsDrawerProps {
    * 成员可以自己复制房间码发给朋友，但"从好友列表拉人"是房主的动作。
    */
   canInvite?: boolean;
+  /**
+   * 好友发来的房间邀请（会留档，不靠一闪而过的弹窗）。
+   * 业主口径 2026-10-26：没看见也不该耽误，回来在「邀请」里还留着。
+   */
+  invites?: RoomInvite[];
+  /** 加入这条邀请的房间（私密房会在进房时再要临时密码） */
+  onJoinInvite?: (invite: RoomInvite) => void;
+  /** 忽略这条邀请（从列表里移除） */
+  onDismissInvite?: (invite: RoomInvite) => void;
 }
 
 export function FriendsDrawer({
@@ -323,8 +347,11 @@ export function FriendsDrawer({
   roomCode,
   onInvite,
   canInvite = false,
+  invites = [],
+  onJoinInvite,
+  onDismissInvite,
 }: FriendsDrawerProps) {
-  const [tab, setTab] = useState<"friends" | "requests" | "add">("friends");
+  const [tab, setTab] = useState<"friends" | "invites" | "requests" | "add">("friends");
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<AccountProfile[]>([]);
   const [note, setNote] = useState("");
@@ -396,6 +423,13 @@ export function FriendsDrawer({
         </button>
         <button
           type="button"
+          className={tab === "invites" ? "vx-friends-tab-on" : ""}
+          onClick={() => setTab("invites")}
+        >
+          邀请 {invites.length > 0 ? <b className="vx-friends-badge">{invites.length}</b> : null}
+        </button>
+        <button
+          type="button"
           className={tab === "requests" ? "vx-friends-tab-on" : ""}
           onClick={() => setTab("requests")}
         >
@@ -411,7 +445,47 @@ export function FriendsDrawer({
       </div>
 
       <div className="vx-friends-body">
-        {tab === "friends" ? (
+        {tab === "invites" ? (
+          invites.length === 0 ? (
+            <div className="vx-friends-empty">
+              <EmptyArt variant="pig" />
+              <b>还没有邀请</b>
+              <p>好友在房间里点「邀请」后，这里会留一条记录（不会一闪就没）</p>
+            </div>
+          ) : (
+            invites.map((invite) => (
+              <div className="vx-friend-row" key={invite.from.id}>
+                <Avatar
+                  avatar={invite.from.avatar}
+                  color="#b783d9"
+                  name={invite.from.name}
+                  size={34}
+                />
+                <div className="vx-friend-main">
+                  <b>{invite.from.name}</b>
+                  <span className="vx-friend-sub">
+                    邀请你进语音房 <i className="vx-friend-room">{invite.code}</i> ·{" "}
+                    {minutesAgo(invite.at)}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  className="vx-btn vx-btn-small vx-btn-primary"
+                  onClick={() => onJoinInvite?.(invite)}
+                >
+                  加入
+                </button>
+                <button
+                  type="button"
+                  className="vx-btn vx-btn-small vx-btn-quiet"
+                  onClick={() => onDismissInvite?.(invite)}
+                >
+                  忽略
+                </button>
+              </div>
+            ))
+          )
+        ) : tab === "friends" ? (
           snapshot.friends.length === 0 ? (
             <div className="vx-friends-empty">
               <EmptyArt variant="pig" />
@@ -458,7 +532,7 @@ export function FriendsDrawer({
                       inOtherRoom
                         ? "对方在别的房间里"
                         : roomCode
-                          ? "复制一条邀请，发给对方点开就进"
+                          ? "把邀请推到他的好友面板（离线也不会丢）"
                           : "先建一个房间，才能邀请"
                     }
                     onClick={() => {

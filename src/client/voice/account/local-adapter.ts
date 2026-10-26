@@ -16,6 +16,7 @@ import {
   type FriendRequest,
   type FriendsSnapshot,
   type Presence,
+  type RoomInvite,
   validatePassword,
   validateUsername,
 } from "./types";
@@ -39,11 +40,15 @@ const sessionStore = {
   },
 };
 const AVATAR_KEY = "5blong.avatar.";
+/** 房间邀请：toId → fromId → { code, at }（处理后就删掉这条） */
+const INVITES_KEY = "5blong.invites.v1";
 const CHANNEL = "5blong.account";
 
 interface StoredAccount extends AccountProfile {
   salt: string;
   hash: string;
+  /** 改号次数：0 = 还有那唯一一次机会；>=1 = 已锁定 */
+  roomChanges?: number;
 }
 
 interface FriendGraph {
@@ -113,6 +118,7 @@ const stripAccount = (stored: StoredAccount): AccountProfile => ({
   avatarVersion: stored.avatarVersion,
   createdAt: stored.createdAt,
   ...(stored.roomCode ? { roomCode: stored.roomCode } : {}),
+  roomCodeLocked: Boolean(stored.roomCode) && (stored.roomChanges ?? 0) >= 1,
 });
 
 /**
@@ -268,10 +274,14 @@ export class LocalAccountAdapter implements AccountAdapter {
     if (patch.roomCode !== undefined) {
       const roomCode = patch.roomCode.trim();
       if (!isNewRoomCode(roomCode)) return { error: "room-taken" };
+      // 每个账号只有一次改号机会：改过就锁死（业主 2026-10-26）
+      if (stored.roomCode && (stored.roomChanges ?? 0) >= 1) return { error: "room-locked" };
       const occupied = Object.values(accounts).some(
         (item) => item.id !== me.id && item.roomCode === roomCode,
       );
       if (occupied) return { error: "room-taken" };
+      // 首次领号不计数；有号再改就是那唯一一次
+      stored.roomChanges = stored.roomCode ? 1 : 0;
       stored.roomCode = roomCode;
     }
     if (patch.name !== undefined) stored.name = patch.name.slice(0, 24) || stored.name;
@@ -392,6 +402,44 @@ export class LocalAccountAdapter implements AccountAdapter {
       return { state: "offline", lastSeen: at?.at ?? 0 };
     }
     return { state: "online", lastSeen: at.at, roomCode: at.roomCode };
+  }
+
+  async sendInvite(accountId: string, roomCode: string): Promise<AuthResult> {
+    const me = this.current();
+    if (!me) return { error: "not-found" };
+    if (me.id === accountId) return { error: "self" };
+    const target = this.findById(accountId);
+    if (!target) return { error: "not-found" };
+    const book = read<Record<string, Record<string, { code: string; at: number }>>>(INVITES_KEY, {});
+    (book[accountId] ??= {})[me.id] = { code: roomCode, at: Date.now() };
+    write(INVITES_KEY, book);
+    this.emit();
+    return { account: target };
+  }
+
+  async invites(): Promise<RoomInvite[]> {
+    const me = this.current();
+    if (!me) return [];
+    const book = read<Record<string, Record<string, { code: string; at: number }>>>(INVITES_KEY, {});
+    const mine = book[me.id] ?? {};
+    return Object.entries(mine)
+      .map(([fromId, item]) => {
+        const from = this.findById(fromId);
+        return from ? { from, code: item.code, at: item.at } : null;
+      })
+      .filter((item): item is RoomInvite => item !== null)
+      .sort((a, b) => b.at - a.at);
+  }
+
+  async dismissInvite(fromAccountId: string): Promise<void> {
+    const me = this.current();
+    if (!me) return;
+    const book = read<Record<string, Record<string, { code: string; at: number }>>>(INVITES_KEY, {});
+    if (book[me.id]) {
+      delete book[me.id][fromAccountId];
+      write(INVITES_KEY, book);
+    }
+    this.emit();
   }
 
   async snapshot(): Promise<FriendsSnapshot> {

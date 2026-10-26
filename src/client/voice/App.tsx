@@ -3,7 +3,7 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react"
 import { preloadRnnoise } from "./engine";
 import { shouldShowOnboarding } from "./onboarding";
 import { isJoinInFlight, makeRoomCode, randomIndex } from "./protocol";
-import { ensureRoomKey, normalizeFixedRoomCode, renewRoomKey } from "./my-room";
+import { ensureRoomKey, normalizeFixedRoomCode } from "./my-room";
 import { useVoice } from "./use-voice";
 import { ConfirmView, LandingView, SessionSummaryCard } from "./components/pages";
 import { RoomView } from "./components/RoomView";
@@ -14,10 +14,11 @@ import { shouldShowWhatsNew } from "./whats-new";
 import { SettingsView } from "./components/SettingsView";
 import { AccountDialog, FriendsDrawer } from "./components/AccountPanels";
 import { FriendRequestToast } from "./components/FriendRequestToast";
-import { buildInviteText, copyText } from "./invite-text";
+import { buildInviteText } from "./invite-text";
 import { LocalAccountAdapter, seedDemoAccounts } from "./account/local-adapter";
 import { WorkerAccountAdapter } from "./account/worker-adapter";
 import { useAccount } from "./account/use-account";
+import type { AccountProfile, RoomInvite } from "./account/types";
 import { Banner } from "./components/ui";
 import { gameCodeFromUrl } from "../game/game-links";
 /*
@@ -67,6 +68,85 @@ export function App() {
    */
   const myRoomCode = account.me?.roomCode ?? null;
 
+  /**
+   * 好友发来的房间邀请。
+   *
+   * 业主口径（2026-10-26）：**不能只靠弹窗**——没看见、在忙、关了电脑就耽误了。
+   * 所以邀请存在后端（room_invites），这里每 8 秒拉一次，好友抽屉里留档，
+   * 顶栏「好友」图标上的红点把「请求 + 邀请」一起算进去。
+   */
+  const [invites, setInvites] = useState<RoomInvite[]>([]);
+  useEffect(() => {
+    if (!account.me) {
+      setInvites([]);
+      return;
+    }
+    let alive = true;
+    const load = () => {
+      void accountAdapter.invites().then((list) => {
+        if (alive) setInvites(list);
+      });
+    };
+    load();
+    const timer = window.setInterval(load, 8_000);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+    };
+  }, [account.me?.id, accountAdapter]);
+
+  /** 加入邀请：先消掉这条记录，再走正常的进房流程（私密房会就地要临时密码）。 */
+  const joinInvite = useCallback(
+    (invite: RoomInvite) => {
+      setInvites((list) => list.filter((item) => item.from.id !== invite.from.id));
+      void accountAdapter.dismissInvite(invite.from.id);
+      setFriendsOpen(false);
+      voice.submitJoinInput(invite.code);
+    },
+    [accountAdapter, voice],
+  );
+
+  const dismissInvite = useCallback(
+    (invite: RoomInvite) => {
+      setInvites((list) => list.filter((item) => item.from.id !== invite.from.id));
+      void accountAdapter.dismissInvite(invite.from.id);
+    },
+    [accountAdapter],
+  );
+
+  /**
+   * 邀请好友进我这间房：
+   * 先走推送（对方好友面板里会留一条记录，离线也不丢）；推送不了才退回复制文案。
+   * 私密房还要额外把临时密码告诉他——密码不进库，只能房主自己发。
+   */
+  const inviteFriend = useCallback(
+    async (target: AccountProfile) => {
+      const code = voice.invite?.code;
+      if (!code) return false;
+      const result = await accountAdapter.sendInvite(target.id, code);
+      if (!result.error) {
+        const pass = voice.privateRoom ? voice.guestPass : "";
+        voice.setNotice({
+          kind: "info",
+          text: pass
+            ? `已邀请 ${target.name}；这是私密房，记得把临时密码 ${pass} 也发给他`
+            : `已邀请 ${target.name}，他在好友面板的「邀请」里能看到`,
+        });
+        return true;
+      }
+      // 推送不通（还不是好友 / 后端未上线）→ 退回"复制文案"，别让按钮点了没反应
+      return voice.copyText(
+        buildInviteText(code, {
+          count: voice.members.length,
+          topic: voice.topic,
+          pass: voice.privateRoom && voice.guestPass ? voice.guestPass : undefined,
+        }),
+        "已复制邀请，直接发给他",
+      );
+    },
+    [accountAdapter, voice],
+  );
+
   /** 主操作：有账号就开自己那间，没登录就随手开一间。 */
   const startRoom = useCallback(async () => {
     const me = account.me;
@@ -107,21 +187,6 @@ export function App() {
     [account, accountAdapter, voice],
   );
 
-  /** 随机换一个固定房号（换号连钥匙一起换：旧邀请链接指向的房已经不存在了）。 */
-  const renewRoomCode = useCallback(async () => {
-    const me = account.me;
-    if (!me) return;
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      const code = makeRoomCode(randomIndex);
-      const result = await accountAdapter.updateProfile({ roomCode: code });
-      if (result.error) continue;
-      renewRoomKey(me.id);
-      void account.refresh();
-      voice.setNotice({ kind: "info", text: `已换成新房间号 ${code}，之前发出去的邀请链接作废了` });
-      return;
-    }
-    voice.setNotice({ kind: "error", text: "换号失败了，稍后再试" });
-  }, [account, accountAdapter, voice]);
 
   // 账号 ID 只用于「加好友」：登录/退出时同步给引擎，不参与任何进房校验
   useEffect(() => {
@@ -352,7 +417,7 @@ export function App() {
       <RoomView
         selfAccountId={account.me?.id ?? null}
         onOpenAccount={() => setAccountOpen(true)}
-        friendRequestCount={account.snapshot.incoming.length}
+        friendRequestCount={account.snapshot.incoming.length + invites.length}
         onOpenFriends={() => setFriendsOpen(true)}
         friendAccountIds={new Set(account.snapshot.friends.map((entry) => entry.account.id))}
         onAddFriend={(accountId) =>
@@ -503,14 +568,10 @@ export function App() {
         onChanged={() => void account.refresh()}
         roomCode={voice.invite?.code ?? null}
         canInvite={voice.members.some((member) => member.local && member.isHost)}
-        onInvite={() =>
-          copyText(
-            buildInviteText(voice.invite?.code ?? "", {
-              count: voice.members.length,
-              topic: voice.topic,
-            }),
-          )
-        }
+        onInvite={inviteFriend}
+        invites={invites}
+        onJoinInvite={joinInvite}
+        onDismissInvite={dismissInvite}
       />
       </>
     );
@@ -543,7 +604,9 @@ export function App() {
           <LandingView
             identity={voice.identity}
             onIdentityChange={voice.setIdentity}
-            onCreate={() => void startRoom()}
+            // 主按钮：临时房（主流）；「我的房间」走 onStartMyRoom
+            onCreate={() => void voice.createRoom()}
+            onStartMyRoom={() => void startRoom()}
             onJoin={voice.submitJoinInput}
             onSettings={voice.openSettings}
             sceneTheme={voice.sceneTheme}
@@ -558,12 +621,15 @@ export function App() {
             onDismissError={() => voice.setJoinError(null)}
             lastRoom={voice.lastRoom}
             onResumeLastRoom={() => void voice.resumeLastRoom()}
-            myRoom={myRoomCode ? { code: myRoomCode } : null}
-            onRenewMyRoom={() => void renewRoomCode()}
+            myRoom={
+              myRoomCode
+                ? { code: myRoomCode, locked: account.me?.roomCodeLocked === true }
+                : null
+            }
             onClaimMyRoom={claimRoomCode}
             needsPass={voice.needsPass}
             account={account.me}
-            friendRequests={account.snapshot.incoming.length}
+            friendRequests={account.snapshot.incoming.length + invites.length}
             onOpenAccount={() => setAccountOpen(true)}
             onOpenFriends={() => setFriendsOpen(true)}
             onCreateGame={() => openGame("create")}
@@ -630,14 +696,10 @@ export function App() {
         onChanged={() => void account.refresh()}
         roomCode={voice.invite?.code ?? null}
         canInvite={voice.members.some((member) => member.local && member.isHost)}
-        onInvite={() =>
-          copyText(
-            buildInviteText(voice.invite?.code ?? "", {
-              count: voice.members.length,
-              topic: voice.topic,
-            }),
-          )
-        }
+        onInvite={inviteFriend}
+        invites={invites}
+        onJoinInvite={joinInvite}
+        onDismissInvite={dismissInvite}
       />
     </>
   );

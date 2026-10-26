@@ -29,7 +29,8 @@
     "feedback:setup": "node scripts/feedback-setup.mjs",
     "feedback:admin": "node scripts/feedback-admin.mjs",
     "signal:setup": "node scripts/signal-setup.mjs",
-    "signal:deploy": "wrangler deploy --config worker/signal/wrangler.toml"
+    "signal:deploy": "wrangler deploy --config worker/signal/wrangler.toml",
+    "accounts:setup": "node scripts/accounts-setup.mjs"
   },
   "dependencies": {
     "@sapphi-red/web-noise-suppressor": "^0.4.1",

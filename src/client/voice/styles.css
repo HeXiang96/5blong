@@ -4362,3 +4362,27 @@ html[data-scene="spring"] .vx-channel .vx-btn-primary {
 html[data-scene="spring"] .vx-channel .vx-btn-primary:hover:not(:disabled) {
   background: linear-gradient(180deg, #ffcf7a 0%, #eaa946 100%);
 }
+
+/* 「我的房间」降级成次级入口（业主：临时房才是主流）：
+   它必须明显弱于上面那个大主按钮，但不能弱到看不见——描边 + 同宽，视觉上是"第二条路"。 */
+.vx-myroom-open {
+  width: 100%;
+  justify-content: center;
+  border-color: var(--vx-line);
+  color: var(--vx-text);
+  font-size: 13px;
+}
+.vx-myroom-open:hover:not(:disabled) {
+  border-color: var(--vx-accent);
+  color: var(--vx-accent-strong);
+}
+
+/* 房号锁定后的说明（业主：改号只有一次，用完了就只陈述事实，不给任何入口） */
+.vx-myroom-locked {
+  font-size: 11px;
+  color: var(--vx-text-dim, #7a6449);
+  cursor: default;
+}
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-myroom-locked {
+  color: #cbb28a;
+}

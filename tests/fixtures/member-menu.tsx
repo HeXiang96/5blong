@@ -144,6 +144,19 @@ function Fixture() {
       record("add-friend", accountId);
       return true;
     },
+    // ?pass=1 模拟"这是登录账号的私密房、临时密码开着"：
+    // 顶栏应出现钥匙图标 + 浮层里的大号密码（各主题都要能看清）
+    privateRoom: params.get("pass") === "1" || params.get("pass") === "off",
+    guestPass: params.get("pass") === "1" ? "831204" : "",
+    onRenewGuestPass: () => {
+      record("renew-pass");
+      return "831204";
+    },
+    onCloseGuestPass: () => record("close-pass"),
+    onCopyPassInvite: async () => {
+      record("copy-pass");
+      return true;
+    },
     onWatchScreen: (state) => record("share-watch", state),
     shareViewMode: "auto" as const,
     onSetShareViewMode: (mode) => record("share-view-mode", mode),

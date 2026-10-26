@@ -659,3 +659,57 @@ html[data-theme="dark"] .vx-audio-blocked {
     animation: none !important;
   }
 }
+
+/* ---------------------------------------------------------------------------
+   顶栏不再"挤扁"：私密房多了一个钥匙按钮之后，木牌里的每一项都被压缩，
+   房间码「123456」被折成两行、按钮文字竖排（"密/码"）——一眼看去像坏了。
+   规则：木牌允许换行；牌上的元素自己不许被折断。
+   --------------------------------------------------------------------------- */
+.vx-signboard {
+  flex-wrap: wrap;
+  justify-content: center;
+  row-gap: 6px;
+}
+.vx-sign-code,
+.vx-sign-conn,
+.vx-sign-count,
+.vx-sign-lock,
+.vx-sign-friends,
+.vx-sign-btn,
+.vx-sign-brand,
+.vx-topic {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+/*
+ * 窄一点（笔记本 13 寸 / 分屏）时，木牌上的字要会"脱"，不然一挤就折行：
+ * 圈号标签与「密码」两个字让位，图标留着（鼠标悬停有完整说明）。
+ */
+@media (max-width: 1000px) {
+  .vx-signboard {
+    gap: clamp(6px, 1vw, 10px);
+    padding: 8px clamp(8px, 1.4vw, 14px);
+  }
+  .vx-sign-code-label {
+    display: none;
+  }
+  .vx-pass-wrap .vx-sign-friends span {
+    display: none;
+  }
+  .vx-sign-btn {
+    padding: 0 10px;
+  }
+}
+
+/*
+ * 深色/夜晚下木牌上的房号看不清（2026-10-26 截图发现）：
+ * 深色主题把 .vx-sign-code 刷成了深棕底，但 .vx-sign-code-value 里写死了深棕字，
+ * 于是「123456」几乎与底色同色。房号是房间里最该被一眼读到的信息，这里补回来。
+ */
+html[data-theme="dark"] .vx-sign-code-value,
+html[data-theme="dark"] .vx-sign-code,
+html[data-theme="light"][data-daypart="night"] .vx-sign-code-value,
+html[data-theme="light"][data-daypart="night"] .vx-sign-code {
+  color: #ffe9c0;
+}

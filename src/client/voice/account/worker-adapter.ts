@@ -19,6 +19,7 @@ import {
   type AuthResult,
   type FriendRequest,
   type FriendsSnapshot,
+  type RoomInvite,
 } from "./types";
 
 const TOKEN_KEY = "5blong.account.token";
@@ -177,8 +178,16 @@ export class WorkerAccountAdapter implements AccountAdapter {
     return (data["accounts"] as AccountProfile[] | undefined) ?? [];
   }
 
-  private async friendAction(path: string, id: string, method = "POST"): Promise<AuthResult> {
-    const { data } = await this.request(path, { method, body: method === "DELETE" ? undefined : { id } });
+  private async friendAction(
+    path: string,
+    id: string,
+    method = "POST",
+    body?: Record<string, unknown>,
+  ): Promise<AuthResult> {
+    const { data } = await this.request(path, {
+      method,
+      body: method === "DELETE" ? undefined : (body ?? { id }),
+    });
     if (data["error"]) return { error: toError(data["error"]) };
     const account = (data["account"] ?? null) as AccountProfile | null;
     // 好友变化会改快照，UI 靠 refresh 拉；这里只把"当前账号"顺手同步一下
@@ -209,6 +218,19 @@ export class WorkerAccountAdapter implements AccountAdapter {
       incoming: (data["incoming"] as FriendRequest[] | undefined) ?? [],
       outgoing: (data["outgoing"] as FriendRequest[] | undefined) ?? [],
     };
+  }
+
+  async sendInvite(accountId: string, roomCode: string): Promise<AuthResult> {
+    return this.friendAction("/invites", accountId, "POST", { id: accountId, code: roomCode });
+  }
+
+  async invites(): Promise<RoomInvite[]> {
+    const { data } = await this.request("/invites");
+    return (data["invites"] as RoomInvite[] | undefined) ?? [];
+  }
+
+  async dismissInvite(fromAccountId: string): Promise<void> {
+    await this.request(`/invites/${fromAccountId}`, { method: "DELETE" });
   }
 
   /**

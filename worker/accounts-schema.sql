@@ -23,6 +23,8 @@ CREATE TABLE IF NOT EXISTS accounts (
   -- 固定房号（6 位数字）：NULL = 还没领号
   room_code TEXT,
   room_code_at INTEGER,
+  -- 改号次数：0 = 还允许改一次；>=1 = 已锁定（业主 2026-10-26 口径）
+  room_changes INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
@@ -65,3 +67,20 @@ CREATE TABLE IF NOT EXISTS account_presence (
   last_seen INTEGER NOT NULL,
   room_code TEXT
 );
+
+-- 房间邀请（2026-10-26 业主口径）：
+-- 邀请**必须留档**，不能只靠一闪而过的弹窗——对方没看见、在忙、关机了，
+-- 回来在好友面板的「邀请」里还得看得到"谁邀请了我"。
+-- 一人对一人只留最新一条（重复邀请覆盖时间与房号）；对方加入或忽略后删除。
+CREATE TABLE IF NOT EXISTS room_invites (
+  from_id TEXT NOT NULL,
+  to_id TEXT NOT NULL,
+  code TEXT NOT NULL,
+  at INTEGER NOT NULL,
+  PRIMARY KEY (from_id, to_id)
+);
+CREATE INDEX IF NOT EXISTS idx_room_invites_to ON room_invites (to_id, at DESC);
+
+-- 老库补列（CREATE TABLE IF NOT EXISTS 不会给已存在的表加列）。
+-- 重复执行会报 duplicate column，scripts/accounts-setup.mjs 会跳过这种错误。
+ALTER TABLE accounts ADD COLUMN room_changes INTEGER NOT NULL DEFAULT 0;

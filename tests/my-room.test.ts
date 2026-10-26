@@ -68,24 +68,32 @@ describe("自定义房号格式", () => {
   });
 });
 
-describe("固定房号绑定在账号上", () => {
-  it("写进账号档案，重新登录还在；别的账号占了同一个号就写不进去", async () => {
+describe("固定房号绑定在账号上（一次性认领 + 只能改一次）", () => {
+  it("首次领号不算改；改成心仪的号之后锁死；别人抢同一个号被拒", async () => {
     const adapter = new LocalAccountAdapter();
     const first = await adapter.register({ username: "pigone", password: "12345678a" });
-    const firstId = first.account!.id;
     expect(first.account!.roomCode).toBeUndefined();
 
-    const saved = await adapter.updateProfile({ roomCode: "235417" });
-    expect(saved.account?.roomCode).toBe("235417");
-    // 重新读取（等价于换一次会话/换设备登录同一个账号）
-    expect(adapter.current()?.roomCode).toBe("235417");
+    // 1) 首次领号：不算修改
+    const claimed = await adapter.updateProfile({ roomCode: "235417" });
+    expect(claimed.account?.roomCode).toBe("235417");
+    expect(claimed.account?.roomCodeLocked).toBe(false);
 
+    // 2) 唯一一次自定义修改：成功并锁死
+    const changed = await adapter.updateProfile({ roomCode: "520131" });
+    expect(changed.account?.roomCode).toBe("520131");
+    expect(changed.account?.roomCodeLocked).toBe(true);
+
+    // 3) 再想改 → 锁定
+    expect((await adapter.updateProfile({ roomCode: "111222" })).error).toBe("room-locked");
+    expect(adapter.current()?.roomCode).toBe("520131");
+
+    // 4) 别的账号想认领同一个号 → 已被认领
     const second = await adapter.register({ username: "pigtwo", password: "12345678b" });
-    expect(second.account?.id).not.toBe(firstId);
-    const stolen = await adapter.updateProfile({ roomCode: "235417" });
-    expect(stolen.error).toBe("room-taken");
+    expect(second.account?.id).not.toBe(first.account!.id);
+    expect((await adapter.updateProfile({ roomCode: "520131" })).error).toBe("room-taken");
 
-    // 非法格式同样拒绝，且不会把已有房号冲掉
+    // 5) 非法格式同样拒绝，且不会把已有房号冲掉（新账号还没号）
     expect((await adapter.updateProfile({ roomCode: "1234" })).error).toBe("room-taken");
     expect(adapter.current()?.roomCode).toBeUndefined();
   });

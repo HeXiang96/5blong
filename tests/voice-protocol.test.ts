@@ -629,3 +629,61 @@ describe("观众画质偏好与 AV1 能力（1.4.1 新增）", () => {
     expect(bogus?.t === "screen-share-start" && "quality" in bogus.session).toBe(false);
   });
 });
+
+describe("私密房（我的房间）的门禁", () => {
+  const base = {
+    hostReady: true,
+    closed: false,
+    locked: false,
+    codeMatches: true,
+    existing: false,
+    memberCount: 2,
+  };
+
+  it("裸输房号 → 要密码，不放行", () => {
+    expect(
+      decideAdmission({ ...base, proofValid: false, privateRoom: true, proofProvided: false }),
+    ).toEqual({ ok: false, reason: "needs-pass" });
+  });
+
+  it("带了证明但不对 → 密码错误（不是 bad-key，文案要能区分）", () => {
+    expect(
+      decideAdmission({ ...base, proofValid: false, privateRoom: true, proofProvided: true }),
+    ).toEqual({ ok: false, reason: "bad-pass" });
+  });
+
+  it("邀请链接或临时密码验过 → 放行", () => {
+    expect(
+      decideAdmission({ ...base, proofValid: true, privateRoom: true, proofProvided: true }),
+    ).toEqual({ ok: true });
+  });
+
+  it("普通房的老行为不许改：决定权仍在校验方（裸码由引擎判 proofValid=true）", () => {
+    // decideAdmission 本身只认 proofValid；"裸码放行"是引擎在普通房里给的证明语义
+    expect(decideAdmission({ ...base, proofValid: true, privateRoom: false })).toEqual({ ok: true });
+    expect(decideAdmission({ ...base, proofValid: false, privateRoom: false })).toEqual({
+      ok: false,
+      reason: "bad-key",
+    });
+  });
+});
+
+describe("「房间码 + 临时密码」的输入解析", () => {
+  it("空格 / 连字符 / 中文逗号都能黏回来", () => {
+    expect(parseJoinInput("235417 831204")).toEqual({
+      code: "235417",
+      hostId: "",
+      roomKey: "",
+      pass: "831204",
+    });
+    expect(parseJoinInput("235417-831204")?.pass).toBe("831204");
+    expect(parseJoinInput("235417，831204")?.code).toBe("235417");
+    expect(parseJoinInput("  235417   831204  ")?.pass).toBe("831204");
+  });
+
+  it("只有码 / 码+乱码 → 该认的认，不该认的不认", () => {
+    expect(parseJoinInput("235417")).toEqual({ code: "235417", hostId: "", roomKey: "" });
+    expect(parseJoinInput("235417 12")).toBeNull(); // 密码太短
+    expect(parseJoinInput("12345 831204")).toBeNull(); // 码长度不对
+  });
+});

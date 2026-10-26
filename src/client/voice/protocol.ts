@@ -379,7 +379,7 @@ export function parseJoinInput(input: string): JoinTarget | null {
    * 容忍空格、换行、逗号、全角空格——从微信里复制过来的就是这样：
    *   235417 831204 / 235417-831204 / 235417，831204
    */
-  const parts = raw.split(/[\s,，、;；+]+/).filter(Boolean);
+  const parts = raw.split(/[\s,，、;；+\-]+/).filter(Boolean);
   if (parts.length === 2) {
     const code = normalizeCode(parts[0]!);
     const pass = normalizeCode(parts[1]!);
