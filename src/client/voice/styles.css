@@ -4386,3 +4386,23 @@ html[data-scene="spring"] .vx-channel .vx-btn-primary:hover:not(:disabled) {
 :is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-myroom-locked {
   color: #cbb28a;
 }
+
+/* ---------------------------------------------------------------------------
+   兜底卡片：某一小块渲染炸了（或整个 App 崩了）时显示的替代内容。
+   2026-10-26 的事故里，用户看到的是一整窗空白、连退出都点不到；
+   至少要有字、有"重新加载"——白屏是最差的失败方式。
+   --------------------------------------------------------------------------- */
+.vx-crash {
+  max-width: 420px;
+  margin: 12vh auto;
+  padding: 18px 20px;
+  border: 1px solid var(--vx-line, #e6ddcd);
+  border-radius: 14px;
+  background: var(--vx-surface, #fffdf7);
+  color: var(--vx-text, #2b2620);
+  text-align: center;
+  font: 14px/1.6 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+}
+.vx-crash b { display: block; font-size: 16px; margin-bottom: 4px; }
+.vx-crash p { margin: 0 0 12px; color: var(--vx-text-dim, #7a6449); word-break: break-word; }
+.vx-crash-actions { display: flex; gap: 8px; justify-content: center; }

@@ -13,6 +13,8 @@
  */
 import { afterEach, describe, expect, it } from "vitest";
 
+import { canProbeShareAudio } from "../src/client/voice/screen-share";
+
 import {
   JITTER_ADAPTIVE_MS,
   RESOLUTION_LADDER,
@@ -780,5 +782,18 @@ describe("三分档读数（不再随机显示某一层）", () => {
     expect(text).toContain("f 1414×1018");
     expect(text).toContain("q 353×254");
     expect(text).toContain("@30");
+  });
+});
+
+describe("共享声音电平探针的准入（后进房的人白屏回归）", () => {
+  const makeStream = (audioTracks: number) =>
+    ({ getAudioTracks: () => Array.from({ length: audioTracks }) }) as unknown as MediaStream;
+
+  it("没有音轨的流（后进者拿到的视频流）绝不能接探针", () => {
+    expect(canProbeShareAudio(null)).toBe(false);
+    expect(canProbeShareAudio(undefined)).toBe(false);
+    expect(canProbeShareAudio(makeStream(0))).toBe(false); // 后进者的视频流：没有音轨
+    expect(canProbeShareAudio(makeStream(1))).toBe(true);
+    expect(canProbeShareAudio(makeStream(2))).toBe(true);
   });
 });

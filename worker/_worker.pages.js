@@ -1673,15 +1673,22 @@ async function accountById(env, id) {
 async function currentAccount(request, env) {
   const header = request.headers.get("Authorization") ?? "";
   const bearer = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
-  const token = bearer || readCookie(request, SESSION_COOKIE);
-  if (!token) return null;
-  const session = await env.DB.prepare(
-    "SELECT account_id, expires_at FROM account_sessions WHERE token = ?",
-  )
-    .bind(token)
-    .first();
-  if (!session || session.expires_at < Date.now()) return null;
-  return accountById(env, session.account_id);
+  const cookie = readCookie(request, SESSION_COOKIE);
+  /*
+   * 两个凭据都试一遍：桌面端带 Bearer、网页端靠 cookie，两边都可能只有其中一个有效
+   * （比如 WebView2 里的 cookie 被清、或本地令牌写坏了）。
+   * 只认第一个会让"另一个其实有效"的用户莫名被登出。
+   */
+  const candidates = [bearer, cookie].filter((value, index, list) => value && list.indexOf(value) === index);
+  for (const token of candidates) {
+    const session = await env.DB.prepare(
+      "SELECT account_id, expires_at FROM account_sessions WHERE token = ?",
+    )
+      .bind(token)
+      .first();
+    if (session && session.expires_at >= Date.now()) return accountById(env, session.account_id);
+  }
+  return null;
 }
 
 async function createSession(request, env, accountId) {

@@ -116,19 +116,46 @@ export class WorkerAccountAdapter implements AccountAdapter {
     this.emit();
   }
 
-  /** 用服务端核对一次登录态（cookie 或令牌）。失败静默当未登录，不打扰用户。 */
+  /**
+   * 用服务端核对一次登录态（cookie 或令牌）。
+   *
+   * ⚠️ 只有**服务端明确回 401**（或 200 里 account=null）才算真的登出；
+   * 网络失败 / 5xx / 请求被刷新打断（status 0）一律**保留**登录态。
+   *
+   * 2026-10-26 业主实测"刷新两三下就被退出"，根因就在这里：
+   * 原来不看状态码，只要 `data.account` 取不到就把缓存与本地令牌清空——
+   * 而刷新页面时上一个 fetch 会被浏览器取消，正好走到这个分支。
+   *
+   * 另外：失败后必须把 hydratePromise 清掉，否则本次会话永远复用一个已失败的结果。
+   */
   async hydrate(): Promise<void> {
-    this.hydratePromise ??= (async () => {
-      const { data } = await this.request("/me");
-      const account = (data["account"] ?? null) as AccountProfile | null;
-      this.me = account;
-      writeCachedMe(account);
-      if (!account) {
-        this.token = "";
-        writeToken("");
-      }
-      this.emit();
-    })();
+    if (!this.hydratePromise) {
+      this.hydratePromise = (async () => {
+        const { status, data } = await this.request("/me");
+        if (status === 401) {
+          // 服务端说没有登录态：这才是真登出
+          this.me = null;
+          writeCachedMe(null);
+          this.token = "";
+          writeToken("");
+        } else if (status === 200) {
+          const account = (data["account"] ?? null) as AccountProfile | null;
+          this.me = account;
+          writeCachedMe(account);
+          if (!account) {
+            this.token = "";
+            writeToken("");
+          }
+        } else {
+          // 网络抖动 / 5xx / 被中断：什么都不动，保留缓存与令牌，下次再核
+          return;
+        }
+        this.emit();
+      })().finally(() => {
+        // 允许下一次（刷新、上下线、重试）重新核对
+        this.hydratePromise = null;
+      });
+    }
     return this.hydratePromise;
   }
 

@@ -914,6 +914,18 @@ export function formatScreenLayers(layers: ScreenLayerStat[]): string {
     .join(" · ");
 }
 
+/**
+ * 这个共享流能不能接"声音电平探针"？
+ *
+ * 不能：`createMediaStreamSource` 要求流里**至少有一条音轨**，否则直接抛
+ * InvalidStateError。而 effect 里抛错在 React 里等于整棵树卸载 ——
+ * 2026-10-26 就是它让"共享开始后才进房的人"点开灯箱整窗白屏：
+ * 后进者拿到的是画面先到、音轨还没有（或干脆没开声音）的那条流。
+ */
+export function canProbeShareAudio(stream: MediaStream | null | undefined): boolean {
+  return Boolean(stream && stream.getAudioTracks().length > 0);
+}
+
 /** 直接吃 RTCStatsReport 的便捷包装（组件里用）。 */
 export function summarizeScreenReport(report: RTCStatsReport, prev: RateSample | null): ScreenStatsSummary {
   const entries: StatsEntry[] = [];

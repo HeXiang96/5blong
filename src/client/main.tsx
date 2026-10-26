@@ -2,6 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./voice/App";
 import { UpdateOverlay } from "./voice/components/UpdateOverlay";
+import { ErrorBoundary } from "./voice/components/ErrorBoundary";
 /*
  * 样式按模块引入。
  *
@@ -27,7 +28,10 @@ if (!root) {
 
 createRoot(root).render(
   <StrictMode>
-    <App />
+    {/* 顶层兜底：任何未捕获的渲染异常都只显示一个可重载的卡片，而不是整窗白屏 */}
+    <ErrorBoundary>
+      <App />
+    </ErrorBoundary>
     {/* 桌面端更新进度（网页版自动不渲染） */}
     <UpdateOverlay />
   </StrictMode>,

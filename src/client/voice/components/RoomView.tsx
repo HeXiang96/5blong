@@ -90,6 +90,7 @@ import { PigActor, PenFrame, PenScatter, useElementSize, ENTRY_TOTAL_MS } from "
 import { Fireworks } from "./Fireworks";
 import { NpcVisitor, PenPropsLayer, type PenPropEntry } from "./PenProps";
 import { Campfire, PenTV, PenTvLightbox } from "./PenTV";
+import { ErrorBoundary } from "./ErrorBoundary";
 import { NPC_NAME, feetViewportPx, phaseForActor, tvSlotFor } from "../pen";
 import type { ScreenShareState, ScreenViewPreference } from "../protocol";
 import type { ShareQuality } from "../settings";
@@ -1420,6 +1421,11 @@ export function RoomView({
         />
 
         {tvExpanded && screenShare ? (
+          /*
+           * 灯箱单独兜一层：里面任何异常都只让它自己消失（并且把灯箱关掉），
+           * 不能像 2026-10-26 那样把整个房间界面带走、白屏且没法退出。
+           */
+          <ErrorBoundary fallback={null} onError={() => setTvExpanded(false)}>
           <PenTvLightbox
             state={screenShare}
             stream={shareStream}
@@ -1436,6 +1442,7 @@ export function RoomView({
               onWatchScreen("preview");
             }}
           />
+          </ErrorBoundary>
         ) : null}
 
         {invite && members.length === 1 ? (

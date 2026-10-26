@@ -8,6 +8,7 @@ import { FIRE_POS, PROJ_POS, SCREEN_POS, feetViewportPx } from "../pen";
 import type { ScreenShareState, ScreenViewPreference } from "../protocol";
 import { readJson, writeJson } from "../storage";
 import {
+  canProbeShareAudio,
   SHARE_QUALITY_PRESETS,
   formatScreenLayers,
   simulcastLayerLabel,
@@ -338,12 +339,11 @@ export function PenTvLightbox({
   useEffect(() => {
     writeJson(TV_AUDIO_KEY, { volume, muted, big } satisfies TvAudio);
   }, [volume, muted, big]);
-  // 挂载即最大化（用户点幕布的手势链内申请全屏；被拒就只用 CSS 铺满）。
-  useEffect(() => {
-    if (!big) return;
-    void rootRef.current?.requestFullscreen?.().catch(() => {});
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  /*
+   * 挂载时**不再**申请系统全屏：桌面端（WebView2）在 portal 元素刚挂载时 requestFullscreen，
+   * 偶发整窗空白（业主 2026-10-26 报"点开灯箱白屏、什么都没有"）。
+   * `big` 记忆只决定 CSS 铺满；真正进系统全屏要用户点右上角「最大化」。
+   */
   /**
    * 实时链路数据（每 2s 刷新）：一眼看清卡在编码、传输还是解码。
    *
@@ -426,15 +426,32 @@ export function PenTvLightbox({
     video.volume = volume;
   }, [muted, volume]);
 
-  // 共享声音的电平探针（只读，不影响播放）
+  /*
+   * 共享声音的电平探针（只读，不影响播放）。
+   *
+   * ⚠️ 两个坑，都会让**整个应用白屏**（effect 里抛错 = React 卸载整棵树）：
+   *   1. 流里**没有音轨**时 `createMediaStreamSource` 直接抛 InvalidStateError——
+   *      后进房间的人刚好就是这种流（画面先到、声音后到或根本没开声音）；
+   *   2. 音频上下文数量超限 / 浏览器不支持时 `new AudioContext()` 也会抛。
+   * 所以：先看有没有音轨，整段再包一层 try/catch，最坏情况只是不显示电平。
+   */
   useEffect(() => {
-    if (!stream) {
+    // 先保证流在（TS 收窄），再保证里面有音轨（没有音轨时 createMediaStreamSource 会抛）
+    if (!stream || !canProbeShareAudio(stream)) {
       setAudioInfo(null);
       return;
     }
-    const ctx = new AudioContext();
-    const source = ctx.createMediaStreamSource(stream);
-    const analyser = ctx.createAnalyser();
+    let ctx: AudioContext;
+    let source: MediaStreamAudioSourceNode;
+    let analyser: AnalyserNode;
+    try {
+      ctx = new AudioContext();
+      source = ctx.createMediaStreamSource(stream);
+      analyser = ctx.createAnalyser();
+    } catch {
+      setAudioInfo(null);
+      return;
+    }
     analyser.fftSize = 1024;
     source.connect(analyser);
     const buffer = new Float32Array(analyser.fftSize);
