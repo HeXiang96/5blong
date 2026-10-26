@@ -82,7 +82,48 @@ function fetchTo(url, dest) {
 
 // ---------------------------------------------------------------- 主流程
 
+/**
+ * 不许把更新源"改小"。
+ *
+ * 2026-10-26 真实踩过：两个 tag（1.8.9 与补推的 1.8.8）都触发了 Release 构建，
+ * 后完成的那个先发布 → 线上 latest.json 从 1.8.9 退回 1.8.8，
+ * 老版本客户端的自动更新就会停在 1.8.8。
+ * 所以发布前先读一眼线上版本，比它旧就拒（真要回滚：FORCE_PUBLISH=1）。
+ */
+async function assertNotDowngrade() {
+  if (process.env.FORCE_PUBLISH === "1") {
+    log("guard", "FORCE_PUBLISH=1，跳过了降级检查");
+    return;
+  }
+  let live = "";
+  try {
+    const response = await fetch(`${pagesBase}/desktop/latest.json`, { cache: "no-store" });
+    if (response.ok) {
+      const manifest = await response.json();
+      live = String(manifest?.version ?? "");
+    }
+  } catch {
+    // 取不到（首次发布 / 离线）：不阻断
+    log("guard", "读不到线上更新源，按首次发布处理");
+    return;
+  }
+  if (!live) return;
+  const parse = (value) => value.split(".").map((part) => Number(part) || 0);
+  const [a1, a2, a3] = parse(version);
+  const [b1, b2, b3] = parse(live);
+  const newer =
+    a1 !== b1 ? a1 > b1 : a2 !== b2 ? a2 > b2 : a3 !== b3 ? a3 > b3 : false;
+  if (!newer && version !== live) {
+    throw new Error(
+      `线上更新源已经是 ${live}，拒绝发布更旧的 ${version}（确认要回滚就设 FORCE_PUBLISH=1）`,
+    );
+  }
+  log("guard", `线上 ${live} → 本次 ${version}`);
+}
+
 async function main() {
+  await assertNotDowngrade();
+
   // 1. 网页产物
   if (!noBuild) {
     log("build", "构建网页产物 dist-web …");
