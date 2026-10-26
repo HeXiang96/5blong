@@ -43,6 +43,19 @@ const NOTICE_DISMISS_MS: Record<"info" | "error", number> = {
   info: 2800,
   error: 7000,
 };
+
+/**
+ * 实际停留时长：在最低时长之外，按字数给足阅读时间。
+ *
+ * 原来一律 2.8 秒，"你的账号 ID 已更新为 88888888，房间钥匙已迁过来，
+ * 旧邀请链接继续有效"这种 30 多字的句子根本来不及看完（业主实拍）。
+ * 约 6 字/秒 + 0.6 秒起步，封顶 8 秒；短提示不受影响。
+ */
+function noticeDismissMs(notice: { kind: "info" | "error"; text: string }): number {
+  const floor = NOTICE_DISMISS_MS[notice.kind] ?? 3200;
+  const byLength = 600 + notice.text.length * 165;
+  return Math.min(Math.max(floor, byLength), 8000);
+}
 import {
   buildInviteUrl,
   parseInviteHash,
@@ -1039,7 +1052,8 @@ export function useVoice() {
    */
   useEffect(() => {
     if (!notice || notice.sticky) return;
-    const ms = NOTICE_DISMISS_MS[notice.kind] ?? 3200;    const timer = window.setTimeout(() => setNotice(null), ms);
+    const ms = noticeDismissMs(notice);
+    const timer = window.setTimeout(() => setNotice(null), ms);
     return () => window.clearTimeout(timer);
   }, [notice]);
 

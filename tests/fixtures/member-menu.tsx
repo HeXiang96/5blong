@@ -17,6 +17,14 @@ import "../../src/client/voice/pen-themes.css";
 
 const params = new URLSearchParams(location.search);
 document.documentElement.dataset.theme = params.get("theme") ?? "light";
+/*
+ * ?desktop=1：让 isTauriRuntime() 为真，走"桌面客户端"那条分支
+ * （共享菜单里才有 指定应用 / 老系统回退 这些行，业主截图正是这一屏）。
+ * invoke 桩返回空数组：没有可采集的窗口，但布局照样能目检。
+ */
+if (params.get("desktop") === "1") {
+  Object.assign(window, { __TAURI_INTERNALS__: { invoke: async () => [] } });
+}
 const events: { kind: string; args: unknown[] }[] = [];
 Object.assign(window, { menuTestEvents: events });
 const record = (kind: string, ...args: unknown[]) => { events.push({ kind, args }); };
@@ -65,6 +73,25 @@ function Fixture() {
     }, 50);
     return () => window.clearInterval(timer);
   }, [poseDemo]);
+  /*
+   * ?sharemenu=1：自动点开「共享」菜单。
+   * 菜单开合是 RoomView 的内部状态，无头截图点不了，只能让夹具代点一下，
+   * 用来目检画质档位/声音来源/长说明的排版（2026-10-26 业主实拍文字被裁）。
+   */
+  const autoShareMenu = params.get("sharemenu") === "1";
+  useEffect(() => {
+    if (!autoShareMenu) return;
+    const timer = window.setTimeout(() => {
+      document.querySelector<HTMLButtonElement>('.vx-ctl[aria-haspopup="menu"]')?.click();
+      // ?shareadv=1 顺带展开"高级"折叠，目检里面那几行的排版
+      if (params.get("shareadv") === "1") {
+        window.setTimeout(() => {
+          document.querySelector<HTMLElement>(".vx-share-adv > summary")?.click();
+        }, 80);
+      }
+    }, 120);
+    return () => window.clearTimeout(timer);
+  }, [autoShareMenu]);
   /*
    * 猪位上报的迷你实现：把 PigActor 报的位置存下来，
    * getPenPosition/Lane/Facing 再读出去——与正式接线一致，

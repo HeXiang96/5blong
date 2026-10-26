@@ -21,6 +21,17 @@ if (scene) document.documentElement.dataset.scene = scene;
 const daypart = params.get("daypart");
 if (daypart) document.documentElement.dataset.daypart = daypart;
 
+/*
+ * ?thememenu=1：自动点开右上角调色板的主题菜单。
+ * 菜单开合是 LandingView 的内部状态，无头截图点不了，让夹具代点一下，
+ * 目检深色主题下菜单里的文字对比度（业主 2026-10-26 实拍：菜单像空的）。
+ */
+if (params.get("thememenu") === "1") {
+  window.setTimeout(() => {
+    document.querySelector<HTMLButtonElement>(".vx-scene-wrap .vx-icon-btn")?.click();
+  }, 150);
+}
+
 const identity = {
   personId: "9165556823",
   name: "爱笑的小鹿",

@@ -3282,6 +3282,12 @@ button.vx-topic {
 .vx-topic-open {
   background: color-mix(in srgb, currentColor 16%, transparent);
 }
+/*
+ * 主题菜单：面板底色原来写死 var(--vx-panel, #fffaf0)（这个变量从来没定义过，
+ * 等于永远奶油底），而菜单项的颜色是 inherit —— 深色主题下就成了
+ * 「浅奶油字压奶油底」，整块菜单像没内容（业主 2026-10-26 实拍）。
+ * 现在底色和字色都走主题令牌，深/浅/夜晚自动成对。
+ */
 .vx-scene-menu {
   position: absolute;
   top: calc(100% + 6px);
@@ -3289,12 +3295,13 @@ button.vx-topic {
   z-index: 90;
   display: flex;
   flex-direction: column;
-  min-width: 128px;
+  min-width: 132px;
   padding: 4px;
   border-radius: 10px;
-  background: var(--vx-panel, #fffaf0);
-  border: 1px solid color-mix(in srgb, currentColor 18%, transparent);
-  box-shadow: 0 10px 26px rgba(40, 26, 8, 0.22);
+  background: var(--vx-surface-2);
+  color: var(--vx-text);
+  border: 1px solid var(--vx-line);
+  box-shadow: var(--vx-shadow);
 }
 .vx-scene-menu button {
   display: block;
@@ -3311,10 +3318,11 @@ button.vx-topic {
   white-space: nowrap;
 }
 .vx-scene-menu button:hover {
-  background: color-mix(in srgb, currentColor 10%, transparent);
+  background: var(--vx-accent-soft);
 }
 .vx-scene-menu button[aria-pressed="true"] {
-  background: color-mix(in srgb, currentColor 16%, transparent);
+  background: var(--vx-accent-soft);
+  color: var(--vx-accent-strong);
   font-weight: 600;
 }
 

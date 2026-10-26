@@ -90,6 +90,13 @@ mod imp {
          * 老系统（< Win10 2004）或策略禁用时回退整机回环，并告知页面。
          */
         let mut pcm_buf: Vec<i16> = Vec::new();
+        /*
+         * 记一下"到底有没有采到过东西"。
+         * 进程级采集有可能**不报错就结束**（设备被切走、端点重建、会话被系统回收），
+         * 这时函数返回 Ok(())，看起来像"正常采完了"。不能就这么 return，
+         * 否则整机回收的兜底永远走不到（业主实拍：共享整桌面 + 自动 = 一点声音都没有）。
+         */
+        let produced = std::sync::atomic::AtomicUsize::new(0);
         let attempted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             match only_pid {
                 // 指定应用：只采那个进程树（通知音/音乐都不会混进来）
@@ -97,18 +104,32 @@ mod imp {
                     pid,
                     false,
                     stop.clone(),
-                    &mut |pcm: &[i16]| push_pcm(&mut pcm_buf, pcm, &on_chunk),
+                    &mut |pcm: &[i16]| {
+                        if !pcm.is_empty() && produced.fetch_add(1, Ordering::Relaxed) == 0 {
+                            log::info!("[loopback] 进程级采集收到第一块 PCM");
+                        }
+                        push_pcm(&mut pcm_buf, pcm, &on_chunk)
+                    },
                 ),
                 // 默认：整机混音减去"我们自己的声音"。
                 // 排除对象优先是 WebView2 的 browser 进程树（房间语音真正从这里出），
                 // 排 app.exe 只在拿不到 WebView2 进程时兜底——见 exclude_target 注释。
                 None => crate::process_loopback::run_capture_excluding(exclude_pid, stop.clone(), |pcm| {
+                    if !pcm.is_empty() && produced.fetch_add(1, Ordering::Relaxed) == 0 {
+                        log::info!("[loopback] 进程级采集收到第一块 PCM");
+                    }
                     push_pcm(&mut pcm_buf, pcm, &on_chunk)
                 }),
             }
         }));
+        let produced_any = produced.load(Ordering::Relaxed) > 0;
         match attempted {
-            Ok(Ok(())) => return Ok(()),
+            Ok(Ok(())) => {
+                if stop.load(Ordering::SeqCst) || produced_any {
+                    return Ok(());
+                }
+                log::warn!("[loopback] 进程级采集一块数据都没产出就结束了，回退整机回环");
+            }
             Ok(Err(err)) => {
                 if stop.load(Ordering::SeqCst) {
                     return Ok(());
@@ -126,6 +147,7 @@ mod imp {
         if stop.load(Ordering::SeqCst) {
             return Ok(());
         }
+        log::info!("[loopback] 回退到整机回环（默认播放设备）");
 
         use wasapi::{Direction, SampleType, ShareMode, WaveFormat};
 
@@ -232,6 +254,9 @@ mod imp {
         };
         // 整机采集时排除这个 pid；include 模式下用不到，随便传自身即可
         let exclude_pid = if only_pid.is_some() { std::process::id() } else { target };
+        log::info!(
+            "[loopback] 启动采集：mode={mode} target={target} exclude_pid={exclude_pid} only_pid={only_pid:?}"
+        );
 
         let stop = Arc::new(AtomicBool::new(false));
         let thread_stop = stop.clone();
@@ -251,7 +276,10 @@ mod imp {
                     )
                 }));
                 let err = match result {
-                    Ok(Ok(())) => return,
+                    Ok(Ok(())) => {
+                        log::info!("[loopback] 采集线程正常结束");
+                        return;
+                    }
                     Ok(Err(err)) => err,
                     Err(panic) => {
                         let detail = panic

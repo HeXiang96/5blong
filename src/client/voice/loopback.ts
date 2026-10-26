@@ -127,9 +127,18 @@ async function startLoopbackOnce(
 
   // 采集中断（设备拔出/独占等）时通知页面：画面照常，声音没了
   let unlistenLost: (() => void) | null = null;
+  /*
+   * 采集线程报错时要**立刻**让"等第一块 PCM"失败，而不是干等 4 秒超时。
+   * 以前只调 onLost（弹一条提示），await startLoopbackOnce 的那一头仍然在等，
+   * 用户感觉是"点了共享卡住好几秒，然后才说没声音"。
+   */
+  let failFirstChunk: ((error: Error) => void) | null = null;
   if (onLost) {
     try {
-      unlistenLost = await listen<string>("loopback:error", (event) => onLost(event.payload));
+      unlistenLost = await listen<string>("loopback:error", (event) => {
+        onLost(event.payload);
+        failFirstChunk?.(new Error(event.payload));
+      });
       /*
        * 进程级采集不可用（老系统/被策略禁用）时会回退整机回环：
        * 那个模式下共享音频里会含房间语音，观众可能听到回声——必须让共享者看到。
@@ -176,8 +185,9 @@ async function startLoopbackOnce(
   /** 已收到的最大振幅（0~1），用于判定"进程级采集是否只有静音"。 */
   let peak = 0;
   let signalFirstChunk: (() => void) | null = null;
-  const firstChunk = new Promise<void>((resolve) => {
+  const firstChunk = new Promise<void>((resolve, reject) => {
     signalFirstChunk = resolve;
+    failFirstChunk = reject;
   });
   const channel = new Channel<string>();
   channel.onmessage = (payload) => {

@@ -307,13 +307,27 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
-            if cfg!(debug_assertions) {
-                app.handle().plugin(
-                    tauri_plugin_log::Builder::default()
-                        .level(log::LevelFilter::Info)
-                        .build(),
-                )?;
-            }
+            /*
+             * 日志**正式版也要写**（以前只在 debug 构建里启用）。
+             *
+             * 2026-10-26 的教训：业主报"共享屏幕没有声音"，而 release 包里
+             * `log::warn!` 全被丢掉，日志目录里一个字都没有——采集失败、回退、
+             * 设备切换全都无从查起，只能靠猜。
+             * 采集链路的失败信息必须落到磁盘，否则每次排障都要重新发明轮子。
+             * 落盘位置：%LOCALAPPDATA%\<identifier>\logs\5blong.log
+             */
+            app.handle().plugin(
+                tauri_plugin_log::Builder::new()
+                    .level(log::LevelFilter::Info)
+                    .targets([
+                        tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
+                        tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir {
+                            file_name: Some("5blong".into()),
+                        }),
+                    ])
+                    .max_file_size(2_000_000)
+                    .build(),
+            )?;
 
             // ---- 主窗口：改用 Builder 创建（窗口参数原在 tauri.conf.json），
             //      以便通过 additional_browser_args 传入防后台节流参数（见 run() 顶部说明）----

@@ -435,51 +435,209 @@ html[data-daypart="night"] .vx-proj-beam {
 
 /* ---------------------------------------------------------------- 共享按钮菜单 */
 
+/*
+ * 一张"按内容排版"的小卡片，不是一列标签（2026-10-26 业主实拍后重排）：
+ *  - 宽度 230 → 332：中文长句在 230px 里被挤成一条竖井，一行不到 15 个字；
+ *  - 说明文字 11px → 12px / 行高 1.6：原来密得像小字条款，读不动；
+ *  - 主按钮常驻底部（.vx-share-actions）：原来要滚到底才看得见"开始共享"；
+ *  - 字色一律写死深棕：这张卡片底色是奶油，深色主题下用 var(--vx-text-dim)
+ *    会变成浅色字压奶油底（长标签那一行就是这么消失的）。
+ */
 .vx-share-menu {
   position: absolute;
   bottom: calc(100% + 10px);
   left: 50%;
   transform: translateX(-50%);
-  width: 230px;
-  padding: 12px;
+  width: min(332px, calc(100vw - 24px));
+  /* 内边距交给内容区与按钮区各自处理：菜单本身只做"外壳 + 限高" */
+  padding: 0;
   border-radius: 14px;
   border: 1px solid rgba(120, 78, 34, 0.45);
-  background: linear-gradient(180deg, rgba(255, 250, 236, 0.98), rgba(255, 244, 222, 0.96));
-  box-shadow: 0 10px 28px rgba(60, 34, 12, 0.22);
+  background: linear-gradient(180deg, rgba(255, 250, 236, 0.985), rgba(255, 244, 222, 0.97));
+  box-shadow: 0 14px 34px rgba(60, 34, 12, 0.26);
   z-index: 90;
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  max-height: min(74vh, 580px);
+  overflow: hidden;
+  color: #3f2c14;
+}
+/* 只有内容区滚动：底部主按钮独立成形，永远不会盖住最后一行 */
+.vx-share-body {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 12px 12px 10px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+/* 段与段之间一条虚线，比一路堆下去好扫 */
+.vx-share-sec {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.vx-share-sec + .vx-share-sec {
+  padding-top: 9px;
+  border-top: 1px dashed rgba(120, 78, 34, 0.26);
 }
 .vx-share-menu-title {
   margin: 0;
   font-size: 12px;
   font-weight: 700;
+  letter-spacing: 0.04em;
   color: #7a5a2e;
 }
 .vx-share-quality {
   display: flex;
   flex-direction: column;
+  align-items: flex-start;
   gap: 1px;
   padding: 8px 10px;
   border-radius: 10px;
   border: 1.5px solid rgba(120, 78, 34, 0.3);
   background: rgba(255, 255, 255, 0.5);
   text-align: left;
+  font: inherit;
+  color: #3f2c14;
   cursor: pointer;
 }
 .vx-share-quality strong { font-size: 13px; color: #3f2c14; }
-.vx-share-quality span { font-size: 11px; color: #8a7355; }
+.vx-share-quality-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  color: #7d6743;
+}
+/* 30fps 档的"省流量"做成小徽章：比塞进标题里换行清楚 */
+.vx-share-tag {
+  font-style: normal;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: rgba(168, 111, 44, 0.16);
+  color: #7a5220;
+  font-size: 10px;
+  line-height: 15px;
+}
 .vx-share-quality-on {
   border-color: #cf9650;
-  background: rgba(207, 150, 80, 0.14);
+  background: rgba(207, 150, 80, 0.16);
   box-shadow: inset 0 0 0 1px rgba(207, 150, 80, 0.4);
 }
-.vx-share-start { margin-top: 3px; justify-content: center; }
+.vx-share-start { margin-top: 0; justify-content: center; width: 100%; }
 .vx-share-menu-hint {
   margin: 0;
-  font-size: 11px;
-  color: #8a7355;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #6b5433;
+}
+/* 次要注脚（"这属于正常"这类），比 hint 轻一档但仍要读得清 */
+.vx-share-menu-note {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: #85704c;
+}
+
+/* 「老系统回退」这一行：菜单自己的行，不用设置页那套 nowrap 的 .vx-field */
+.vx-share-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 2px 0;
+  cursor: pointer;
+}
+.vx-share-row-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: #4a3212;
+}
+
+/* 长解释收进折叠：常显会把菜单撑到两屏 */
+.vx-share-more {
+  font-size: 11.5px;
+  color: #6b5433;
+}
+.vx-share-more > summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: #96621f;
+  padding: 1px 0;
+  list-style: none;
+  width: fit-content;
+}
+.vx-share-more > summary::-webkit-details-marker { display: none; }
+.vx-share-more > summary::before { content: "▸ "; }
+.vx-share-more[open] > summary::before { content: "▾ "; }
+.vx-share-more > summary:hover { color: #b0762a; }
+.vx-share-more p {
+  margin: 5px 0 2px;
+  line-height: 1.65;
+}
+
+/*
+ * 「高级：共享方式 / 老系统回退」折叠。
+ * 打开菜单先看到画质和声音来源这两件常改的事，其余收在这里——
+ * 标题自己写清楚里面有什么，别做成"点开才知道"的谜语。
+ */
+.vx-share-adv {
+  border-top: 1px dashed rgba(120, 78, 34, 0.26);
+  padding-top: 8px;
+}
+.vx-share-adv > summary {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  list-style: none;
+  font-size: 12px;
+  font-weight: 600;
+  color: #96621f;
+}
+.vx-share-adv > summary::-webkit-details-marker { display: none; }
+.vx-share-adv > summary::before { content: "▸"; font-size: 10px; }
+.vx-share-adv[open] > summary::before { content: "▾"; }
+.vx-share-adv > summary:hover { color: #b0762a; }
+.vx-share-adv-body {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding-top: 8px;
+}
+
+/* 主按钮区：不参与滚动，永远可见 */
+.vx-share-actions {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 9px 12px 11px;
+  /* 必须实色：半透明时下面的内容会从按钮底下透出来，像排版错位 */
+  background: #fff5e0;
+  border-top: 1px solid rgba(120, 78, 34, 0.22);
+}
+/* 下拉框：菜单是奶油底，别让主题的深色输入框在这里挖出一块黑 */
+.vx-share-menu .vx-input,
+.vx-share-menu select {
+  background: rgba(255, 255, 255, 0.76);
+  border-color: rgba(120, 78, 34, 0.3);
+  color: #3f2c14;
+  font-size: 12.5px;
+}
+/* 奶油底上用主题的 primary（深色主题下白字压琥珀只有 2.6:1），压深一档 */
+.vx-share-actions .vx-btn-primary {
+  background: linear-gradient(180deg, #c98a3e 0%, #a86f2c 100%);
+  color: #fffdf6;
+}
+.vx-share-actions .vx-btn-primary:hover:not(:disabled) {
+  background: linear-gradient(180deg, #d2943f 0%, #b97c30 100%);
 }
 
 /* 传输方式两列排布 */
@@ -491,27 +649,25 @@ html[data-daypart="night"] .vx-proj-beam {
 
 /*
  * 菜单里塞了「画质 4 档 + 声音 3 项 + 方式 3 项」，在 760px 高的窗口里
- * 会顶出屏幕（业主实拍：最上面那档画质被切掉、看不见）。给它自己滚动。
+ * 会顶出屏幕（业主实拍：最上面那档画质被切掉、看不见）。
+ * 限高在 .vx-share-menu，滚动在内层 .vx-share-body（按钮不跟着滚）。
  */
-.vx-share-menu {
-  max-height: min(72vh, 560px);
-  overflow-y: auto;
-  overscroll-behavior: contain;
-}
 
 /* 画质 2×2：四档竖排太占高，两列能省近一半 */
 .vx-share-qgrid {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 6px;
+  align-items: stretch;
 }
 .vx-share-qgrid .vx-share-quality {
   padding: 7px 8px;
 }
 .vx-share-qgrid .vx-share-quality strong {
   font-size: 12px;
+  line-height: 1.3;
 }
-.vx-share-qgrid .vx-share-quality span {
+.vx-share-qgrid .vx-share-quality-meta {
   font-size: 10px;
 }
 

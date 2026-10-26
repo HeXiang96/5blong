@@ -99,19 +99,30 @@ export function App() {
   /**
    * 后台改过数字 ID：把本机房间钥匙搬到新 ID 名下，再告诉服务端已迁移。
    * 不做这一步，房号还在、但之前发出去的邀请链接会全部失效。
+   *
+   * 只许跑一次（业主实拍 bug，2026-10-26）：原来的依赖里有整个 `voice` 对象，
+   * 而它是每次渲染都新建的字面量 → 这个 effect 每渲染必跑 → 每次都 setNotice
+   * 一个新对象 → 再渲染 → 再跑，形成自激循环。表现就是这条提示**永远退不掉**：
+   * use-voice 里的自动消失计时器被反复重置，点 × 也会被立刻重新挂上。
+   * 现在依赖只留原始值 + 稳定的 setNotice，并用 ref 按「旧 ID→新 ID」去重。
    */
+  const ackIdChangeDoneRef = useRef<string | null>(null);
+  const setNotice = voice.setNotice;
   useEffect(() => {
     const me = account.me;
     if (!me?.previousId || me.previousId === me.id) return;
+    const key = `${me.previousId}->${me.id}`;
+    if (ackIdChangeDoneRef.current === key) return;
+    ackIdChangeDoneRef.current = key;
     const moved = migrateRoomKey(me.previousId, me.id);
     void accountAdapter.ackIdChange();
-    voice.setNotice({
+    setNotice({
       kind: "info",
       text: moved
         ? `你的账号 ID 已更新为 ${me.id}，房间钥匙已迁过来，旧邀请链接继续有效`
         : `你的账号 ID 已更新为 ${me.id}`,
     });
-  }, [account.me?.id, account.me?.previousId, accountAdapter, voice]);
+  }, [account.me?.id, account.me?.previousId, accountAdapter, setNotice]);
 
   /*
    * 在线心跳：登录后每 30 秒报一次（在房间里带上房号）。

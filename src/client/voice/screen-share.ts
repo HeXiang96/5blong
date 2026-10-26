@@ -76,14 +76,19 @@ export interface ShareQualityPreset {
  * 仍远低于原先的 8M / 20M，不会把上行打爆。
  */
 export const SHARE_QUALITY_PRESETS: Record<ShareQuality, ShareQualityPreset> = {
-  hd720: { label: "高清 720p·60", width: 1280, height: 720, fps: 60, maxBitrate: 5_000_000 },
+  /*
+   * 标签只写"清晰度 + 分辨率"：帧率/码率由菜单的第二行单独给。
+   * 原来标签里也带 fps（"高清 720p·60"），下面一行又是 "60fps · 5000k"，
+   * 同一件事写两遍，230px 宽的卡片里还把它挤成三行（业主截图）。
+   */
+  hd720: { label: "高清 720p", width: 1280, height: 720, fps: 60, maxBitrate: 5_000_000 },
   /*
    * 30fps 档（对齐 Piik 的档位表）：看文档/PPT/网页时 60fps 毫无收益，
    * 却要多花一倍码率。弱网或观众多时选这个，房主上行能省一半。
    */
-  hd720p30: { label: "高清 720p·30 省流量", width: 1280, height: 720, fps: 30, maxBitrate: 3_000_000 },
-  fhd1080: { label: "超清 1080p·60", width: 1920, height: 1080, fps: 60, maxBitrate: 8_000_000 },
-  fhd1080p30: { label: "超清 1080p·30 省流量", width: 1920, height: 1080, fps: 30, maxBitrate: 5_000_000 },
+  hd720p30: { label: "高清 720p", width: 1280, height: 720, fps: 30, maxBitrate: 3_000_000 },
+  fhd1080: { label: "超清 1080p", width: 1920, height: 1080, fps: 60, maxBitrate: 8_000_000 },
+  fhd1080p30: { label: "超清 1080p", width: 1920, height: 1080, fps: 30, maxBitrate: 5_000_000 },
 };
 
 /**

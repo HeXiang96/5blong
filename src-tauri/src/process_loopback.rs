@@ -164,19 +164,43 @@ pub fn run_capture_with(
         cbSize: 0,
     };
 
+    /*
+     * 进程回环用的是虚拟端点（VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK），
+     * 它对 `AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM` 的支持**因系统版本而异**：
+     * 有的机器（尤其 Win10 2004~20H2）带上这两个标志会直接返回
+     * E_INVALIDARG，而裸 LOOPBACK 标志能正常初始化。
+     * 以前只有一种写法，失败就整条进程级路径不可用（表现为"共享没声音"）。
+     * 现在按"先要自动转换、不行就不要"降级重试，两种情况都能跑起来。
+     */
+    let base_flags = AUDCLNT_STREAMFLAGS_LOOPBACK;
+    let convert_flags =
+        base_flags | AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY;
+    let mut last_error = String::new();
+    let mut initialized = false;
     unsafe {
-        client
-            .Initialize(
+        for flags in [convert_flags, base_flags] {
+            match client.Initialize(
                 AUDCLNT_SHAREMODE_SHARED,
-                AUDCLNT_STREAMFLAGS_LOOPBACK
-                    | AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM
-                    | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY,
-                200_000, // 20ms（100ns 单位）
+                flags,
+                200_000, // 20ms（100ns 单位），与微软 ApplicationLoopback 示例一致
                 0,
                 &format,
                 None,
-            )
-            .map_err(|e| format!("初始化进程回环失败：{e}"))?;
+            ) {
+                Ok(()) => {
+                    log::info!("[process-loopback] 初始化成功（flags=0x{flags:X}）");
+                    initialized = true;
+                    break;
+                }
+                Err(err) => {
+                    last_error = format!("{err}");
+                    log::warn!("[process-loopback] Initialize(flags=0x{flags:X}) 失败：{err}");
+                }
+            }
+        }
+    }
+    if !initialized {
+        return Err(format!("初始化进程回环失败：{last_error}"));
     }
 
     let capture: IAudioCaptureClient = unsafe { client.GetService() }
@@ -185,9 +209,19 @@ pub fn run_capture_with(
 
     let mut scratch: Vec<i16> = Vec::with_capacity(4096);
     while !stop.load(Ordering::SeqCst) {
+        /*
+         * ⚠ 这里**不能** `break`。
+         *
+         * 以前两处都是 `Err(_) => break`，函数于是返回 `Ok(())`；而调用方
+         * （loopback.rs 的 capture_loop）把 `Ok(Ok(()))` 当成"采完了、正常退出"，
+         * 直接 return——既不回退整机回环，也不给页面发任何错误。
+         * 结果就是：设备被禁用/端点被切走/会话结束时，采集线程**无声死亡**，
+         * 用户看到的是"共享画面正常、一点声音没有、也没有任何提示"。
+         * 采集循环出错必须当成真错误抛出去，让上层走回退或报错。
+         */
         let packet = match unsafe { capture.GetNextPacketSize() } {
             Ok(size) => size,
-            Err(_) => break,
+            Err(err) => return Err(format!("读取回环包长度失败：{err}")),
         };
         if packet == 0 {
             // 静音期没有包：短睡眠再看（进程回环不触发事件）
@@ -197,9 +231,9 @@ pub fn run_capture_with(
         let mut data: *mut u8 = std::ptr::null_mut();
         let mut frames = 0u32;
         let mut flags = 0u32;
-        if unsafe { capture.GetBuffer(&mut data, &mut frames, &mut flags, None, None) }.is_err()
+        if let Err(err) = unsafe { capture.GetBuffer(&mut data, &mut frames, &mut flags, None, None) }
         {
-            break;
+            return Err(format!("取回环音频缓冲失败：{err}"));
         }
         // AUDCLNT_BUFFERFLAGS_SILENT = 0x2：该包内容是静音，data 可能为空
         let silent = flags & 0x2 != 0;

@@ -1652,32 +1652,40 @@ export function RoomView({
 
         {shareMenuOpen ? (
           <div className="vx-share-menu" onClick={(event) => event.stopPropagation()}>
-            <p className="vx-share-menu-title">共享画质</p>
-            <div className="vx-share-qgrid">
-            {(Object.keys(SHARE_QUALITY_PRESETS) as ShareQuality[]).map((key) => {
-              const preset = SHARE_QUALITY_PRESETS[key];
-              return (
-                <button
-                  key={key}
-                  type="button"
-                  className={`vx-share-quality${shareQuality === key ? " vx-share-quality-on" : ""}`}
-                  onClick={() => onSetShareQuality(key)}
-                >
-                  <strong>{preset.label}</strong>
-                  <span>
-                    {preset.fps}fps · {Math.round(preset.maxBitrate / 1000)}k
-                  </span>
-                </button>
-              );
-            })}
-            </div>
-            <p className="vx-share-menu-title">共享声音</p>
-            {/* 原来这两组用 "?" 气泡解释，但菜单为了不顶出屏幕改成了可滚动，
-                绝对定位的气泡会被裁掉（业主实拍：只剩一条深色块）。改成常显一行短说明。 */}
-            <p className="vx-share-menu-hint">
-              自动：采整机声音并排除本应用语音（游戏、浏览器、音乐都能录到）
-            </p>
-            {shareDesktop ? (
+            {/* 滚动只发生在内容区：底部主按钮独立成形，不会盖住最后一两行 */}
+            <div className="vx-share-body">
+            <section className="vx-share-sec">
+              <p className="vx-share-menu-title">画质</p>
+              <div className="vx-share-qgrid">
+                {(Object.keys(SHARE_QUALITY_PRESETS) as ShareQuality[]).map((key) => {
+                  const preset = SHARE_QUALITY_PRESETS[key];
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      className={`vx-share-quality${shareQuality === key ? " vx-share-quality-on" : ""}`}
+                      aria-pressed={shareQuality === key}
+                      onClick={() => onSetShareQuality(key)}
+                    >
+                      <strong>{preset.label}</strong>
+                      <span className="vx-share-quality-meta">
+                        {preset.fps}fps · {Math.round(preset.maxBitrate / 1000)}k
+                        {/* 30fps 档的卖点是"省一半上行"，做成小徽章，别塞进标签里换行 */}
+                        {preset.fps === 30 ? <em className="vx-share-tag">省流量</em> : null}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+            <section className="vx-share-sec">
+              <p className="vx-share-menu-title">声音</p>
+              {/* 原来这两组用 "?" 气泡解释，但菜单为了不顶出屏幕改成了可滚动，
+                  绝对定位的气泡会被裁掉（业主实拍：只剩一条深色块）。改成常显一行短说明。 */}
+              <p className="vx-share-menu-hint">
+                自动：采整机声音，排除本应用语音（游戏/音乐都能录）
+              </p>
+              {shareDesktop ? (
               <>
                 {/* 三选一做成一行小胶囊：两列网格放三项会剩一个单独换行，
                     菜单也被撑高到看不见顶（业主实拍反馈） */}
@@ -1730,9 +1738,7 @@ export function RoomView({
                   })}
                 </div>
                 {shareAudio && shareAppPid !== null && shareApps.length === 0 ? (
-                  <p className="vx-share-menu-hint">
-                    没检测到可采集的程序：先让游戏/视频出点声，再重新打开本菜单
-                  </p>
+                  <p className="vx-share-menu-hint">没检测到可采集的程序：先让它出点声再开菜单</p>
                 ) : null}
               </>
             ) : (
@@ -1760,83 +1766,125 @@ export function RoomView({
                 ) : null}
               </select>
             ) : null}
-            {shareDesktop && shareAudio ? (
-              <>
-                <label className="vx-field">
-                  <span className="vx-field-label">老系统回退时压低房间声音（防回声，不影响有没有声音）</span>
-                  <Toggle
-                    checked={shareFallbackDuck}
-                    label="老系统回退时压低房间声音（防回声）"
-                    onChange={onSetShareFallbackDuck}
-                  />
-                </label>
-                <p className="vx-share-menu-hint">
-                  只在个别老系统上才用得上：那种系统不支持"按应用取声音"，只能整机采集，
-                  共享音频里会混进房间人声。打开后共享期间把别人说话压到 15%，几乎听不出回声。
-                  一般机器保持关闭即可；"有没有声音"由上面的 不带/自动/指定 决定。
+            </section>
+
+            {/*
+              高级项收进一个折叠：
+              画质 + 声音来源是 95% 的人真正要改的，共享方式/老系统回退是少数场景。
+              常显的话整张菜单要滚两屏，最后一行的开关永远卡在按钮底下（业主实拍）。
+              折叠标题写明里面是什么，点开就有——不是藏在 "?" 气泡里那种看不见的东西。
+            */}
+            <details className="vx-share-adv">
+              <summary>高级：共享方式 / 老系统回退</summary>
+              <div className="vx-share-adv-body">
+                <section className="vx-share-sec">
+                  <p className="vx-share-menu-title">共享方式</p>
+                  {/*
+                    原来这段话挂在"?"气泡里：一是读不到（菜单可滚动后气泡被裁），
+                    二是写的是"观众 ≤4 走直连"，与 autoTransportFor 的 ≤2 不符（业主评审确认）。
+                    改成常显一行，并只讲取舍不复述阈值——阈值由下面那句"将走…"按真实人数给出。
+                  */}
+                  <p className="vx-share-menu-hint">
+                    自动：人多改走转发省上行；直连画质最好但吃上行
+                  </p>
+                  <div className="vx-share-tri" role="radiogroup" aria-label="共享方式">
+                    {(
+                      [
+                        { key: "auto", name: "自动", tip: "按观众数选直连/转发" },
+                        { key: "p2p", name: "直连", tip: "直连：画质最好、延迟最低" },
+                        { key: "sfu", name: "转发", tip: "转发：连接成功率高，多人更省上行" },
+                      ] as const
+                    ).map((item) => (
+                      <button
+                        key={item.key}
+                        type="button"
+                        role="radio"
+                        aria-checked={shareTransport === item.key}
+                        title={item.tip}
+                        className={`vx-share-quality${shareTransport === item.key ? " vx-share-quality-on" : ""}`}
+                        onClick={() => onSetShareTransport(item.key)}
+                      >
+                        <strong>{item.name}</strong>
+                  </button>
+                ))}
+              </div>
+              <p className="vx-share-menu-hint">
+                {(() => {
+                  const decision = autoTransportFor(shareTransport, members.length);
+                  const viewers = Math.max(0, members.length - 1);
+                  if (decision.transport === "sfu") {
+                    return `将走转发 · ${viewers} 位观众 · 不占你家上行`;
+                  }
+                  /*
+                   * perViewerBitrate 返回的是 bps。原来除以 1000 却标 "Mbps"，
+                   * 于是 8 Mbps 的档位显示成"每人约 8000 Mbps"（业主实拍）。
+                   * 换成真 Mbps，一位小数；≥10 就取整，别写成 8.0 这种。
+                   */
+                  const mbps = perViewerBitrate(shareQuality, viewers) / 1_000_000;
+                  const perViewer = mbps >= 10 ? Math.round(mbps) : Math.round(mbps * 10) / 10;
+                  const total = Math.round(mbps * Math.max(1, viewers) * 10) / 10;
+                  return `将走直连 · ${viewers} 位观众 · 每人约 ${perViewer} Mbps（合计 ${total} Mbps 上行）`;
+                })()}
+              </p>
+            </section>
+
+                {shareDesktop && shareAudio ? (
+                  <section className="vx-share-sec">
+                    {/*
+                      这一行原来复用了设置页的 .vx-field / .vx-field-label：
+                      那里 white-space: nowrap + 字号 14px，是给"一行一项"的设置页写的；
+                      塞进 230px 的菜单里，长标签直接被裁掉半行、还甩到菜单外面
+                      （业主 2026-10-26 实拍，箭头指的就是它）。换成菜单自己的行。
+                    */}
+                    <label className="vx-share-row">
+                      <span className="vx-share-row-label">老系统回退时压低房间声音</span>
+                      <Toggle
+                        checked={shareFallbackDuck}
+                        label="老系统回退时压低房间声音（防回声）"
+                        onChange={onSetShareFallbackDuck}
+                      />
+                    </label>
+                    {/* 三行解释常显会把菜单撑到要滚两屏；收进折叠，默认收起 */}
+                    <details className="vx-share-more">
+                      <summary>什么时候需要打开？</summary>
+                      <p>
+                        只在个别老系统上才用得上：那种系统不支持"按应用取声音"，只能整机采集，
+                        共享音频里会混进房间人声。打开后共享期间把别人说话压到 15%，
+                        几乎听不出回声。一般机器保持关闭即可——"有没有声音"由上面的
+                        不带/自动/指定 决定。
+                      </p>
+                    </details>
+                  </section>
+                ) : null}
+                {/*
+                  系统选择器（WebView2）里**没有**"共享音频"的勾选框，这是正常的：
+                  桌面端的声音由客户端内置采集（不经过选择器），上面的"声音来源"才是开关。
+                  不写清楚，用户就会像 2026-10-26 那样在设置里找不到、以为功能坏了。
+                */}
+                <p className="vx-share-menu-note">
+                  系统选择器里没有"共享音频"是正常的：声音由客户端采集
                 </p>
-              </>
-            ) : null}
-            {/*
-              系统选择器（WebView2）里**没有**"共享音频"的勾选框，这是正常的：
-              桌面端的声音由客户端内置采集（不经过选择器），上面的"声音来源"才是开关。
-              不写清楚，用户就会像 2026-10-26 那样在设置里找不到、以为功能坏了。
-            */}
-            <p className="vx-share-menu-hint">
-              提示：系统弹出的选择器里没有"共享音频"选项是正常的，声音由客户端内置采集
-            </p>
-            <p className="vx-share-menu-title">共享方式</p>
-            {/*
-              原来这段话挂在"?"气泡里：一是读不到（菜单可滚动后气泡被裁），
-              二是写的是"观众 ≤4 走直连"，与 autoTransportFor 的 ≤2 不符（业主评审确认）。
-              改成常显一行，并只讲取舍不复述阈值——阈值由下面那句"将走…"按真实人数给出。
-            */}
-            <p className="vx-share-menu-hint">
-              自动：观众多时改走转发，省自家上行；直连画质最好但吃上行
-            </p>
-            <div className="vx-share-tri" role="radiogroup" aria-label="共享方式">
-              {(
-                [
-                  { key: "auto", name: "自动", tip: "按观众数选直连/转发" },
-                  { key: "p2p", name: "直连", tip: "直连：画质最好、延迟最低" },
-                  { key: "sfu", name: "转发", tip: "转发：连接成功率高，多人更省上行" },
-                ] as const
-              ).map((item) => (
-                <button
-                  key={item.key}
-                  type="button"
-                  role="radio"
-                  aria-checked={shareTransport === item.key}
-                  title={item.tip}
-                  className={`vx-share-quality${shareTransport === item.key ? " vx-share-quality-on" : ""}`}
-                  onClick={() => onSetShareTransport(item.key)}
-                >
-                  <strong>{item.name}</strong>
-                </button>
-              ))}
+              </div>
+            </details>
             </div>
-            <p className="vx-share-menu-hint">
-              {(() => {
-                const decision = autoTransportFor(shareTransport, members.length);
-                const viewers = Math.max(0, members.length - 1);
-                if (decision.transport === "sfu") {
-                  return `将走转发 · ${viewers} 位观众 · 不占你家上行（由服务器分发）`;
-                }
-                const perViewer = Math.round(perViewerBitrate(shareQuality, viewers) / 1000);
-                return `将走直连 · ${viewers} 位观众 · 每人约 ${perViewer} Mbps（合计约 ${perViewer * Math.max(1, viewers)} Mbps 上行）`;
-              })()}
-            </p>
-            <button
-              type="button"
-              className="vx-btn vx-btn-small vx-btn-primary vx-share-start"
-              onClick={() => {
-                setShareMenuOpen(false);
-                onStartShare(shareQuality);
-              }}
-            >
-              选择窗口开始共享
-            </button>
-            <p className="vx-share-menu-hint">全房间同看一块幕布，同一时间一人共享</p>
+
+            {/*
+              主操作常驻底部：菜单内容再多也不用滚到底才能开播
+              （业主实拍：截屏里根本看不到"开始共享"那个按钮）。
+            */}
+            <div className="vx-share-actions">
+              <button
+                type="button"
+                className="vx-btn vx-btn-small vx-btn-primary vx-share-start"
+                onClick={() => {
+                  setShareMenuOpen(false);
+                  onStartShare(shareQuality);
+                }}
+              >
+                选择窗口开始共享
+              </button>
+              <p className="vx-share-menu-note">全房间同看一块幕布，同一时间一人共享</p>
+            </div>
           </div>
         ) : null}
 
