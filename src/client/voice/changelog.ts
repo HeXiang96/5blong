@@ -20,6 +20,15 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    // 1.9.1：修"全员已登录却显示对方未登录"
+    version: "1.9.1",
+    date: "2026-10-26",
+    lines: [
+      "修房间内显示「对方未登录」——现在登录了就能互加好友",
+      "共享声音设置挪进「共享」菜单，开播即生效",
+    ],
+  },
+  {
     // 1.9.0：账号系统 + 我的房间 + 账号后台 + 共享/登录修复
     version: "1.9.0",
     date: "2026-10-26",
