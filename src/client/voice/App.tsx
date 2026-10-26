@@ -17,6 +17,7 @@ import { FriendRequestToast } from "./components/FriendRequestToast";
 import { buildInviteText } from "./invite-text";
 import { LocalAccountAdapter, seedDemoAccounts } from "./account/local-adapter";
 import { WorkerAccountAdapter } from "./account/worker-adapter";
+import { startInbox, type InboxHandle } from "./account/inbox";
 import { useAccount } from "./account/use-account";
 import { ACCOUNT_ERROR_TEXT, type AccountProfile, type RoomInvite } from "./account/types";
 import { Banner } from "./components/ui";
@@ -73,10 +74,22 @@ export function App() {
    * 好友发来的房间邀请。
    *
    * 业主口径（2026-10-26）：**不能只靠弹窗**——没看见、在忙、关了电脑就耽误了。
-   * 所以邀请存在后端（room_invites），这里每 8 秒拉一次，好友抽屉里留档，
+   * 所以邀请存在后端（room_invites），好友抽屉里留档，
    * 顶栏「好友」图标上的红点把「请求 + 邀请」一起算进去。
+   *
+   * 拉取节奏（2026-10-26 业主质疑请求量后改）：邀请**没有任何实时通道**，
+   * 轮询间隔就等于邀请延迟，所以只在收件箱连上时才敢放慢：
+   * - 收件箱连着 → 60 秒兜底一次（正常由服务端推送触发，这是防漏网）；
+   * - 收件箱断开 → 回到 8 秒（代理/弱网下推送不可用，轮询就是唯一通路）。
    */
   const [invites, setInvites] = useState<RoomInvite[]>([]);
+  const [inboxLive, setInboxLive] = useState(false);
+  /**
+   * 服务端声明"在线状态我代管"（收件箱里 `presence: true`）。
+   * 只有它为 true 才停掉 30 秒的 HTTP 心跳 —— 否则好友会全员离线。
+   */
+  const [inboxPresence, setInboxPresence] = useState(false);
+  const inboxRef = useRef<InboxHandle | null>(null);
   useEffect(() => {
     if (!account.me) {
       setInvites([]);
@@ -89,10 +102,38 @@ export function App() {
       });
     };
     load();
-    const timer = window.setInterval(load, 8_000);
+    const timer = window.setInterval(load, inboxLive ? 60_000 : 8_000);
     return () => {
       alive = false;
       window.clearInterval(timer);
+    };
+  }, [account.me?.id, accountAdapter, inboxLive]);
+
+  /*
+   * 账号收件箱：登录后挂一条常驻连接，服务端存完邀请就敲一下。
+   *
+   * 收到的提示**只当"去拉一次"**：界面数据永远来自 /invites，
+   * 所以推送即使被伪造也变不出假邀请。切账号/登出必须清理，
+   * 否则旧连接会在后台一直重连上一个账号。
+   */
+  useEffect(() => {
+    const meId = account.me?.id;
+    if (!meId) {
+      setInboxLive(false);
+      setInboxPresence(false);
+      return;
+    }
+    const handle = startInbox(meId, {
+      onInvite: () => {
+        void accountAdapter.invites().then(setInvites);
+      },
+      onStatus: (status) => setInboxLive(status === "live"),
+      onPresence: (enabled) => setInboxPresence(enabled),
+    });
+    inboxRef.current = handle;
+    return () => {
+      inboxRef.current = null;
+      handle.close();
     };
   }, [account.me?.id, accountAdapter]);
 
@@ -125,16 +166,27 @@ export function App() {
   }, [account.me?.id, account.me?.previousId, accountAdapter, setNotice]);
 
   /*
-   * 在线心跳：登录后每 30 秒报一次（在房间里带上房号）。
-   * 没有这一步，好友面板里所有人永远是"离线"——「谁在线 / 在 235417 房」全靠它。
+   * 在线状态：进/出房时报一次房号就够了，不再自己每 30 秒打 HTTP。
+   *
+   * 为什么能省：收件箱那条常驻连接本身就是"我在线"的证据，服务端每 30 秒
+   * 把所有挂着的连接统一写进 account_presence（一个 DO alarm 管所有人，
+   * 一天固定 2,880 次，不随在线人数增长）。原来的做法是**每个窗口**每 30 秒
+   * 一次 HTTP，20 个人就是一天上万次。
+   *
+   * 前提：必须等服务端回 `presence: true`。老版本 Worker、没绑 D1、
+   * 或者收件箱断开时，一律退回原来的 HTTP 心跳 —— 这里绝不能想当然。
    */
   useEffect(() => {
     if (!account.me) return;
     const room = voice.invite?.code;
+    if (inboxPresence) {
+      inboxRef.current?.setRoom(room);
+      return;
+    }
     accountAdapter.heartbeat(room);
     const timer = window.setInterval(() => accountAdapter.heartbeat(room), 30_000);
     return () => window.clearInterval(timer);
-  }, [account.me?.id, voice.invite?.code, accountAdapter]);
+  }, [account.me?.id, voice.invite?.code, accountAdapter, inboxPresence]);
 
   /** 加入邀请：先消掉这条记录，再走正常的进房流程（私密房会就地要临时密码）。 */
   const joinInvite = useCallback(

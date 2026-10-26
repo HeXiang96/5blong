@@ -40,6 +40,21 @@ const branch = "main";
 const pagesBase = "https://5blong.pages.dev";
 const releaseBase = `https://github.com/HeXiang96/5blong/releases/download/app-v${version}`;
 const exeName = `5blong_${version}_x64-setup.exe`;
+/**
+ * 强制更新闸门（`latest.json` 的 `minimum` 字段）。
+ *
+ * 客户端启动后自己读这个值：当前版本 < minimum → 更新框变成**不可关闭**的遮罩，
+ * 只能装完新版才能继续用；>= minimum → 和以前一样，可以点"稍后再说"。
+ *
+ * 默认写死 1.9.4（业主 2026-10-26 的口径："低于 1.9.4 强制，1.9.4 及以上没事"），
+ * **不跟随发布版本**——否则发 1.9.5 时会把 1.9.4 的人也一起锁住。
+ * 将来要再收紧一次，改这里或 `MIN_SUPPORTED=1.9.5 npm run publish:desktop -- 1.9.6`。
+ *
+ * ⚠️ 硬边界：这个字段**只对 1.9.4 及以后的客户端有效**。1.9.3 及更老的安装包里
+ * 根本没有读它的代码（那个"稍后再说"按钮是写死在它自己的二进制里的），
+ * 服务端没有办法远程改变已经发出去的程序。它们只会看到普通的可跳过提示。
+ */
+const MIN_SUPPORTED = process.env.MIN_SUPPORTED || "1.9.4";
 const sigName = `${exeName}.sig`;
 const PROXY = "http://127.0.0.1:7890";
 
@@ -157,8 +172,21 @@ async function main() {
   if (!Object.values(manifest.platforms ?? {}).some((p) => p.signature)) {
     throw new Error("latest.json 里没有签名信息，更新器会拒绝安装——检查 CI 产物");
   }
+  /*
+   * 闸门随清单一起下发。客户端跑在 tauri:// 里读它属于跨域，所以 Worker 侧
+   * 专门给 /desktop/latest.json 补了 CORS（见 _worker.pages.js）。
+   * 拿不到 / 字段缺失时客户端一律按"不强制"处理——宁可放过，也不要把人锁死。
+   */
+  if (!/^\d+\.\d+\.\d+$/.test(MIN_SUPPORTED)) {
+    throw new Error(`MIN_SUPPORTED 不是合法版本号：${MIN_SUPPORTED}`);
+  }
+  if (Number(MIN_SUPPORTED.split(".")[0]) === 0) {
+    throw new Error("MIN_SUPPORTED 不能是 0.x，检查是否传错环境变量");
+  }
+  manifest.minimum = MIN_SUPPORTED;
   writeFileSync(latestJsonPath, JSON.stringify(manifest, null, 2) + "\n");
   log("rewrite", `下载地址 → ${pagesUrl}`);
+  log("gate", `最低支持版本 minimum=${MIN_SUPPORTED}（低于它的客户端不可跳过更新）`);
 
   // 5. 部署前的硬校验：产物必须真的在部署目录里（防止"部署成功但文件缺失"）。
   for (const name of [exeName, sigName, "latest.json"]) {

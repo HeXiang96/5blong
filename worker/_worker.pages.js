@@ -54,6 +54,22 @@ export default {
       return handleAdmin(request, env);
     }
 
+    /*
+     * /desktop/latest.json 除了给 Tauri 更新器读，还要给**客户端界面自己**读：
+     * 更新遮罩靠里面的 `minimum` 判断"能不能点稍后再说"（强制更新闸门）。
+     * 客户端跑在 WebView2 那个 tauri:// 源里，读站内这个地址属于跨域，
+     * 不补 CORS 前端拿不到（fetch 直接被拦，只能退回"不强制"）。
+     * 内容只有版本号、下载地址和签名，没有隐私，放开只读即可。
+     * no-store：闸门调整完要立刻生效，不能被你自己的 CDN 缓存住。
+     */
+    if (url.pathname === "/desktop/latest.json") {
+      const res = await env.ASSETS.fetch(request);
+      const headers = new Headers(res.headers);
+      headers.set("Access-Control-Allow-Origin", "*");
+      headers.set("Cache-Control", "no-store");
+      return new Response(res.body, { status: res.status, headers });
+    }
+
     // /api/account/* → 账号 / 好友 / 固定房号（D1，表结构见 worker/accounts-schema.sql）。
     // 「我的房间」的房号就是 accounts.room_code，绑在 8 位数字账号 ID 上。
     if (url.pathname === "/api/account" || url.pathname.startsWith("/api/account/")) {
@@ -2205,7 +2221,37 @@ async function accountSendInvite(request, env) {
   )
     .bind(me.id, toId, code, Date.now(), safeKey)
     .run();
+  /*
+   * 敲一下对方的账号收件箱（常驻长连接）：**只提醒、不带内容**。
+   * 对方收到后自己 GET /invites，界面永远只认 D1 里的权威数据。
+   * 放在落库之后：推送失败只是"晚一点知道"，不能影响邀请本身成功。
+   */
+  await pushInviteHint(env, toId);
   return accountJson(request, { ok: true }, 200);
+}
+
+/**
+ * 通过 service binding 通知对方账号的收件箱"有邀请"。
+ *
+ * 两个设计约束（别改回去）：
+ *   1. **只发提示不带内容**：推送不该变成第二份数据源。接收端收到后自己拉
+ *      `/api/account/invites`，这样即使推送被滥用也拿不到任何伪造内容。
+ *   2. **放在服务端而不是客户端**：客户端推的话，发送方没连上就推不出去；
+ *      服务端存完库就能推，也不给"任意人敲任意人的门"留下口子。
+ *
+ * 失败一律吞掉：邀请已经在 D1 里，客户端还有兜底轮询，不能因为推送拖垮这个接口。
+ */
+async function pushInviteHint(env, toId) {
+  if (!env?.SIGNAL || typeof env.SIGNAL.fetch !== "function") return;
+  try {
+    await env.SIGNAL.fetch("https://signal.internal/push", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ acct: String(toId), kind: "INVITE" }),
+    });
+  } catch {
+    /* 信令 Worker 还没部署新版，或对方不在线：靠轮询兜底 */
+  }
 }
 
 /** 我收到的邀请（好友刚发出的、还没处理的）。 */
