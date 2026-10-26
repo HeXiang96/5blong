@@ -4017,17 +4017,31 @@ export class VoiceMesh {
      * 而那个 RoomHint 根本不存在——被拦截时用户既听不到声音、也看不到任何提示，
      * 表现就是"别人说话我听不见"。现在把失败上报给界面。
      */
-    void element.play().catch((error) => {
+    void element.play().catch((error: unknown) => {
+      const name = (error as { name?: string } | null)?.name ?? "";
       /*
-       * 被自动播放策略拦了（WebView2 同样会拦：`--autoplay-policy` 不在它的
-       * 支持白名单里，被静默忽略）。**不能只是再 play 一次**——没有用户手势，
-       * 第二次照样被拒，结果就是永久听不见。
+       * ⚠️ 以前这里**任何** play() 失败都会记成"浏览器拦截了自动播放"，
+       * 于是统计里那份"被拦"清单大半是误报（2026-10-26 业主质疑，查证属实）。
        *
-       * 正确顺序：先静音播起来（时间线正常），再挂一次性手势监听，
-       * 用户点一下任意位置就自动开声。
+       * 真正表示被自动播放策略挡下的只有 NotAllowedError。另外两种常见且无害：
+       *   - AbortError：play() 还没完成就换了 srcObject（换流/重连时必然出现），
+       *     过一拍再播就行，不该打扰用户；
+       *   - NotSupportedError / 其它：当普通错误上报，别再冒充"被拦"。
        */
-      this.pushRoomEvent("error", "自动播放被系统拦下了：点一下窗口即可恢复声音");
-      this.events.playbackBlocked(peerId, String(error?.message ?? error));
+      if (name === "AbortError") {
+        this.timers.after(120, () => {
+          if (this.audio.get(peerId) === element) void element.play().catch(() => {});
+        });
+        return;
+      }
+      if (name !== "NotAllowedError") {
+        this.pushRoomEvent("error", `播放失败（${name || "未知错误"}）`);
+        this.events.playbackBlocked(peerId, `${name}: ${String(error)}`);
+        return;
+      }
+      // 确认为自动播放策略拦截：静音播起来 + 等一次手势开声
+      this.pushRoomEvent("error", "自动播放被拦下了：点一下窗口即可恢复声音");
+      this.events.playbackBlocked(peerId, "NotAllowedError");
       element.muted = true;
       void element.play().catch(() => {});
       onAutoplayBlocked(element);

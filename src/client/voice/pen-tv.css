@@ -923,3 +923,12 @@ html.vx-lightbox-open .vx-stage * {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.62; }
 }
+
+/* 共享声音读数（音轨数 / 电平）：0 音轨或 0 电平时标红，一眼看出断在哪一段 */
+.vx-tv-audio {
+  color: #cfe8d2;
+}
+.vx-tv-audio-bad {
+  color: #ff9f8a;
+  font-weight: 600;
+}

@@ -323,6 +323,14 @@ export function PenTvLightbox({
   const [muted, setMuted] = useState(() => loadTvAudio().muted);
   /** 自动播放被拦：声音还没解锁，界面上给一个"点一下开启"的提示。 */
   const [needsTap, setNeedsTap] = useState(false);
+  /**
+   * 共享声音的客观读数（2026-10-26 加）：
+   * 「没有声音」到底卡在哪一段，靠这个一次分清——
+   *   音轨 0        → 共享者根本没把音轨发过来；
+   *   音轨 1 · 电平 0% → 音轨在，但内容是静音（采集端没抓到，如游戏走了非默认设备）；
+   *   音轨 1 · 电平 >0 → 数据是好的，问题在本机播放（静音/音量/路由）。
+   */
+  const [audioInfo, setAudioInfo] = useState<{ tracks: number; level: number } | null>(null);
   const [volume, setVolume] = useState(() => loadTvAudio().volume);
   /** 最大化：铺满整窗 + 尽量申请系统全屏（有人喜欢放最大看，偏好记住）。 */
   const [big, setBig] = useState(() => loadTvAudio().big === true);
@@ -418,6 +426,36 @@ export function PenTvLightbox({
     video.volume = volume;
   }, [muted, volume]);
 
+  // 共享声音的电平探针（只读，不影响播放）
+  useEffect(() => {
+    if (!stream) {
+      setAudioInfo(null);
+      return;
+    }
+    const ctx = new AudioContext();
+    const source = ctx.createMediaStreamSource(stream);
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 1024;
+    source.connect(analyser);
+    const buffer = new Float32Array(analyser.fftSize);
+    const timer = window.setInterval(() => {
+      analyser.getFloatTimeDomainData(buffer);
+      let peak = 0;
+      for (let i = 0; i < buffer.length; i += 1) {
+        const magnitude = Math.abs(buffer[i]!);
+        if (magnitude > peak) peak = magnitude;
+      }
+      setAudioInfo({
+        tracks: stream.getAudioTracks().length,
+        level: Math.round(peak * 100),
+      });
+    }, 500);
+    return () => {
+      window.clearInterval(timer);
+      void ctx.close().catch(() => {});
+    };
+  }, [stream]);
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
@@ -507,6 +545,16 @@ export function PenTvLightbox({
               <span className="vx-tv-stats" title="实时链路数据（每 2 秒刷新）">
                 {statsRole === "send" ? "[发送端] " : statsRole === "recv" ? "[接收端] " : ""}
                 {stats}
+              </span>
+            ) : null}
+            {audioInfo ? (
+              <span
+                className={`vx-tv-audio${audioInfo.tracks === 0 || audioInfo.level === 0 ? " vx-tv-audio-bad" : ""}`}
+                title="共享声音的原始读数：音轨数 / 电平。0 音轨=没发过来；电平 0%=发过来是静音"
+              >
+                {audioInfo.tracks === 0
+                  ? "声音：无音轨"
+                  : `声音：${audioInfo.tracks} 轨 · 电平 ${audioInfo.level}%`}
               </span>
             ) : null}
             {/* 多档发布时把三层各自的码率摊开——"码率低在哪一层"一眼可见 */}
