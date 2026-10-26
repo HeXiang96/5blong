@@ -679,6 +679,8 @@ export class VoiceMesh {
           isHost: true,
           local: true,
           ...(this.myAv1Decode ? { av1Decode: true } : {}),
+          // 自己这条也要带账号 ID，否则别人看到的"房主"永远没有 ID（加不了好友）
+          ...(this.accountId ? { accountId: this.accountId } : {}),
         };
         this.members.set(id, this.me);
         const monitorStream = this.outgoingStream ?? this.localStream;
@@ -760,6 +762,7 @@ export class VoiceMesh {
       isHost: false,
       local: true,
       ...(this.myAv1Decode ? { av1Decode: true } : {}),
+      ...(this.accountId ? { accountId: this.accountId } : {}),
     };
     this.members.set(this.myId, this.me);
     this.emitMembers();
@@ -1855,7 +1858,26 @@ export class VoiceMesh {
   /** 当前屏幕共享状态（null = 没人在共享，电视收起来了）。 */
   /** 登录状态变化时调用；不影响任何已有连接，只是下次广播带上它。 */
   setAccountId(id: string | null): void {
-    this.accountId = id && /^\d{8}$/.test(id) ? id : null;
+    const next = id && /^\d{8}$/.test(id) ? id : null;
+    if (this.accountId === next) return;
+    this.accountId = next;
+    if (!this.me) return;
+    /*
+     * 自己那条成员记录也要跟着变，否则**别人看到我一直没有账号 ID**，
+     * 成员菜单里的「加好友」就永远不出现（"加不了房主"就是这么来的）。
+     * 房主这里顺手重播一次名册，客人立刻能看到；访客只能等下一次 hello，
+     * 所以引导文案里写的是"登录后再开房更稳"。
+     */
+    if (next) this.me = { ...this.me, accountId: next };
+    else {
+      const { accountId: _drop, ...rest } = this.me;
+      this.me = rest;
+    }
+    this.members.set(this.me.id, this.me);
+    this.emitMembers();
+    if (this.hosting && this.joined) {
+      this.broadcastHost({ t: "roster", members: this.roster() });
+    }
   }
 
   getScreenShareState(): ScreenShareState | null {

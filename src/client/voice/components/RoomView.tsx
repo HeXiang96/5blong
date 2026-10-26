@@ -190,6 +190,7 @@ export function RoomView({
   selfAccountId = null,
   friendAccountIds,
   onAddFriend,
+  onOpenAccount,
 }: {
   status: EngineStatus;
   members: Member[];
@@ -294,6 +295,8 @@ export function RoomView({
   friendAccountIds?: Set<string>;
   /** 加好友（只在双方都登录时可用；不影响房内任何权限） */
   onAddFriend?: (accountId: string) => Promise<boolean>;
+  /** 打开登录面板（未登录时"加好友"位置的引导） */
+  onOpenAccount?: () => void;
 }) {
   const self = members.find((member) => member.local) ?? null;
   const muted = self?.muted ?? true;
@@ -841,6 +844,23 @@ export function RoomView({
                         <RefreshCw size={14} /> 重新连接
                       </button>
                     </div>
+                  </>
+                ) : null}
+
+                {!selfAccountId && onOpenAccount ? (
+                  <>
+                    <div className="vx-menu-divider" />
+                    <button
+                      type="button"
+                      className="vx-menu-btn"
+                      onClick={() => {
+                        closeAudioMenu();
+                        onOpenAccount();
+                      }}
+                      title="登录后可加好友；不登录也能正常语音、看共享"
+                    >
+                      <UserPlus size={14} /> 登录后可加好友
+                    </button>
                   </>
                 ) : null}
 

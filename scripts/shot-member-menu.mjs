@@ -14,7 +14,7 @@ const send = (method, params = {}, sessionId) => new Promise((resolve) => {
   const id = seq++; pending.set(id, resolve);
   ws.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }));
 });
-const { result: created } = await send("Target.createTarget", { url: `${BASE}/tests/fixtures/member-menu.html` });
+const { result: created } = await send("Target.createTarget", { url: `${BASE}/tests/fixtures/member-menu.html?anon=1` });
 const { result: attached } = await send("Target.attachToTarget", { targetId: created.targetId, flatten: true });
 const sid = attached.sessionId;
 await send("Runtime.enable", {}, sid);
@@ -33,7 +33,7 @@ await wait(600);
 console.log("菜单按钮:", await evaluate(`[...document.querySelectorAll('.vx-menu-btn')].map((b) => b.textContent.trim())`));
 const shot = await send("Page.captureScreenshot", { format: "png" }, sid);
 const fs = await import("node:fs");
-fs.writeFileSync("outputs/member-menu-account.png", Buffer.from(shot.result.data, "base64"));
-console.log("saved outputs/member-menu-account.png");
+fs.writeFileSync("outputs/member-menu-anon.png", Buffer.from(shot.result.data, "base64"));
+console.log("saved outputs/member-menu-anon.png");
 await send("Target.closeTarget", { targetId: created.targetId });
 ws.close();

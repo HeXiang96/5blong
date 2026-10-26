@@ -50,6 +50,18 @@ export function App() {
   useEffect(() => {
     voice.setAccountId(account.me?.id ?? null);
   }, [account.me?.id, voice.setAccountId]);
+
+  /*
+   * 登录后昵称/头像跟随账号（2026-10-26 反馈："房间里的名字和外面不同步"）。
+   * 账号是权威，房间只是展示——所以登录时把本地身份对齐到账号，
+   * 而不是反过来。未登录时仍然用本地昵称，行为不变。
+   */
+  useEffect(() => {
+    const me = account.me;
+    if (!me) return;
+    if (voice.identity.name === me.name && voice.identity.avatar === me.avatar) return;
+    voice.setIdentity({ ...voice.identity, name: me.name, avatar: me.avatar });
+  }, [account.me, voice.identity, voice.setIdentity]);
   /*
    * 开黑圈是**独立子系统**：引擎、状态、界面都不复用语音房
    * （语音房的连接拓扑/共享/猪圈互动对开黑圈都不适用）。
@@ -252,6 +264,7 @@ export function App() {
       <>
       <RoomView
         selfAccountId={account.me?.id ?? null}
+        onOpenAccount={() => setAccountOpen(true)}
         friendAccountIds={new Set(account.snapshot.friends.map((entry) => entry.account.id))}
         onAddFriend={(accountId) =>
           accountAdapter.addFriend(accountId).then((result) => {
