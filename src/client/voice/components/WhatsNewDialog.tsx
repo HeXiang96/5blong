@@ -1,7 +1,21 @@
 import { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 
-import { Film, Home, Headphones, Stethoscope, Target, Volume2, VolumeX } from "lucide-react";
+import {
+  Film,
+  Hash,
+  Home,
+  Headphones,
+  KeyRound,
+  Lock,
+  Mail,
+  Stethoscope,
+  Target,
+  UserRound,
+  Users,
+  Volume2,
+  VolumeX,
+} from "lucide-react";
 
 import { WHATS_NEW, markWhatsNewSeen, type WhatsNewIcon } from "../whats-new";
 
@@ -14,6 +28,12 @@ const ICONS: Record<WhatsNewIcon, typeof Target> = {
   film: Film,
   pulse: Stethoscope,
   home: Home,
+  user: UserRound,
+  lock: Lock,
+  key: KeyRound,
+  users: Users,
+  mail: Mail,
+  hash: Hash,
 };
 
 /**

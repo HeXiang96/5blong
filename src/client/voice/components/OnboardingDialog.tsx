@@ -61,7 +61,9 @@ export function OnboardingDialog({ open, onClose }: { open: boolean; onClose: ()
               欢迎来 <strong>5blong</strong>
             </span>
           </p>
-          <p className="vx-onboard-sub">免注册的语音房：把链接发出去，朋友点开就能进</p>
+          <p className="vx-onboard-sub">
+            免注册就能开房：发个房号或链接，朋友点开就进。想有"自己的房间"再登录。
+          </p>
 
           <ul className="vx-onboard-list">
             {ONBOARDING_ITEMS.map((item) => (
