@@ -41,6 +41,50 @@ const snapshot: FriendsSnapshot = {
       since: now - 172_800_000,
       presence: { state: "offline", lastSeen: now - 3_600_000 },
     },
+    /*
+     * 下面这些是为了看"排布密度 + 滚动条"补的（2026-10-27）：
+     * 两三个好友时列表根本不出滚动条，截图看不出改了什么。
+     */
+    {
+      account: { id: "61002847", username: "test2", name: "test2", avatar: "", avatarVersion: 0, createdAt: now },
+      since: now - 3_600_000,
+      presence: { state: "online", lastSeen: now },
+    },
+    {
+      account: { id: "61002848", username: "test1", name: "test1", avatar: "", avatarVersion: 0, createdAt: now },
+      since: now - 3_600_000,
+      presence: { state: "offline", lastSeen: now - 7_200_000 },
+    },
+    {
+      account: { id: "61002849", username: "koumi", name: "口米", avatar: "", avatarVersion: 0, createdAt: now },
+      since: now - 3_600_000,
+      presence: { state: "online", lastSeen: now },
+    },
+    {
+      account: { id: "61002850", username: "anno", name: "anno", avatar: "", avatarVersion: 0, createdAt: now },
+      since: now - 3_600_000,
+      presence: { state: "offline", lastSeen: now - 7_200_000 },
+    },
+    {
+      account: { id: "61002851", username: "foam", name: "FoamSadness", avatar: "", avatarVersion: 0, createdAt: now },
+      since: now - 3_600_000,
+      presence: { state: "online", lastSeen: now, roomCode: "612845" },
+    },
+    {
+      account: { id: "61002852", username: "moz", name: "莫无z", avatar: "", avatarVersion: 0, createdAt: now },
+      since: now - 3_600_000,
+      presence: { state: "offline", lastSeen: now - 7_200_000 },
+    },
+    {
+      account: { id: "61002853", username: "xiaofei2", name: "无敌唐小飞大王", avatar: "", avatarVersion: 0, createdAt: now },
+      since: now - 3_600_000,
+      presence: { state: "online", lastSeen: now },
+    },
+    {
+      account: { id: "61002854", username: "longname", name: "一个名字特别特别长的人看看截断", avatar: "", avatarVersion: 0, createdAt: now },
+      since: now - 3_600_000,
+      presence: { state: "online", lastSeen: now, roomCode: "235417" },
+    },
   ],
   incoming: [],
   outgoing: [],

@@ -2121,12 +2121,16 @@ async function accountAddFriend(request, env) {
       env.DB.prepare("INSERT OR IGNORE INTO friendships (account_id, friend_id, since) VALUES (?, ?, ?)").bind(targetId, me.id, now),
       env.DB.prepare("DELETE FROM friend_requests WHERE (from_id = ? AND to_id = ?) OR (from_id = ? AND to_id = ?)").bind(me.id, targetId, targetId, me.id),
     ]);
+    // 对方先请求过我：这一次等于"请求被同意"，他那边的好友列表要立刻变
+    await pushInboxHint(env, targetId, "FRIEND");
     return accountJson(request, { account: toProfile(target) }, 200);
   }
 
   await env.DB.prepare("INSERT OR IGNORE INTO friend_requests (from_id, to_id, at) VALUES (?, ?, ?)")
     .bind(me.id, targetId, now)
     .run();
+  // 让对方的好友面板立刻亮红点，而不是等下一次 90 秒轮询
+  await pushInboxHint(env, targetId, "FRIEND");
   return accountJson(request, { account: toProfile(target) }, 200);
 }
 
@@ -2147,6 +2151,8 @@ async function accountAcceptFriend(request, env) {
     env.DB.prepare("INSERT OR IGNORE INTO friendships (account_id, friend_id, since) VALUES (?, ?, ?)").bind(fromId, me.id, now),
     env.DB.prepare("DELETE FROM friend_requests WHERE from_id = ? AND to_id = ?").bind(fromId, me.id),
   ]);
+  // 申请方那边：他发的请求被同意了，好友列表要立刻出现我（不用等轮询）
+  await pushInboxHint(env, fromId, "FRIEND");
   return accountJson(request, { account: toProfile(await accountById(env, fromId)) }, 200);
 }
 
@@ -2158,6 +2164,8 @@ async function accountRejectFriend(request, env) {
   await env.DB.prepare("DELETE FROM friend_requests WHERE from_id = ? AND to_id = ?")
     .bind(fromId, me.id)
     .run();
+  // 申请方那边：请求被拒了，他的"已发出请求"要消失，别让他一直等着
+  await pushInboxHint(env, fromId, "FRIEND");
   return accountJson(request, { ok: true }, 200);
 }
 
@@ -2168,6 +2176,8 @@ async function accountRemoveFriend(request, env, targetId) {
     env.DB.prepare("DELETE FROM friendships WHERE account_id = ? AND friend_id = ?").bind(me.id, targetId),
     env.DB.prepare("DELETE FROM friendships WHERE account_id = ? AND friend_id = ?").bind(targetId, me.id),
   ]);
+  // 被删的人那边也要立刻消失，别让他在列表里点一个已经不是好友的人
+  await pushInboxHint(env, targetId, "FRIEND");
   return accountJson(request, { ok: true }, 200);
 }
 
@@ -2241,17 +2251,31 @@ async function accountSendInvite(request, env) {
  *
  * 失败一律吞掉：邀请已经在 D1 里，客户端还有兜底轮询，不能因为推送拖垮这个接口。
  */
-async function pushInviteHint(env, toId) {
+/**
+ * 敲一下对方的账号收件箱：**只带类型，不带内容**。
+ *
+ * 客户端收到 INVITE 就去拉 `/invites`，收到 FRIEND 就去拉好友快照——
+ * 真正的数据永远来自查询接口。这样即使这个通道被滥用，也伪造不出界面。
+ *
+ * 三种失败都当成功处理（对端不在线 / 信令 Worker 还是旧版 / 网络抖）：
+ * 客户端有 90 秒的兜底轮询，最坏慢一点，不会丢。
+ */
+async function pushInboxHint(env, toId, kind) {
   if (!env?.SIGNAL || typeof env.SIGNAL.fetch !== "function") return;
   try {
     await env.SIGNAL.fetch("https://signal.internal/push", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ acct: String(toId), kind: "INVITE" }),
+      body: JSON.stringify({ acct: String(toId), kind }),
     });
   } catch {
     /* 信令 Worker 还没部署新版，或对方不在线：靠轮询兜底 */
   }
+}
+
+/** 有新的房间邀请。保留这个名字：调用点都是"邀请"，读起来更清楚。 */
+async function pushInviteHint(env, toId) {
+  await pushInboxHint(env, toId, "INVITE");
 }
 
 /** 我收到的邀请（好友刚发出的、还没处理的）。 */

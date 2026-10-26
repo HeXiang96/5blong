@@ -46,6 +46,14 @@ const INBOX_HOST = "5blong.pages.dev";
 export type InboxHandlers = {
   /** 收到"有邀请"提示：调用方应立刻拉一次 `/invites`。 */
   onInvite: () => void;
+  /**
+   * 好友关系变了（对方加我 / 同意我 / 拒绝我 / 删我）：调用方拉一次好友快照。
+   *
+   * 为什么不告诉调用方"是哪种变化"：快照是一次请求拿全量，分类型反而要做增量
+   * 合并，而增量一旦写错就会出"好友列表突然空了""在线状态不动了"这种问题。
+   * 一次全量，几十毫秒，换掉一整类 bug。
+   */
+  onFriend?: () => void;
   /** 连接状态变化：`live` 时可放慢轮询，其它状态必须走兜底间隔。 */
   onStatus?: (status: InboxStatus) => void;
   /**
@@ -171,9 +179,11 @@ export function startInbox(accountId: string, handlers: InboxHandlers): InboxHan
       }
       /*
        * 只认类型，不看内容：服务端推送本来就不带房号/昵称，
-       * 真正的数据由调用方去 /invites 拉。这样推送被滥用也伪造不了界面。
+       * 真正的数据由调用方去 `/invites` / 好友快照拉。这样推送被滥用
+       * 也伪造不了界面，最坏只是让对方多拉一次。
        */
       if (message?.type === "INVITE") handlers.onInvite();
+      else if (message?.type === "FRIEND") handlers.onFriend?.();
     };
 
     ws.onerror = () => {

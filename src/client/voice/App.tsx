@@ -90,6 +90,13 @@ export function App() {
    */
   const [inboxPresence, setInboxPresence] = useState(false);
   const inboxRef = useRef<InboxHandle | null>(null);
+  /**
+   * 收件箱回调里要"拉一次账号数据"，但把 `account` 塞进 effect 依赖会让它
+   * 每次渲染都重连。用 ref 拿最新的 refresh（useCallback 本身稳定，这里只是
+   * 让依赖数组保持干净）。
+   */
+  const refreshAccountRef = useRef(account.refresh);
+  refreshAccountRef.current = account.refresh;
   useEffect(() => {
     if (!account.me) {
       setInvites([]);
@@ -127,6 +134,14 @@ export function App() {
       onInvite: () => {
         void accountAdapter.invites().then(setInvites);
       },
+      /*
+       * 好友关系变了（对方加我/同意我/拒绝我/删我）：立刻拉一次全量快照。
+       * 90 秒轮询下，原来的红点最坏要等一分半才亮；有了这条就是秒级。
+       * 推送只带"去拉一次"这个指令，数据永远来自查询接口，伪造不了。
+       */
+      onFriend: () => {
+        void refreshAccountRef.current();
+      },
       onStatus: (status) => setInboxLive(status === "live"),
       onPresence: (enabled) => setInboxPresence(enabled),
     });
@@ -136,6 +151,17 @@ export function App() {
       handle.close();
     };
   }, [account.me?.id, accountAdapter]);
+
+  /**
+   * 打开好友面板时先拉一次快照（2026-10-27）。
+   *
+   * 好友快照是 90 秒一轮（为了省请求），如果只靠定时器，点开面板那一刻看到的
+   * 可能是 90 秒前的旧数据 —— 刚被同意的好友还没出现、刚发的请求还没消。
+   * 每次点开多 1 次请求，换来"看到的就是现在"，很划算。
+   */
+  useEffect(() => {
+    if (friendsOpen) void refreshAccountRef.current();
+  }, [friendsOpen]);
 
   /**
    * 后台改过数字 ID：把本机房间钥匙搬到新 ID 名下，再告诉服务端已迁移。

@@ -501,7 +501,10 @@ export function FriendsDrawer({
                 entry.presence.roomCode && entry.presence.roomCode !== roomCode,
               );
               return (
-                <div className="vx-friend-row" key={entry.account.id}>
+                <div
+                  className={`vx-friend-row ${online ? "vx-friend-row-on" : "vx-friend-row-off"}`}
+                  key={entry.account.id}
+                >
                   <span className={`vx-friend-dot${online ? " vx-friend-dot-on" : ""}`} aria-hidden />
                   <Avatar
                     avatar={entry.account.avatar}
@@ -511,11 +514,16 @@ export function FriendsDrawer({
                   />
                   <div className="vx-friend-main">
                     <b>{entry.account.name}</b>
+                    {/*
+                     * 状态从"第二行"挪到名字右侧（2026-10-27）：
+                     * 原来每行长两行文字，一屏只放得下 6 个人；同行后排布压到
+                     * 约 48px，同样高度多放 2 个人。信息一个字没少。
+                     */}
                     <span className="vx-friend-sub">
                       {online ? (
                         inOtherRoom ? (
                           <>
-                            在 <i className="vx-friend-room">{entry.presence.roomCode}</i> 房间
+                            在 <i className="vx-friend-room">{entry.presence.roomCode}</i> 房
                           </>
                         ) : (
                           "在线"

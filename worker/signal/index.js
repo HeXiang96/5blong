@@ -353,10 +353,16 @@ export class SignalHub {
     }
     const acct = String(body?.acct ?? "").trim();
     if (!/^[1-9]\d{5,11}$/.test(acct)) return json({ error: "bad-acct" }, 400);
-    // 白名单：目前只有"有邀请"一种理由，别把这个端点做成任意消息通道
-    if (String(body?.kind ?? "") !== "INVITE") return json({ error: "bad-kind" }, 400);
+    /*
+     * 白名单：只允许"该去拉一次账号数据"的几种理由，别把这个端点做成任意消息通道。
+     *   INVITE = 有房间邀请（拉 /invites）
+     *   FRIEND = 好友关系变了（加/同意/拒绝/删除，拉 /friends 快照）
+     * 两种消息都**不带内容**，伪造成功最多让对方多拉一次数据，改不了界面。
+     */
+    const kind = String(body?.kind ?? "");
+    if (kind !== "INVITE" && kind !== "FRIEND") return json({ error: "bad-kind" }, 400);
 
-    const out = JSON.stringify({ type: "INVITE" });
+    const out = JSON.stringify({ type: kind });
     let sent = 0;
     for (const ws of this.#inboxSockets(acct)) {
       try {
