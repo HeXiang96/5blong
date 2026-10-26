@@ -569,6 +569,8 @@ npm run feedback:admin list 20   # 终端查看最近反馈（url / list / rm �
 <!-- AUTO-LOG:START -->
 ### 近期提交（自动生成）
 
+- `4103fee` release: v1.8.11（10-26 16:19）
+- `db3e485` feat(room): 房号占位——认领号不能被临时房占用（D1 唯一主键 + 30 秒续期 + 关房释放）；改号后旧号回池（10-26 16:19）
 - `ecd2130` release: v1.8.10（10-26 16:01）
 - `b53f860` fix(room): 私密房临时密码加爆破防护——失败递增延迟 + 超阈值冷却（冷却期只认邀请链接）（10-26 16:00）
 - `8e245cb` chore(release): 发布脚本加护栏——线上更新源版本更新时拒绝降级（FORCE_PUBLISH=1 可强发）（10-26 15:43）
@@ -576,9 +578,6 @@ npm run feedback:admin list 20   # 终端查看最近反馈（url / list / rm �
 - `022a011` fix(auth): PBKDF2 迭代超 Workers 10 万上限导致注册全 500——降到上限值并加防回归断言（10-26 15:07）
 - `880d99f` release: v1.8.9（10-26 14:58）
 - `9f631e5` fix(protocol): 拒绝原因白名单漏加 needs-pass/bad-pass——私密房被拒时消息被整条丢掉；补心跳、邀请好友校验与账号 API 集成测试（10-26 14:58）
-- `19ad1be` feat(account): 临时房回归主入口；固定房号绑账号且只能改一次锁死；邀请留档 + 好友面板「邀请」；D1 建表脚本（10-26 14:36）
-- `12d300a` feat(room): 「我的房间」改成私密房——只认邀请链接或临时密码；裸码不放行，密码可随时换/关（10-26 14:23）
-- `2e5d341` feat(account): 固定房号绑定账号数字 ID——房号存账号（D1 表 accounts.room_code），钥匙按账号存本机；新增 /api/account 后端与 WorkerAdapter（10-26 14:14）
 <!-- AUTO-LOG:END -->
 
 ## 怎么用
