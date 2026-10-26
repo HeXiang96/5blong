@@ -11,6 +11,9 @@ import { OnboardingDialog } from "./components/OnboardingDialog";
 import { WhatsNewDialog } from "./components/WhatsNewDialog";
 import { shouldShowWhatsNew } from "./whats-new";
 import { SettingsView } from "./components/SettingsView";
+import { AccountDialog, FriendsDrawer } from "./components/AccountPanels";
+import { LocalAccountAdapter, seedDemoAccounts } from "./account/local-adapter";
+import { useAccount } from "./account/use-account";
 import { Banner } from "./components/ui";
 import { gameCodeFromUrl } from "../game/game-links";
 /*
@@ -20,6 +23,27 @@ import { gameCodeFromUrl } from "../game/game-links";
 const GameEntry = lazy(() => import("../game/GameEntry").then((m) => ({ default: m.GameEntry })));
 
 export function App() {
+  /*
+   * 账号是**可选增强层**：不登录一切照旧。
+   * 本地适配器用于预览与单机演示；上线时换成 Worker 实现，UI 不用改。
+   */
+  const [accountAdapter] = useState(() => {
+    const adapter = new LocalAccountAdapter();
+    // 预览入口：?account=demo 时种两个演示账号，一个人也能点完加好友闭环
+    if (
+      window.location.search.includes("account=demo") &&
+      !sessionStorage.getItem("5blong.demoSeeded")
+    ) {
+      // 只种一次并刷新一次，避免死循环
+      sessionStorage.setItem("5blong.demoSeeded", "1");
+      void seedDemoAccounts().then(() => window.location.reload());
+    }
+    return adapter;
+  });
+  const account = useAccount(accountAdapter);
+  const [accountOpen, setAccountOpen] = useState(false);
+  const [friendsOpen, setFriendsOpen] = useState(false);
+
   const voice = useVoice();
   /*
    * 开黑圈是**独立子系统**：引擎、状态、界面都不复用语音房
@@ -361,6 +385,10 @@ export function App() {
             onDismissError={() => voice.setJoinError(null)}
             lastRoom={voice.lastRoom}
             onResumeLastRoom={() => void voice.resumeLastRoom()}
+            account={account.me}
+            friendRequests={account.snapshot.incoming.length}
+            onOpenAccount={() => setAccountOpen(true)}
+            onOpenFriends={() => setFriendsOpen(true)}
             onCreateGame={() => openGame("create")}
             onJoinGame={() => openGame("join")}
           />
@@ -380,6 +408,27 @@ export function App() {
         </>
       )}
       {gameLayer}
+
+      {/* 账号 / 好友：与房间逻辑完全解耦，关闭即回到原来的界面 */}
+      <AccountDialog
+        open={accountOpen}
+        adapter={accountAdapter}
+        account={account.me}
+        onClose={() => setAccountOpen(false)}
+        onChanged={() => void account.refresh()}
+        onOpenFriends={() => {
+          setAccountOpen(false);
+          setFriendsOpen(true);
+        }}
+      />
+      <FriendsDrawer
+        open={friendsOpen}
+        adapter={accountAdapter}
+        snapshot={account.snapshot}
+        onClose={() => setFriendsOpen(false)}
+        onChanged={() => void account.refresh()}
+        roomCode={null}
+      />
     </>
   );
 }

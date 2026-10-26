@@ -10,6 +10,7 @@ import { UpdateOverlay } from "./voice/components/UpdateOverlay";
  * 从 TS 里 import 才会被正确合并，而且下面这个顺序就是最终层叠顺序。
  */
 import "./voice/styles.css";
+import "./voice/account.css";
 import "./voice/pen-scene.css";
 import "./voice/pen-life.css";
 import "./voice/pen-fence.css";

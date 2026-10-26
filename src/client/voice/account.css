@@ -1,0 +1,329 @@
+/* 账号 / 好友面板（2026-10-26）
+ * 沿用首页那套「纸面 + 木框」，不引入白底卡片。
+ * 夜晚（浅色主题 + data-daypart=night）与深色主题都跟随。
+ */
+
+.vx-sheet {
+  width: min(420px, calc(100vw - 32px));
+  max-height: calc(100vh - 80px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px 16px;
+  border-radius: 16px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.5) 0%, rgba(255, 255, 255, 0) 34%),
+    linear-gradient(180deg, #fffdf6 0%, #f7ecd6 100%);
+  border: 1px solid rgba(120, 78, 34, 0.28);
+  box-shadow: 0 18px 46px rgba(70, 44, 14, 0.28);
+  color: #5b3d18;
+}
+
+.vx-sheet-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14.5px;
+}
+
+.vx-sheet-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.vx-sheet-row > span:first-child {
+  flex: 0 0 62px;
+  font-size: 12px;
+  color: #7a6449;
+}
+
+.vx-sheet-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: none;
+  background: rgba(255, 253, 246, 0.92);
+  box-shadow: 0 1px 2px rgba(70, 44, 14, 0.1) inset;
+  color: #4a3212;
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+}
+.vx-sheet-input:focus {
+  box-shadow:
+    0 1px 2px rgba(70, 44, 14, 0.1) inset,
+    0 0 0 3px rgba(207, 150, 80, 0.3);
+}
+
+.vx-sheet-value {
+  flex: 1 1 auto;
+  font-size: 13px;
+  font-weight: 600;
+  color: #4a3212;
+}
+.vx-sheet-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 8px;
+  font: inherit;
+  text-align: left;
+}
+.vx-sheet-copy:hover {
+  background: rgba(255, 245, 220, 0.7);
+}
+
+.vx-sheet-hint {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: #7a6449;
+}
+
+.vx-sheet-error {
+  margin: 0;
+  font-size: 11.5px;
+  color: #b4452f;
+}
+
+.vx-sheet-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 2px;
+}
+.vx-sheet-actions .vx-btn {
+  flex: 1 1 auto;
+}
+.vx-sheet-danger {
+  color: #a33a24;
+}
+
+/* 我的资料 */
+.vx-profile {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.vx-profile-main {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.vx-profile-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(120, 78, 34, 0.35);
+  background: rgba(255, 253, 246, 0.8);
+  font-size: 12px;
+  cursor: pointer;
+}
+.vx-profile-avatar input {
+  display: none;
+}
+
+/* 好友抽屉 */
+.vx-friends {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(340px, 100vw);
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.45) 0%, rgba(255, 255, 255, 0) 30%),
+    linear-gradient(180deg, #fffdf6 0%, #f6ead2 100%);
+  border-left: 1px solid rgba(120, 78, 34, 0.3);
+  box-shadow: -16px 0 40px rgba(70, 44, 14, 0.22);
+  color: #5b3d18;
+  padding: 12px 12px 10px;
+}
+.vx-friends .vx-sheet-head {
+  padding: 2px 4px 8px;
+}
+.vx-friends-spacer {
+  flex: 1 1 auto;
+}
+
+.vx-friends-tabs {
+  display: flex;
+  gap: 6px;
+  padding: 0 2px 8px;
+}
+.vx-friends-tabs button {
+  flex: 1 1 auto;
+  padding: 6px 8px;
+  border-radius: 9px;
+  border: 1px solid transparent;
+  background: rgba(255, 253, 246, 0.5);
+  color: #7a6449;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.vx-friends-tabs .vx-friends-tab-on {
+  background: rgba(255, 253, 246, 0.95);
+  border-color: rgba(120, 78, 34, 0.35);
+  color: #5b3d18;
+  font-weight: 700;
+}
+.vx-friends-badge {
+  display: inline-block;
+  min-width: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: #c2410c;
+  color: #fff5e6;
+  font-size: 10px;
+  line-height: 16px;
+}
+
+.vx-friends-body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 2px;
+}
+
+.vx-friend-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 8px;
+  border-radius: 11px;
+  background: rgba(255, 253, 246, 0.6);
+}
+.vx-friend-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.vx-friend-main b {
+  font-size: 12.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.vx-friend-main span {
+  font-size: 10.5px;
+  color: #8a7355;
+}
+.vx-friend-main .vx-friend-on {
+  color: #2f7d5b;
+}
+
+.vx-friends-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 9px;
+  border-radius: 10px;
+  background: rgba(255, 253, 246, 0.92);
+  box-shadow: 0 1px 2px rgba(70, 44, 14, 0.1) inset;
+}
+.vx-friends-search input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 12.5px;
+  color: #4a3212;
+  outline: none;
+}
+
+.vx-friends-foot {
+  padding: 6px 4px 2px;
+  font-size: 10.5px;
+  color: #8a7355;
+  min-height: 18px;
+}
+
+/* 顶栏入口：登录按钮 / 好友按钮红点 */
+.vx-friends-btn {
+  position: relative;
+}
+.vx-friends-dot {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #c2410c;
+  box-shadow: 0 0 0 2px rgba(255, 253, 246, 0.9);
+}
+
+/* ---------------- 夜晚 / 深色 ---------------- */
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-sheet {
+  background:
+    linear-gradient(180deg, rgba(255, 236, 200, 0.07) 0%, rgba(255, 236, 200, 0) 34%),
+    linear-gradient(180deg, #33291b 0%, #271f14 100%);
+  border-color: rgba(255, 226, 170, 0.22);
+  color: #f4e4c2;
+}
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-sheet-row > span:first-child,
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-sheet-hint,
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-friend-main span,
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-friends-foot {
+  color: #cbb28a;
+}
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-sheet-value,
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-sheet-input,
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-friends-search input {
+  color: #f4e4c2;
+}
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-sheet-input,
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-friends-search,
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-friend-row,
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-friends-tabs button {
+  background: rgba(0, 0, 0, 0.24);
+}
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-friends {
+  background:
+    linear-gradient(180deg, rgba(255, 236, 200, 0.06) 0%, rgba(255, 236, 200, 0) 30%),
+    linear-gradient(180deg, #2f2618 0%, #241d12 100%);
+  border-left-color: rgba(255, 226, 170, 0.2);
+  color: #f4e4c2;
+}
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-friends-tabs .vx-friends-tab-on {
+  background: rgba(255, 236, 200, 0.14);
+  border-color: rgba(255, 226, 170, 0.3);
+  color: #f4e4c2;
+}
+
+/* 顶栏「登录」小胶囊：低调，不抢主操作 */
+.vx-login-btn {
+  padding: 5px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(120, 78, 34, 0.4);
+  background: rgba(255, 253, 246, 0.75);
+  color: #5b3d18;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.vx-login-btn:hover {
+  background: rgba(255, 253, 246, 1);
+}
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-login-btn {
+  border-color: rgba(255, 226, 170, 0.3);
+  background: rgba(255, 236, 200, 0.1);
+  color: #f4e4c2;
+}

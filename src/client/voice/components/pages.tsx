@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { Copy, Download, History, LogIn, Palette, Plus, Settings as SettingsIcon } from "lucide-react";
+import { Copy, Download, History, LogIn, Palette, Plus, Settings as SettingsIcon, Users } from "lucide-react";
 import { boardEntries } from "../changelog";
 import { SCENE_THEMES, type SceneThemeId } from "../scene-theme";
 import type { LastRoom, SessionSummary } from "../session-stats";
@@ -53,6 +53,10 @@ export function LandingView({
   onDismissError,
   lastRoom = null,
   onResumeLastRoom,
+  account = null,
+  friendRequests = 0,
+  onOpenAccount,
+  onOpenFriends,
   onCreateGame,
   onJoinGame,
 }: {
@@ -75,6 +79,12 @@ export function LandingView({
   onDismissError?: () => void;
   /** 上次房间（本机记忆；null = 没有或不展示）。 */
   lastRoom?: LastRoom | null;
+  /** 已登录的账号（null = 未登录，功能降级但一律可用） */
+  account?: { id: string; username: string; name: string; avatar: string } | null;
+  /** 待处理的好友请求数（顶栏红点） */
+  friendRequests?: number;
+  onOpenAccount?: () => void;
+  onOpenFriends?: () => void;
   /** 恢复上次的房间（房主用原房号重新开房 / 访客按码重进） */
   onResumeLastRoom?: () => void;
   /** 开黑圈：创建（需要创建码）/ 加入（输房间码）。 */
@@ -194,6 +204,27 @@ export function LandingView({
         <div className="vx-top-right">
           {/* 身份收在右上角：头像 + 昵称（点击改名）+ 复制 ID。
               原来是主区域里一整条木牌，把「创建语音房」往下推了 60px。 */}
+          {account ? (
+            <button
+              type="button"
+              className="vx-icon-btn vx-friends-btn"
+              onClick={onOpenFriends}
+              aria-label="好友"
+              title={friendRequests > 0 ? `好友（${friendRequests} 条请求）` : "好友"}
+            >
+              <Users size={18} />
+              {friendRequests > 0 ? <span className="vx-friends-dot" /> : null}
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="vx-login-btn"
+              onClick={onOpenAccount}
+              title="登录后可加好友、看谁在线（不登录也能正常用）"
+            >
+              登录
+            </button>
+          )}
           <div className="vx-id-chip">
             <Avatar avatar={identity.avatar} color={identity.color} name={identity.name} size={24} />
             {editing ? (
@@ -214,12 +245,17 @@ export function LandingView({
                 type="button"
                 className="vx-id-name"
                 onClick={() => {
+                  // 登录后点昵称 = 打开我的资料；未登录还能就地改名
+                  if (account && onOpenAccount) {
+                    onOpenAccount();
+                    return;
+                  }
                   setDraftName(identity.name);
                   setEditing(true);
                 }}
-                title="点击修改昵称"
+                title={account ? "我的资料" : "点击修改昵称"}
               >
-                {identity.name}
+                {account?.name ?? identity.name}
               </button>
             )}
             <button
