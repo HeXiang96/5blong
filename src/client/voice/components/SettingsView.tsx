@@ -18,7 +18,6 @@ import {
   type DeviceOption,
 } from "../devices";
 import { toAvatarDataUrl } from "../storage";
-import { listLoopbackTargets } from "../loopback";
 import { Avatar, Toggle } from "./ui";
 import { HealthCheck } from "./HealthCheck";
 
@@ -60,18 +59,10 @@ export function SettingsView({
   const [testError, setTestError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [theme, setTheme] = useState<ThemeChoice>(() => loadTheme());
-  /** "只采集某个应用"的候选列表（仅桌面客户端能枚举）。 */
-  const [loopTargets, setLoopTargets] = useState<{ pid: number; name: string }[]>([]);
   const stopTest = useRef<(() => void) | null>(null);
   const fileInput = useRef<HTMLInputElement | null>(null);
   /** 桌面客户端（Tauri）：托盘等相关说明只在客户端里展示。 */
   const isDesktop = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-
-  const refreshLoopTargets = async () => {
-    if (!isDesktop) return;
-    const list = await listLoopbackTargets();
-    setLoopTargets(list);
-  };
 
   const refreshDevices = async () => {
     const groups = await listDevices();
@@ -80,7 +71,6 @@ export function SettingsView({
   };
 
   useEffect(() => {
-    void refreshLoopTargets();
     void refreshDevices();
     const off = onDeviceChange(() => void refreshDevices());
     return () => {
@@ -371,59 +361,11 @@ export function SettingsView({
             </section>
 
             <section className="vx-card">
-              <label className="vx-field">
-                <span className="vx-field-label">共享时带上系统声音</span>
-                <Toggle
-                  checked={voice.shareAudio}
-                  label="共享时带上系统声音"
-                  onChange={(next) => setVoice((prev) => ({ ...prev, shareAudio: next }))}
-                />
-              </label>
+              <h3>屏幕共享</h3>
               <small>
-                客户端共享时会自动排除本应用的语音（不会把你听到的人声再采一遍），所以不会再出现回声；
-                网页版拿不到这个能力，共享声音仍可能有回声。
+                共享声音的开关与"声音来源"已移到房间底栏「共享」按钮的菜单里——开播前第一眼就能看到、当场就能改。
+                客户端用内置采集带系统声音（系统选择器里没有"共享音频"选项是正常的）；网页版只能采整机声音。
               </small>
-              <label className="vx-field">
-                <span className="vx-field-label">老系统回退时压低房间声音</span>
-                <Toggle
-                  checked={voice.shareFallbackDuck}
-                  label="老系统回退时压低房间声音"
-                  onChange={(next) => setVoice((prev) => ({ ...prev, shareFallbackDuck: next }))}
-                />
-              </label>
-              <small>
-                个别老系统不支持"按应用取声音"，只能整机采集——那种情况共享音频里会带上房间人声。
-                打开后会在共享期间把别人说话压到 15%，几乎听不出回声（你自己也会觉得声音变小）。
-              </small>
-
-              {isDesktop ? (
-                <div className="vx-field">
-                  <span className="vx-field-label">只共享这个应用的声音</span>
-                  <select
-                    className="vx-input"
-                    value={String(voice.shareAppPid ?? "")}
-                    onChange={(event) => {
-                      const raw = event.target.value;
-                      setVoice((prev) => ({ ...prev, shareAppPid: raw ? Number(raw) : null }));
-                    }}
-                  >
-                    <option value="">自动（共享窗口→只采那个应用；整屏→排除本应用）</option>
-                    {loopTargets.map((target) => (
-                      <option key={target.pid} value={String(target.pid)}>
-                        {target.name}
-                      </option>
-                    ))}
-                  </select>
-                  <button type="button" className="vx-menu-btn" onClick={() => void refreshLoopTargets()}>
-                    刷新正在出声的应用
-                  </button>
-                  <small>
-                    默认是"自动"：共享某个窗口时会自动只采那个应用的声音（房间语音不可能混进去）；
-                    共享整个桌面时采整机声音、排除本应用。自动认不出来时才需要在这里手动指定。
-                    列表只显示"此刻正在出声"的程序——先让游戏/视频出点声再刷新。
-                  </small>
-                </div>
-              ) : null}
             </section>
 
             <section className="vx-card">

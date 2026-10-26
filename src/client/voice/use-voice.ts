@@ -564,6 +564,13 @@ export function useVoice() {
     async (quality: ShareQuality): Promise<boolean> => {
       const engine = engineRef.current;
       if (!engine?.isJoined) return false;
+      /*
+       * ⚠️ 设置一律从 settingsRef 现取：这个函数的依赖数组是空的（刻意，
+       * 免得整条采集链随设置重建），闭包里的 `settings` 是**首次渲染时的旧值**——
+       * 2026-10-26 业主实测"共享时带上系统声音"开关完全无效，就是它。
+       * 共享菜单/设置页里切的模式、开关，开播那一刻必须生效。
+       */
+      const settings = settingsRef.current;
       if (screenShare || sharePubRef.current) {
         setNotice({ kind: "error", text: `电视被 ${screenShare?.label || "别人"} 占着，等关播再上` });
         return false;
@@ -1301,6 +1308,13 @@ export function useVoice() {
   );
 
   /** 共享时是否带上系统声音（共享浮层里直接可改，落盘记住）。 */
+  const setShareFallbackDuck = useCallback(
+    (on: boolean) => {
+      persistSettings({ ...settings, shareFallbackDuck: on });
+    },
+    [persistSettings, settings],
+  );
+
   const setShareAudio = useCallback(
     (on: boolean) => {
       persistSettings({ ...settings, shareAudio: on });
@@ -1803,7 +1817,9 @@ export function useVoice() {
     shareTransport: settings.shareTransport,
     setShareTransport,
     shareAudio: settings.shareAudio,
+    shareFallbackDuck: settings.shareFallbackDuck,
     setShareAudio,
+    setShareFallbackDuck,
     shareAppPid: settings.shareAppPid ?? null,
     setShareAppPid,
     shareViewMode: settings.shareViewMode,

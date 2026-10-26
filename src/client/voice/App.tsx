@@ -537,6 +537,8 @@ export function App() {
         onSetShareAudio={voice.setShareAudio}
         shareAppPid={voice.shareAppPid}
         onSetShareAppPid={voice.setShareAppPid}
+        shareFallbackDuck={voice.shareFallbackDuck}
+        onSetShareFallbackDuck={voice.setShareFallbackDuck}
         shareLatency={voice.shareLatency}
         onSetShareLatency={voice.setShareLatency}
         onWatchScreen={voice.setScreenWatch}

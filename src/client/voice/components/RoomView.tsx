@@ -185,6 +185,8 @@ export function RoomView({
   onSetShareAudio,
   shareAppPid,
   onSetShareAppPid,
+  shareFallbackDuck,
+  onSetShareFallbackDuck,
   shareViewMode,
   onSetShareViewMode,
   shareLatency,
@@ -292,6 +294,9 @@ export function RoomView({
   onSetShareAudio: (on: boolean) => void;
   shareAppPid: number | null;
   onSetShareAppPid: (pid: number | null) => void;
+  /** 老系统回退到整机采集时，是否把房间人声压低（防回声） */
+  shareFallbackDuck: boolean;
+  onSetShareFallbackDuck: (on: boolean) => void;
   /** 观众端画质偏好（自动 / 清晰优先 / 流畅优先）与切换。 */
   shareViewMode: ScreenViewPreference;
   onSetShareViewMode: (mode: ScreenViewPreference) => void;
@@ -1738,6 +1743,29 @@ export function RoomView({
                 ) : null}
               </select>
             ) : null}
+            {shareDesktop && shareAudio ? (
+              <>
+                <label className="vx-field">
+                  <Toggle
+                    checked={shareFallbackDuck}
+                    label="老系统回退时压低房间声音"
+                    onChange={onSetShareFallbackDuck}
+                  />
+                </label>
+                <p className="vx-share-menu-hint">
+                  个别老系统不支持"按应用取声音"，只能整机采集——那种情况共享音频里会带上房间人声。
+                  打开后共享期间把别人说话压到 15%，几乎听不出回声。
+                </p>
+              </>
+            ) : null}
+            {/*
+              系统选择器（WebView2）里**没有**"共享音频"的勾选框，这是正常的：
+              桌面端的声音由客户端内置采集（不经过选择器），上面的"声音来源"才是开关。
+              不写清楚，用户就会像 2026-10-26 那样在设置里找不到、以为功能坏了。
+            */}
+            <p className="vx-share-menu-hint">
+              提示：系统弹出的选择器里没有"共享音频"选项是正常的，声音由客户端内置采集
+            </p>
             <p className="vx-share-menu-title">共享方式</p>
             {/*
               原来这段话挂在"?"气泡里：一是读不到（菜单可滚动后气泡被裁），

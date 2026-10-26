@@ -132,6 +132,8 @@ function Fixture() {
     onSetShareAudio: (on) => record("share-audio", on),
     shareAppPid: params.get("sharePid") ? Number(params.get("sharePid")) : null,
     onSetShareAppPid: (pid) => record("share-app", pid),
+    shareFallbackDuck: false,
+    onSetShareFallbackDuck: (on) => record("share-duck", on),
     shareLatency: "balanced" as const,
     onSetShareLatency: (mode) => record("share-latency", mode),
     // ?anon=1 模拟未登录：菜单里应出现"登录后可加好友"
