@@ -20,6 +20,12 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    // bump 自动插入（发版时保证首条 = 本次版本）；内容按需补充，留空 = 公告栏展示上一条有内容版本
+    version: "1.9.2",
+    date: "2026-10-26",
+    lines: [],
+  },
+  {
     // 1.9.1：修"全员已登录却显示对方未登录"
     version: "1.9.1",
     date: "2026-10-26",
