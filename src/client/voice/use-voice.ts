@@ -55,6 +55,7 @@ import {
 } from "./protocol";
 import { refreshIceServers } from "./ice";
 import { isTauriRuntime, startLoopbackAudio } from "./loopback";
+import { buildInviteText } from "./invite-text";
 import { loadSettings, saveSettings, type VoiceSettings } from "./settings";
 import { readJson, writeJson } from "./storage";
 
@@ -106,6 +107,14 @@ export function useVoice() {
    * 界面据此显示"点一下恢复"的提示——以前这种情况是完全静默的。
    */
   const [audioBlocked, setAudioBlocked] = useState(false);
+  /**
+   * 私密房（登录账号的「我的房间」）与它的临时密码。
+   * 密码只活在房主内存里：关房即失效，不上信令、不落盘。
+   */
+  const [privateRoom, setPrivateRoom] = useState(false);
+  const [guestPass, setGuestPassState] = useState("");
+  /** 刚被私密房拒之门外：首页据此展开"临时密码"输入框。 */
+  const [needsPass, setNeedsPass] = useState(false);
   /** 与每个成员的媒体连接状态：直连 / 中继 / 连接中 / 失败（诊断跨网无声）。 */
   const [mediaStates, setMediaStates] = useState<Record<string, MediaLinkState>>({});
   /** 房间是否上锁（仅房主可切换）。 */
@@ -252,6 +261,9 @@ export function useVoice() {
     setPenEvents(initialPenEvents());
     teardownShare();
     setScreenShare(null);
+    setPrivateRoom(false);
+    setGuestPassState("");
+    setNeedsPass(false);
     setStatus("idle");
   }, [initialPenEvents, teardownShare]);
 
@@ -266,6 +278,7 @@ export function useVoice() {
           setNotice({ kind: "info", text: detail });
         } else if (next === "connected") {
           setJoinError(null);
+          setNeedsPass(false);
           setJoined(true);
           joinedRef.current = true;
         }
@@ -277,6 +290,10 @@ export function useVoice() {
         if (!message.self && !chatOpenRef.current) setUnread((value) => value + 1);
       },
       ended: (reason, detail) => setEnded({ reason, detail }),
+      rejected: (reason) => {
+        // 私密房：让首页就地展开"临时密码"输入框，别只丢一句错误让人干瞪眼
+        setNeedsPass(reason === "needs-pass" || reason === "bad-pass");
+      },
       ready: setInvite,
       topic: (text) => setTopicState(text),
       pen: (event) => {
@@ -1057,7 +1074,7 @@ export function useVoice() {
    * 上的房号**：对方一关，号还是你的。
    */
   const createRoom = useCallback(
-    async (prefer?: { code: string; roomKey: string }) => {
+    async (prefer?: { code: string; roomKey: string; private?: boolean }) => {
       // 房间状态整体重置，但先把 invite 清掉避免闪一下旧房间码。
       resetRoom();
       setTopicState("");
@@ -1068,6 +1085,9 @@ export function useVoice() {
       const engine = startEngine();
       // 尊重"进房默认静音"开关（评审 #2：原来三处全硬编码 true，开关是死的）
       await engine.host(identityRef.current, settings, settings.joinMuted, prefer);
+      // 私密房状态由引擎权威给出（撞码换号也还是私密房）
+      setPrivateRoom(engine.isPrivateRoom());
+      setGuestPassState(engine.getGuestPass());
       const mine = engine.invite;
       // 记下"上次房间"：房主关掉客户端后，首页可以用同一房号+钥匙重建。
       if (mine) {
@@ -1365,8 +1385,43 @@ export function useVoice() {
     }
   }, []);
 
-  const copyText = useCallback(async (value: string, okText: string) => {
+  /**
+   * 私密房（「我的房间」）的两个动作：生成/换一个临时密码、关掉它。
+   * 临时密码是"报号进房"那一路的唯一凭证，房主随时能掐断。
+   */
+  const renewGuestPass = useCallback(() => {
+    const engine = engineRef.current;
+    if (!engine) return "";
+    const next = engine.renewGuestPass();
+    setGuestPassState(next);
+    setNotice({
+      kind: "info",
+      text: next ? `新的临时密码：${next}` : "这间不是私密房，不需要临时密码",
+    });
+    return next;
+  }, []);
+
+  const closeGuestPass = useCallback(() => {
+    engineRef.current?.closeGuestPass();
+    setGuestPassState("");
+    setNotice({ kind: "info", text: "已关闭临时密码：之后只有邀请链接能进" });
+  }, []);
+
+  /** 复制"房间号 + 临时密码"那一段（比链接更适合发在群里或被念出来）。 */
+  const copyPassInvite = useCallback(async (): Promise<boolean> => {
+    const current = engineRef.current?.invite ?? null;
+    if (!current || !guestPass) return false;
     try {
+      await navigator.clipboard.writeText(buildInviteText(current.code, { pass: guestPass }));
+      setNotice({ kind: "info", text: "已复制：房间号 + 临时密码" });
+      return true;
+    } catch {
+      setNotice({ kind: "error", text: "复制失败，直接念给对方吧" });
+      return false;
+    }
+  }, [guestPass]);
+
+  const copyText = useCallback(async (value: string, okText: string) => {    try {
       await navigator.clipboard.writeText(value);
       setNotice({ kind: "info", text: okText });
       return true;
@@ -1690,6 +1745,13 @@ export function useVoice() {
     toggleMute,
     sendChat,
     copyInvite,
+    copyPassInvite,
+    privateRoom,
+    guestPass,
+    needsPass,
+    setNeedsPass,
+    renewGuestPass,
+    closeGuestPass,
     copyText,
     setIdentity: applyIdentity,
     setNotice,

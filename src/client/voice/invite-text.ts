@@ -4,13 +4,21 @@
  * 真正的"推送到对方"需要一条在线通道（Worker 或长连接），
  * 在那之前，复制文案是最稳的一步——微信群、QQ、私聊都能直接粘贴。
  */
-export function buildInviteText(code: string, options: { count?: number; topic?: string } = {}): string {
+export function buildInviteText(
+  code: string,
+  options: { count?: number; topic?: string; pass?: string } = {},
+): string {
   const lines = [`🎮 来 5blong 语音房`];
   const detail = [options.topic, options.count ? `${options.count} 人在` : ""]
     .filter((item): item is string => Boolean(item && item.trim()))
     .join(" · ");
   if (detail) lines.push(detail);
-  lines.push(`房间 ${code}`);
+  /*
+   * 私密房（「我的房间」）的临时密码就写在这行里：
+   * 对方在首页输「235417 831204」即可进，不用点链接。
+   */
+  const pass = options.pass?.trim();
+  lines.push(pass ? `房间 ${code} · 临时密码 ${pass}` : `房间 ${code}`);
   lines.push(`https://5blong.pages.dev/#c=${code}`);
   lines.push("点开就能进，免注册、免装客户端");
   return lines.join("\n");

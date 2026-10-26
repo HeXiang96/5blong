@@ -49,6 +49,7 @@ import {
   Gift,
   Contact,
   UserPlus,
+  KeyRound,
 } from "lucide-react";
 
 import type { ChatMessage, EngineStatus, MediaLinkState, Member } from "../engine";
@@ -194,6 +195,11 @@ export function RoomView({
   onOpenAccount,
   friendRequestCount = 0,
   onOpenFriends,
+  privateRoom = false,
+  guestPass = "",
+  onRenewGuestPass,
+  onCloseGuestPass,
+  onCopyPassInvite,
 }: {
   status: EngineStatus;
   members: Member[];
@@ -304,10 +310,23 @@ export function RoomView({
   friendRequestCount?: number;
   /** 打开好友面板（房间里也能看谁在线、发邀请） */
   onOpenFriends?: () => void;
+  /**
+   * 私密房（登录账号的「我的房间」）：房号是永久门牌，只认邀请链接 / 临时密码。
+   * 普通房永远是 false —— 报个号就能进，别在这里加门禁。
+   */
+  privateRoom?: boolean;
+  /** 当前临时密码（空串 = 已关闭，只剩邀请链接能进） */
+  guestPass?: string;
+  onRenewGuestPass?: () => string;
+  onCloseGuestPass?: () => void;
+  /** 复制"房间号 + 临时密码"文案 */
+  onCopyPassInvite?: () => Promise<boolean>;
 }) {
   const self = members.find((member) => member.local) ?? null;
   const muted = self?.muted ?? true;
   const [copied, setCopied] = useState<"code" | "invite" | null>(null);
+  /** 私密房「临时密码」面板（只有房主能开）。 */
+  const [passOpen, setPassOpen] = useState(false);
   /** 房主铭牌公告的行内编辑态。 */
   const [topicEditing, setTopicEditing] = useState(false);
   const [topicDraft, setTopicDraft] = useState("");
@@ -1133,6 +1152,86 @@ export function RoomView({
               <span>好友</span>
               {friendRequestCount > 0 ? <i className="vx-sign-friends-dot" /> : null}
             </button>
+          ) : null}
+
+          {/*
+            私密房入口（仅房主、仅「我的房间」可见）：
+            这间是账号的固定房号，光知道号进不来——要么给邀请链接，要么给下面的临时密码。
+            普通语音房没有这个入口，报个号就能进的轻量体验保持不变。
+          */}
+          {isHost && privateRoom ? (
+            <span className="vx-pass-wrap">
+              <button
+                type="button"
+                className={`vx-sign-friends${guestPass ? " vx-sign-pass-on" : ""}`}
+                aria-expanded={passOpen}
+                onClick={() => setPassOpen((open) => !open)}
+                title="私密房：只认邀请链接或临时密码（点击管理）"
+              >
+                <KeyRound size={15} />
+                <span>{guestPass ? "密码" : "私密"}</span>
+              </button>
+              {passOpen ? (
+                <div className="vx-pass-panel" role="dialog" aria-label="私密房临时密码">
+                  <div className="vx-pass-head">
+                    <strong>私密房 · 临时密码</strong>
+                    <button
+                      type="button"
+                      className="vx-pass-close"
+                      onClick={() => setPassOpen(false)}
+                      aria-label="关闭"
+                    >
+                      <X size={13} />
+                    </button>
+                  </div>
+                  <p className="vx-pass-note">
+                    这间是你账号的固定房号 {invite?.code ?? ""}，只报房号进不来。
+                  </p>
+                  {guestPass ? (
+                    <>
+                      <div className="vx-pass-value">{guestPass}</div>
+                      <p className="vx-pass-note">
+                        让对方在首页输「{invite?.code ?? ""} {guestPass}」就能进；换一个旧的立刻失效。
+                      </p>
+                    </>
+                  ) : (
+                    <p className="vx-pass-note vx-pass-off">
+                      临时密码已关闭：现在只有拿到邀请链接的人能进。
+                    </p>
+                  )}
+                  <div className="vx-pass-acts">
+                    <button
+                      type="button"
+                      className="vx-btn vx-btn-small vx-btn-primary"
+                      onClick={() => onRenewGuestPass?.()}
+                    >
+                      <RefreshCw size={13} /> {guestPass ? "换一个" : "生成密码"}
+                    </button>
+                    {guestPass ? (
+                      <button
+                        type="button"
+                        className="vx-btn vx-btn-small"
+                        onClick={() => void onCopyPassInvite?.()}
+                      >
+                        <CopyIcon size={13} /> 复制发给朋友
+                      </button>
+                    ) : null}
+                    {guestPass ? (
+                      <button
+                        type="button"
+                        className="vx-btn vx-btn-small vx-btn-quiet"
+                        onClick={() => {
+                          onCloseGuestPass?.();
+                          setPassOpen(false);
+                        }}
+                      >
+                        关闭密码
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+              ) : null}
+            </span>
           ) : null}
 
           {invite ? (

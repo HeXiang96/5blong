@@ -76,6 +76,7 @@ export function LandingView({
   myRoom = null,
   onRenewMyRoom,
   onClaimMyRoom,
+  needsPass = false,
   account = null,
   friendRequests = 0,
   onOpenAccount,
@@ -116,6 +117,11 @@ export function LandingView({
   onRenewMyRoom?: () => void;
   /** 手填一个自己喜欢的房号（"我要 520131"）；被占用/格式不对返回 false */
   onClaimMyRoom?: (code: string) => Promise<boolean> | boolean;
+  /**
+   * 刚被私密房拒绝：这次要连"临时密码"一起提交。
+   * 私密房（登录账号的「我的房间」）只认邀请链接或「房间码 + 临时密码」。
+   */
+  needsPass?: boolean;
   /** 开黑圈：创建（需要创建码）/ 加入（输房间码）。 */
   onCreateGame: () => void;
   onJoinGame: () => void;
@@ -145,6 +151,8 @@ export function LandingView({
   const [roomEditing, setRoomEditing] = useState(false);
   const [roomDraft, setRoomDraft] = useState("");
   const [roomError, setRoomError] = useState<string | null>(null);
+  /** 私密房临时密码（房间码 + 密码 一起提交）。 */
+  const [passDraft, setPassDraft] = useState("");
 
   const commitRoomCode = async () => {
     const code = roomDraft.trim();
@@ -170,7 +178,9 @@ export function LandingView({
       return;
     }
     onDismissError?.();
-    const ok = onJoin(code);
+    // 私密房：房主给的临时密码跟着一起提交（协议里是"房号 密码"两段）
+    const pass = passDraft.trim();
+    const ok = onJoin(pass ? `${code} ${pass}` : code);
     setParseError(ok ? null : JOIN_PARSE_ERROR);
   };
   const [editing, setEditing] = useState(false);
@@ -438,6 +448,38 @@ export function LandingView({
                 <LogIn size={16} /> 加入
               </button>
             </div>
+            {/*
+              私密房才会出现的第二行：房主给的临时密码。
+              只有被"需要密码"拒过一次才展开，普通房永远是干净的"输码就进"。
+            */}
+            {needsPass ? (
+              <div className="vx-code-row vx-pass-row">
+                <input
+                  className="vx-code-input vx-pass-input"
+                  value={passDraft}
+                  inputMode="numeric"
+                  autoComplete="off"
+                  aria-label="临时密码"
+                  placeholder="临时密码（房主给的那 6 位）"
+                  onChange={(event) => {
+                    setPassDraft(event.target.value.replace(/\D/g, "").slice(0, 6));
+                    setParseError(null);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") joinByCode();
+                  }}
+                  disabled={joining}
+                />
+                <button
+                  type="button"
+                  className="vx-btn vx-btn-ghost"
+                  onClick={joinByCode}
+                  disabled={joining || passDraft.length < 4}
+                >
+                  <LogIn size={16} /> 带密码进
+                </button>
+              </div>
+            ) : null}
             {parseError ? (
               <p className="vx-channel-error" role="alert">
                 {parseError}

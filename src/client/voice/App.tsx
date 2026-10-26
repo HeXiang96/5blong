@@ -87,7 +87,8 @@ export function App() {
         voice.setNotice({ kind: "error", text: "房号没能存进账号，这次先开一间临时的" });
       }
     }
-    await voice.createRoom(code ? { code, roomKey: ensureRoomKey(me.id) } : undefined);
+    // 自己账号的固定房号 = 私密房：只认邀请链接或临时密码（业主 2026-10-26 口径）
+    await voice.createRoom(code ? { code, roomKey: ensureRoomKey(me.id), private: true } : undefined);
   }, [account, accountAdapter, voice]);
 
   /** 手填固定房号（6 位）。被别的账号占了就返回 false，让首页就地报错。 */
@@ -379,6 +380,11 @@ export function App() {
           return voice.copyText(voice.invite.code, `房间码 ${voice.invite.code} 已复制`);
         }}
         onCopyInvite={voice.copyInvite}
+        privateRoom={voice.privateRoom}
+        guestPass={voice.guestPass}
+        onRenewGuestPass={voice.renewGuestPass}
+        onCloseGuestPass={voice.closeGuestPass}
+        onCopyPassInvite={voice.copyPassInvite}
         onToggleMute={voice.toggleMute}
         onToggleChat={voice.toggleChat}
         onLeave={voice.leave}
@@ -555,6 +561,7 @@ export function App() {
             myRoom={myRoomCode ? { code: myRoomCode } : null}
             onRenewMyRoom={() => void renewRoomCode()}
             onClaimMyRoom={claimRoomCode}
+            needsPass={voice.needsPass}
             account={account.me}
             friendRequests={account.snapshot.incoming.length}
             onOpenAccount={() => setAccountOpen(true)}

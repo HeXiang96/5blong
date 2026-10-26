@@ -312,6 +312,11 @@ export interface JoinTarget {
   hostId: string;
   /** 只有从邀请链接进入时才有；手输房间码时为空。 */
   roomKey: string;
+  /**
+   * 私密房的临时密码（「房间码 + 密码」那一路）。
+   * 和 roomKey 是"同一把钥匙的两种来法"：都只是 HMAC 的密钥，不明文上网。
+   */
+  pass?: string;
 }
 
 function readFragment(hash: string): URLSearchParams {
@@ -367,6 +372,20 @@ export function parseJoinInput(input: string): JoinTarget | null {
   const compact = normalizeCode(raw);
   if (isRoomCode(compact)) {
     return { code: compact, hostId: "", roomKey: "" };
+  }
+
+  /*
+   * 「房间码 + 临时密码」：私密房给临时朋友用。
+   * 容忍空格、换行、逗号、全角空格——从微信里复制过来的就是这样：
+   *   235417 831204 / 235417-831204 / 235417，831204
+   */
+  const parts = raw.split(/[\s,，、;；+]+/).filter(Boolean);
+  if (parts.length === 2) {
+    const code = normalizeCode(parts[0]!);
+    const pass = normalizeCode(parts[1]!);
+    if (isRoomCode(code) && /^[A-Z0-9]{4,12}$/.test(pass)) {
+      return { code, hostId: "", roomKey: "", pass };
+    }
   }
   return null;
 }
@@ -669,6 +688,10 @@ export type WireMessage = GuestMessage | HostMessage;
 
 export type RejectReason =
   | "bad-key"
+  /** 私密房（「我的房间」）：没带任何证明，得用邀请链接或临时密码 */
+  | "needs-pass"
+  /** 私密房：临时密码不对（或房主已经关掉了临时密码） */
+  | "bad-pass"
   | "full"
   | "closed"
   | "locked"
@@ -1009,8 +1032,15 @@ export interface AdmissionInput {
   locked: boolean;
   /** 房间码是否与访客声明一致。 */
   codeMatches: boolean;
-  /** 握手证明是否验过。 */
+  /** 握手证明是否验过（邀请链接的 roomKey 或私密房的临时密码，任一即可）。 */
   proofValid: boolean;
+  /**
+   * 是否是**私密房**（登录账号的「我的房间」）。
+   * 私密房不接受"裸输房号"：必须带邀请链接的证明，或者临时密码。
+   */
+  privateRoom?: boolean;
+  /** 访客这次带了证明（proof 非空）。私密房里"没带"和"带错"要给不同的文案。 */
+  proofProvided?: boolean;
   /** 同 ID 是否已在名册里（重连覆盖）。 */
   existing: boolean;
   /** 当前名册人数（不含本次）。 */
@@ -1025,7 +1055,17 @@ export function decideAdmission(input: AdmissionInput): AdmissionVerdict {
   if (input.closed) return { ok: false, reason: "closed" };
   if (!input.hostReady) return { ok: false, reason: "closed" };
   if (!input.codeMatches) return { ok: false, reason: "bad-key" };
-  if (!input.proofValid) return { ok: false, reason: "bad-key" };
+  /*
+   * 私密房（「我的房间」）的门禁：房号是长期门牌，念给谁都能记下来，
+   * 所以裸码一律不放行——只认①邀请链接（roomKey 证明）②临时密码（同一个 HMAC，
+   * 只是换了一把 key）。房主关掉临时密码后，②这条路也断了。
+   */
+  if (input.privateRoom) {
+    if (!input.proofProvided) return { ok: false, reason: "needs-pass" };
+    if (!input.proofValid) return { ok: false, reason: "bad-pass" };
+  } else if (!input.proofValid) {
+    return { ok: false, reason: "bad-key" };
+  }
   if (input.locked && !input.existing) return { ok: false, reason: "locked" };
   if (!input.existing && input.memberCount >= MAX_MEMBERS) {
     return { ok: false, reason: "full" };
@@ -1041,6 +1081,10 @@ export function rejectText(reason: RejectReason): string {
   switch (reason) {
     case "bad-key":
       return "房间密钥不正确，请使用房主发的完整邀请链接";
+    case "needs-pass":
+      return "这是房主的私密房间：要用邀请链接进，或者输入「房间码 + 临时密码」";
+    case "bad-pass":
+      return "临时密码不对（也可能房主已经关掉了临时密码）——找房主要个新的";
     case "full":
       return `房间已满（最多 ${MAX_MEMBERS} 人）`;
     case "closed":

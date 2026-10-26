@@ -633,3 +633,130 @@ html[data-theme="light"][data-daypart="night"] .vx-sign-friends {
   background: #c2410c;
   box-shadow: 0 0 0 2px rgba(255, 253, 246, 0.9);
 }
+
+/* ===========================================================================
+   私密房「临时密码」（登录账号的「我的房间」专用）
+   ---------------------------------------------------------------------------
+   入口复用房间顶栏的 .vx-sign-friends（透明图标长在木牌上），
+   这里只加三件东西：①"密码开着"的状态色 ②浮层 ③浮层里的密码大字。
+
+   配色全部走 --vx-surface / --vx-line / --vx-text / --vx-shadow 这几个令牌，
+   所以深色、浅色、夜晚（light+night）自动跟随；雪原/万圣夜/春节三套场景
+   只改场景本身，浮层保持中性面板——跟成员菜单、好友抽屉同一套语言。
+   =========================================================================== */
+
+.vx-pass-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+/* 密码开着：图标与文字染成琥珀色，一眼能看出"这间现在是密码状态" */
+.vx-sign-pass-on {
+  color: #a4551f;
+}
+.vx-sign-pass-on:hover {
+  background: rgba(255, 253, 246, 0.4);
+}
+html[data-theme="dark"] .vx-sign-pass-on,
+html[data-theme="light"][data-daypart="night"] .vx-sign-pass-on {
+  color: #ffc078;
+}
+html[data-theme="dark"] .vx-sign-pass-on:hover,
+html[data-theme="light"][data-daypart="night"] .vx-sign-pass-on:hover {
+  background: rgba(255, 226, 170, 0.14);
+}
+
+.vx-pass-panel {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  /* 房间内最高 120（场景面板），请求提示 125 —— 这个浮层盖在它们之上 */
+  z-index: 130;
+  width: 272px;
+  max-width: calc(100vw - 24px);
+  padding: 13px 14px;
+  border-radius: 14px;
+  background: var(--vx-surface);
+  border: 1px solid var(--vx-line);
+  box-shadow: var(--vx-shadow);
+  color: var(--vx-text);
+  text-align: left;
+  animation: vx-menu-appear 0.14s ease;
+}
+
+.vx-pass-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.vx-pass-head strong {
+  font-size: 13px;
+  font-weight: 650;
+}
+.vx-pass-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--vx-text-dim, #7a6449);
+  cursor: pointer;
+}
+.vx-pass-close:hover {
+  background: var(--vx-surface-2);
+  color: var(--vx-text);
+}
+
+.vx-pass-note {
+  margin: 7px 0 0;
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--vx-text-dim, #7a6449);
+}
+.vx-pass-note.vx-pass-off {
+  color: #b4452f;
+}
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-pass-note {
+  color: #cbb28a;
+}
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-pass-note.vx-pass-off {
+  color: #ffb4a2;
+}
+
+/* 密码本体：等宽数字、字距放开，念给对方时不会看错 1/l、6/8 */
+.vx-pass-value {
+  margin: 9px 0 2px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: var(--vx-accent-soft, rgba(207, 150, 80, 0.16));
+  color: var(--vx-accent-strong, #965f1f);
+  font-size: 21px;
+  font-weight: 700;
+  letter-spacing: 0.26em;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-pass-value {
+  color: #ffd9a1;
+  background: rgba(255, 206, 140, 0.14);
+}
+
+.vx-pass-acts {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+.vx-pass-acts .vx-btn {
+  padding: 6px 11px;
+  font-size: 12px;
+}
+.vx-pass-acts .vx-btn-primary {
+  color: #fff;
+}

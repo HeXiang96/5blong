@@ -4323,3 +4323,42 @@ html[data-scene="spring"][data-daypart="dusk"] .vx-landing .vx-btn-ghost {
   border-color: rgba(138, 50, 32, 0.45);
   background: rgba(255, 244, 226, 0.62);
 }
+
+/* ---------------------------------------------------------------------------
+   主按钮在「场景主题」里必须还是主按钮
+   ---------------------------------------------------------------------------
+   上面三套场景（雪原 / 万圣夜 / 春节）都写了 `.场景 .vx-channel .vx-btn` 的通用底，
+   特异性比 `.vx-btn-primary` 高，于是首页唯一的那个大主操作
+   （「我的房间 235417 · 开始」）被刷成白/半透明，看起来像次要按钮。
+   这里按场景把实心底色 + 字色补回来；只作用于卡片里的 primary，不影响其它按钮。
+   --------------------------------------------------------------------------- */
+
+html[data-scene="snow"] .vx-channel .vx-btn-primary {
+  background: linear-gradient(180deg, #d9a25c 0%, #bd8442 100%);
+  border-color: rgba(150, 100, 44, 0.45);
+  color: #fffaf0;
+  box-shadow: 0 6px 16px rgba(120, 84, 40, 0.22);
+}
+html[data-scene="snow"] .vx-channel .vx-btn-primary:hover:not(:disabled) {
+  background: linear-gradient(180deg, #e4b06c 0%, #c98f4b 100%);
+}
+
+html[data-scene="halloween"] .vx-channel .vx-btn-primary {
+  background: linear-gradient(180deg, #e0812c 0%, #b9621a 100%);
+  border-color: rgba(255, 196, 130, 0.42);
+  color: #1c0f22;
+  box-shadow: 0 6px 18px rgba(224, 129, 44, 0.28);
+}
+html[data-scene="halloween"] .vx-channel .vx-btn-primary:hover:not(:disabled) {
+  background: linear-gradient(180deg, #ef9138 0%, #c96d20 100%);
+}
+
+html[data-scene="spring"] .vx-channel .vx-btn-primary {
+  background: linear-gradient(180deg, #f6c266 0%, #e0a13a 100%);
+  border-color: rgba(255, 220, 160, 0.55);
+  color: #5c150e;
+  box-shadow: 0 6px 16px rgba(120, 40, 20, 0.3);
+}
+html[data-scene="spring"] .vx-channel .vx-btn-primary:hover:not(:disabled) {
+  background: linear-gradient(180deg, #ffcf7a 0%, #eaa946 100%);
+}

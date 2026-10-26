@@ -25,6 +25,7 @@ import {
   normalizeCode,
   parseGuestMessage,
   parseHostMessage,
+  type RejectReason,
   randomIndex,
   randomToken,
   rejectText,
@@ -248,6 +249,11 @@ export interface EngineEvents {
   ended: (reason: EndReason, detail?: string) => void;
   /** 房间已就绪时回调，用于拿到邀请信息。 */
   ready: (invite: Invite) => void;
+  /**
+   * 被房主拒绝（带机器可读的原因）。
+   * UI 据此决定要不要弹"输入临时密码"——文案匹配字符串太脆，所以单独给一条事件。
+   */
+  rejected?: (reason: RejectReason) => void;
   /** 猪圈里发生了一件事（房主广播，含房主自己）。 */
   pen: (event: PenEvent) => void;
   /** 房主广播的权威猪位快照（访客据此平滑跟随；房主端不会收到）。 */
@@ -393,6 +399,19 @@ export class VoiceMesh {
   private hostId = "";
   private code = "";
   private roomKey = "";
+  /**
+   * 私密房（登录账号的「我的房间」）：房号是长期门牌，裸输房号不放行，
+   * 只认邀请链接（roomKey 证明）或下面的临时密码。
+   */
+  private privateRoom = false;
+  /**
+   * 临时密码（房主在线生成，给临时朋友"报号 + 报密码"用）。
+   * 空串 = 已关闭：这时私密房只剩邀请链接一条路。
+   * 只活在房主内存里，关房即失效；不上信令、不落盘。
+   */
+  private guestPass = "";
+  /** 访客侧的临时密码（断线重连时要用同一把 key 重新签 proof）。 */
+  private passKey = "";
   private me: Member | null = null;
   private joined = false;
 
@@ -626,7 +645,7 @@ export class VoiceMesh {
     identity: Identity,
     settings: VoiceSettings,
     muted: boolean,
-    prefer?: { code?: string; roomKey?: string },
+    prefer?: { code?: string; roomKey?: string; private?: boolean },
   ): Promise<void> {
     if (this.destroyed) return;
     this.hosting = true;
@@ -665,6 +684,12 @@ export class VoiceMesh {
         this.hostId = id;
         // 恢复房间时沿用旧钥匙，否则旧邀请链接会失效
         this.roomKey = (attempt === 1 && prefer?.roomKey) || randomToken(24);
+        /*
+         * 私密房只在"自己的固定房号"上成立（登录账号的「我的房间」）。
+         * 撞码被换了临时房号时它仍然是私密房——房主点的是"我的房间"，
+         * 门禁口径不能因为换了个号就松掉。
+         */
+        this.privateRoom = prefer?.private === true;
         this.myId = id;
         this.me = {
           id,
@@ -711,7 +736,7 @@ export class VoiceMesh {
 
   /** 访客加入。handshake 失败会以 error 状态结束，由 UI 提示。 */
   async join(
-    target: { code: string; hostId: string; roomKey: string },
+    target: { code: string; hostId: string; roomKey: string; pass?: string },
     identity: Identity,
     settings: VoiceSettings,
     muted: boolean,
@@ -721,6 +746,11 @@ export class VoiceMesh {
     this.dialAttempts = 0;
     this.code = normalizeCode(target.code);
     this.roomKey = target.roomKey;
+    /*
+     * 私密房没钥匙也能进：临时密码是"另一种来法的同一把钥匙"——
+     * 握手时用它做 HMAC 的 key，明文不上信令（见 sendHello）。
+     */
+    this.passKey = target.pass?.trim() ?? "";
     // 这里仍在用户点击的手势里，趁机解锁音频（否则远端流到达时会被自动播放策略拦下）
     this.unlockAudio();
     this.events.status("preparing");
@@ -1525,17 +1555,33 @@ export class VoiceMesh {
   ): Promise<void> {
     const peerId = conn.peer;
     const expected = await signGuestProof(this.roomKey, message.nonce, peerId, this.code);
-    // 两种访客都放行：持邀请链接者 proof 与 expected 一致；只输房间码者没有
-    // roomKey、proof 为空（房主 ID 由房间码推导，能连上即说明知道房间码）。
-    // 非空却对不上的证明（伪造/篡改）仍一律拒绝。
+    /*
+     * 私密房：临时密码是"另一种来法的钥匙"，同样只用来签 HMAC（明文不上信令）。
+     * 房主把自己当前的密码也算一遍，两者任一匹配即放行——邀请链接与临时密码
+     * 是同一个门的两把钥匙，谁先到都行。
+     */
+    const expectedByPass =
+      this.privateRoom && this.guestPass
+        ? await signGuestProof(this.guestPass, message.nonce, peerId, this.code)
+        : "";
     const codeOnly = message.proof === "";
+    /*
+     * 普通房：只输房间码也放行（房主 ID 由码推导，能连上就说明知道码）——
+     * 这是"随手开一间、报个号就能进"的产品底线，别动。
+     * 私密房：裸码不放行，必须有邀请链接或临时密码的证明（见 decideAdmission）。
+     */
+    const proofValid = codeOnly
+      ? !this.privateRoom
+      : expected === message.proof || (!!expectedByPass && expectedByPass === message.proof);
     const verdict = decideAdmission({
       hostReady: !this.destroyed && !!this.hostId,
       closed: this.destroyed,
       locked: this.locked,
       // 房主手里必须有本端认可的码（6 位新码 / 4 位老码都算），否则一律拒绝
       codeMatches: isRoomCode(this.code),
-      proofValid: expected === message.proof || codeOnly,
+      proofValid,
+      privateRoom: this.privateRoom,
+      proofProvided: !codeOnly,
       existing: this.guests.has(peerId),
       /*
        * 必须把房主自己算进去：MAX_MEMBERS 是**全房人数**（含房主），
@@ -1871,6 +1917,37 @@ export class VoiceMesh {
     this.locked = locked;
     this.broadcastHost({ t: "lock", locked });
     this.events.roomFlags({ locked });
+  }
+
+  // -------------------------------------------------------------- 私密房门禁
+
+  /** 这间是不是私密房（登录账号的「我的房间」）。 */
+  isPrivateRoom(): boolean {
+    return this.privateRoom;
+  }
+
+  /** 当前临时密码；空串 = 已关闭（只剩邀请链接能进）。 */
+  getGuestPass(): string {
+    return this.guestPass;
+  }
+
+  /**
+   * 生成/换一个临时密码（仅私密房）。
+   *
+   * 6 位数字：口头念得出（"235417，密码 831204"），也够挡随机猜。
+   * **只换密码不踢人**——已经在房里的熟人不受影响，改的是"接下来谁能进"。
+   */
+  renewGuestPass(): string {
+    if (!this.privateRoom) return "";
+    let next = "";
+    for (let i = 0; i < 6; i += 1) next += String(randomIndex(10));
+    this.guestPass = next;
+    return next;
+  }
+
+  /** 关掉临时密码：之后只有邀请链接能进（在线的人不受影响）。 */
+  closeGuestPass(): void {
+    this.guestPass = "";
   }
 
   // -------------------------------------------------------------- 屏幕共享（围炉看 TV）
@@ -2444,9 +2521,9 @@ export class VoiceMesh {
     // 握手包必须带上"本机能否 AV1 硬解"——共享者据此做双端判断；
     // 拿不到预检结果（老浏览器没 WebCodecs）就报 false，宁可用 H.264。
     await this.startHardwareProbe();
-    const proof = this.roomKey
-      ? await signGuestProof(this.roomKey, nonce, this.myId, this.code)
-      : "";
+    // 邀请链接（roomKey）优先；私密房可能只拿到临时密码
+    const key = this.roomKey || this.passKey;
+    const proof = key ? await signGuestProof(key, nonce, this.myId, this.code) : "";
     if (this.destroyed || this.hostConn !== conn) return;
     this.send(conn, {
       t: "hello",
@@ -2470,6 +2547,7 @@ export class VoiceMesh {
     if (!message) return;
 
     if (message.t === "reject") {
+      this.events.rejected?.(message.reason);
       this.events.ended("rejected", rejectText(message.reason));
       return;
     }
