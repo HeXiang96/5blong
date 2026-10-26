@@ -592,24 +592,30 @@
   color: #cbb28a;
 }
 
-/* 房间顶栏的「好友」按钮（木牌上，和房间控件同风格） */
+/*
+ * 房间顶栏的「好友」按钮：和锁 / 设置同一套——**透明图标**，长在木牌里，
+ * 不要做成浅色胶囊（那样像贴纸贴在木头上，还跟橙色「复制邀请」抢眼）。
+ */
 .vx-sign-friends {
   position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  padding: 5px 10px;
-  border-radius: 999px;
-  border: 1px solid rgba(120, 78, 34, 0.45);
-  background: rgba(255, 253, 246, 0.72);
-  color: #5b3d18;
-  font: inherit;
-  font-size: 12px;
-  font-weight: 600;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #6d4b21;
   cursor: pointer;
 }
 .vx-sign-friends:hover {
-  background: #fffdf6;
+  background: rgba(255, 253, 246, 0.32);
+  border-color: rgba(120, 78, 34, 0.28);
+}
+html[data-theme="dark"] .vx-sign-friends,
+html[data-theme="light"][data-daypart="night"] .vx-sign-friends {
+  color: #ecd2a0;
 }
 .vx-sign-friends-dot {
   position: absolute;

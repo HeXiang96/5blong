@@ -1121,10 +1121,10 @@ export function RoomView({
               type="button"
               className="vx-sign-friends"
               onClick={onOpenFriends}
+              aria-label="好友"
               title={friendRequestCount > 0 ? `好友（${friendRequestCount} 条请求）` : "好友"}
             >
-              <UserPlus size={14} />
-              <span>好友</span>
+              <Users size={17} />
               {friendRequestCount > 0 ? <i className="vx-sign-friends-dot" /> : null}
             </button>
           ) : null}
