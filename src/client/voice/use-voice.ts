@@ -722,19 +722,24 @@ export function useVoice() {
              * loopback 层会观察 2 秒，全静音时自动退回整机采集并置 fellBackFromPid，
              * 这里要**如实告诉用户**：声音有了，但可能带房间语音。
              */
-            if (native.stillSilent) {
-              /*
-               * 采集链路通了但**一直零振幅**：观众端就是"画面有、没声音"。
-               * Windows 回环只抓默认播放设备上的声音，游戏单独选了别的输出
-               * （耳机/虚拟声卡）或走独占模式时，这里就是静音——必须说出来。
-               */
+            /*
+             * 进程级采集会观察静音并退回整机，但“自动/整机”同样可能全程零振幅：
+             * 游戏输出到了非默认设备、独占音频、或默认设备上没有活跃会话。
+             * 以前这些情况下只发静音轨、毫无提示，用户看到“已带上系统声音”却听不到。
+             * 统一改成开播后测一次峰值，静音就直接说人话（不要等用户猜）。
+             */
+            const sourceStream = stream;
+            window.setTimeout(() => {
+              // 停播/开播失败/换了新流就不再提示，避免过期通知盖住当前状态
+              if (shareLocalStreamRef.current !== sourceStream) return;
+              if (native.peak() > 0.0005) return;
               setNotice({
                 kind: "error",
                 sticky: true,
                 text:
-                  "共享音频是静音：没抓到任何声音。请确认游戏的声音输出和 Windows 默认播放设备是同一个（Apex 里常单独选了耳机），或改用「共享整个屏幕 + 自动」。",
+                  "当前采集到的是静音：默认播放设备没有收到游戏声音。请把游戏的音频输出设为 Windows 默认播放设备，并关闭独占音频；或在共享菜单选「指定」并选择正在出声的游戏进程。",
               });
-            }
+            }, 3500);
             const source = native.fellBackFromPid
               ? `选定的程序没有声音输出，已改为采集整机声音（可能听到房间语音；可在设置→共享里换个应用）`
               : native.mode === "include"

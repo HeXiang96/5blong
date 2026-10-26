@@ -651,7 +651,7 @@ select {
 }
 
 /* 深色主题：木色压深一档，文字换成奶油色 */
-html[data-theme="dark"] .vx-landing-board-face {
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-landing-board-face {
   background:
     linear-gradient(180deg, rgba(255, 246, 222, 0.22) 0%, rgba(255, 246, 222, 0) 30%),
     repeating-linear-gradient(92deg, rgba(0, 0, 0, 0.12) 0 2px, rgba(0, 0, 0, 0) 2px 9px),
@@ -659,13 +659,13 @@ html[data-theme="dark"] .vx-landing-board-face {
   border-color: rgba(52, 33, 14, 0.7);
 }
 
-html[data-theme="dark"] .vx-landing-board-title,
-html[data-theme="dark"] .vx-landing-board li {
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-landing-board-title,
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-landing-board li {
   color: #f6e3bd;
   text-shadow: 0 1px 0 rgba(40, 24, 8, 0.5);
 }
 
-html[data-theme="dark"] .vx-landing-board li::before {
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-landing-board li::before {
   background: rgba(246, 227, 189, 0.55);
 }
 
@@ -678,7 +678,7 @@ html[data-theme="dark"] .vx-landing-board li::before {
   opacity: 0.6;
 }
 
-html[data-theme="dark"] .vx-landing-board-title {
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-landing-board-title {
   border-bottom-color: rgba(246, 227, 189, 0.3);
 }
 
@@ -802,7 +802,7 @@ html[data-theme="dark"] .vx-landing-board-title {
   background: linear-gradient(180deg, #fffaf0 0%, #f6e8cd 100%);
 }
 
-html[data-theme="dark"] .vx-identity {
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-identity {
   background:
     linear-gradient(180deg, rgba(255, 236, 200, 0.14) 0%, rgba(255, 236, 200, 0) 26%),
     repeating-linear-gradient(92deg, rgba(255, 226, 170, 0.05) 0 2px, rgba(255, 226, 170, 0) 2px 9px),
@@ -814,28 +814,28 @@ html[data-theme="dark"] .vx-identity {
     0 4px 10px rgba(0, 0, 0, 0.35);
 }
 
-html[data-theme="dark"] .vx-identity-name {
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-identity-name {
   color: #f4e4c2;
   text-shadow: 0 1px 0 rgba(0, 0, 0, 0.35);
 }
 
-html[data-theme="dark"] .vx-identity-name:hover {
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-identity-name:hover {
   background: rgba(255, 236, 200, 0.14);
 }
 
-html[data-theme="dark"] .vx-name-input {
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-name-input {
   background: #3a2c15;
   border-color: rgba(255, 226, 170, 0.3);
   color: #f4e4c2;
 }
 
-html[data-theme="dark"] .vx-identity .vx-link-btn {
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-identity .vx-link-btn {
   background: linear-gradient(180deg, #4a3a1e 0%, #3a2c15 100%);
   border-color: rgba(255, 226, 170, 0.3);
   color: #f4e4c2;
 }
 
-html[data-theme="dark"] .vx-identity .vx-link-btn:hover {
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-identity .vx-link-btn:hover {
   background: linear-gradient(180deg, #55421f 0%, #453418 100%);
 }
 
@@ -1355,7 +1355,7 @@ html[data-theme="dark"] .vx-identity .vx-link-btn:hover {
     0 10px 24px rgba(70, 44, 14, 0.3);
 }
 
-html[data-theme="dark"] .vx-controls-tray {
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-controls-tray {
   border-color: rgba(255, 226, 170, 0.28);
   background:
     linear-gradient(180deg, rgba(255, 236, 200, 0.14) 0%, rgba(255, 236, 200, 0) 26%),
@@ -1418,14 +1418,14 @@ html[data-theme="dark"] .vx-controls-tray {
   background: rgba(255, 228, 214, 0.66);
 }
 
-html[data-theme="dark"] .vx-ctl {
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-ctl {
   border-color: rgba(255, 226, 170, 0.3);
   background: linear-gradient(180deg, #4d3c1f 0%, #3a2c15 100%);
   color: #f4e4c2;
   text-shadow: none;
 }
 
-html[data-theme="dark"] .vx-ctl-danger {
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-ctl-danger {
   color: #ffb9a0;
   border-color: rgba(255, 140, 110, 0.42);
   background: rgba(90, 40, 24, 0.42);
@@ -1596,7 +1596,7 @@ html[data-theme="dark"] .vx-ctl-danger {
 }
 
 /* 深色模式：木牌 + 暖木气泡 */
-html[data-theme="dark"] .vx-chat {
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-chat {
   border-left-color: rgba(255, 226, 170, 0.22);
   background:
     linear-gradient(180deg, rgba(255, 236, 200, 0.08) 0%, rgba(255, 236, 200, 0) 22%),
@@ -1604,7 +1604,7 @@ html[data-theme="dark"] .vx-chat {
     linear-gradient(180deg, #4a3a22 0%, #3b2d19 100%);
 }
 
-html[data-theme="dark"] .vx-chat-head {
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-chat-head {
   border-bottom-color: rgba(255, 226, 170, 0.22);
   background:
     linear-gradient(180deg, rgba(255, 236, 200, 0.14) 0%, rgba(255, 236, 200, 0) 26%),
@@ -1614,25 +1614,25 @@ html[data-theme="dark"] .vx-chat-head {
   text-shadow: none;
 }
 
-html[data-theme="dark"] .vx-chat-head .vx-icon-btn {
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-chat-head .vx-icon-btn {
   color: #f4e4c2;
   border-color: rgba(255, 226, 170, 0.25);
   background: rgba(255, 236, 200, 0.1);
 }
 
-html[data-theme="dark"] .vx-chat-empty,
-html[data-theme="dark"] .vx-msg-name,
-html[data-theme="dark"] .vx-msg-time {
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-chat-empty,
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-msg-name,
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-msg-time {
   color: #a98f63;
 }
 
-html[data-theme="dark"] .vx-msg-bubble {
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-msg-bubble {
   border-color: rgba(255, 226, 170, 0.18);
   background: linear-gradient(180deg, #5a4628 0%, #4d3c20 100%);
   color: #f0e2c2;
 }
 
-html[data-theme="dark"] .vx-msg-self .vx-msg-bubble {
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-msg-self .vx-msg-bubble {
   border-color: rgba(255, 226, 170, 0.28);
   background:
     linear-gradient(180deg, rgba(255, 236, 200, 0.16) 0%, rgba(255, 236, 200, 0) 30%),
@@ -1641,22 +1641,22 @@ html[data-theme="dark"] .vx-msg-self .vx-msg-bubble {
   text-shadow: none;
 }
 
-html[data-theme="dark"] .vx-chat-form {
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-chat-form {
   border-top-color: rgba(255, 226, 170, 0.2);
   background: rgba(255, 236, 200, 0.06);
 }
 
-html[data-theme="dark"] .vx-chat-form .vx-input {
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-chat-form .vx-input {
   border-color: rgba(255, 226, 170, 0.22);
   background: linear-gradient(180deg, #4a3922 0%, #3f301b 100%);
   color: #f0e2c2;
 }
 
-html[data-theme="dark"] .vx-chat-form .vx-input::placeholder {
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-chat-form .vx-input::placeholder {
   color: #a98f63;
 }
 
-html[data-theme="dark"] .vx-chat-form .vx-icon-btn-primary {
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-chat-form .vx-icon-btn-primary {
   border-color: rgba(255, 226, 170, 0.28);
   background: linear-gradient(180deg, #8a6a38 0%, #73552a 100%);
   color: #fff3da;
@@ -1971,7 +1971,7 @@ html[data-theme="dark"] .vx-chat-form .vx-icon-btn-primary {
     border-radius: 18px 18px 0 0;
   }
 
-  html[data-theme="dark"] .vx-chat {
+  :is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-chat {
     border-top-color: rgba(255, 226, 170, 0.22);
   }
 
@@ -2086,7 +2086,7 @@ html[data-theme="dark"] .vx-chat-form .vx-icon-btn-primary {
     0 4px 9px rgba(70, 45, 15, 0.32);
 }
 
-html[data-theme="dark"] .vx-mic-pill {
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-mic-pill {
   border-color: rgba(255, 226, 170, 0.3);
   background: linear-gradient(180deg, #4d3c1f 0%, #3a2c15 100%);
   color: #f4e4c2;
@@ -2101,7 +2101,7 @@ html[data-theme="dark"] .vx-mic-pill {
   color: #95401f;
 }
 
-html[data-theme="dark"] .vx-mic-pill-muted {
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-mic-pill-muted {
   background: linear-gradient(180deg, #5a3320 0%, #472617 100%);
   color: #ffc9ac;
 }
@@ -2177,7 +2177,7 @@ html[data-theme="dark"] .vx-mic-pill-muted {
   animation: vx-pop 0.14s ease;
 }
 
-html[data-theme="dark"] .vx-voice-panel {
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-voice-panel {
   background: linear-gradient(180deg, #4d3c1f 0%, #3a2c15 100%);
   border-color: rgba(255, 226, 170, 0.3);
   color: #f4e4c2;
@@ -2479,7 +2479,7 @@ html[data-theme="dark"] .vx-voice-panel {
     linear-gradient(180deg, #ffe3ac 0%, #f2c674 100%);
 }
 
-html[data-theme="dark"] .vx-ctl-deaf {
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-ctl-deaf {
   color: #f3cf8a;
   border-color: rgba(255, 220, 150, 0.4);
   background: linear-gradient(180deg, #7d6134 0%, #5d4626 100%);
@@ -2521,11 +2521,11 @@ html[data-theme="dark"] .vx-ctl-deaf {
   line-height: 1;
 }
 
-html[data-theme="dark"] .vx-sign-lock {
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-sign-lock {
   color: #ecd2a0;
 }
 
-html[data-theme="dark"] .vx-sign-lock-on {
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-sign-lock-on {
   color: #ffe2a8;
   background: rgba(140, 96, 30, 0.6);
   border-color: rgba(255, 210, 130, 0.42);
@@ -2561,7 +2561,7 @@ html[data-theme="light"][data-daypart="dusk"] .vx-settings {
 }
 
 /* 夜晚：与深色主题共用同一套"深木夜色"（时段到点自动入夜） */
-:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-settings {
+:is(:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]), html[data-theme="light"][data-daypart="night"]) .vx-settings {
   background: linear-gradient(180deg, #3a2f1c 0%, #2e2516 100%);
 }
 
@@ -2573,7 +2573,7 @@ html[data-theme="light"][data-daypart="dusk"] .vx-settings {
     linear-gradient(180deg, #ecc78d 0%, #d8a866 50%, #bd8b4b 100%);
 }
 
-:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-settings .vx-settings-top {
+:is(:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]), html[data-theme="light"][data-daypart="night"]) .vx-settings .vx-settings-top {
   border-bottom-color: rgba(255, 226, 170, 0.22);
   background:
     linear-gradient(180deg, rgba(255, 236, 200, 0.14) 0%, rgba(255, 236, 200, 0) 26%),
@@ -2593,7 +2593,7 @@ html[data-theme="light"][data-daypart="dusk"] .vx-settings {
     0 6px 16px rgba(70, 44, 14, 0.12);
 }
 
-:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-settings .vx-card {
+:is(:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]), html[data-theme="light"][data-daypart="night"]) .vx-settings .vx-card {
   border-color: rgba(255, 226, 170, 0.22);
   background:
     linear-gradient(180deg, rgba(255, 236, 200, 0.1) 0%, rgba(255, 236, 200, 0) 30%),
@@ -3377,12 +3377,12 @@ button.vx-topic {
   color: #a8402f;
 }
 
-html[data-theme="dark"] .vx-link-warn {
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-link-warn {
   background: rgba(229, 96, 79, 0.16);
   border-color: rgba(255, 160, 140, 0.4);
 }
 
-html[data-theme="dark"] .vx-link-warn-text {
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-link-warn-text {
   color: #ffb4a4;
 }
 
@@ -3527,9 +3527,9 @@ html[data-theme="dark"] .vx-link-warn-text {
  * 卡片一律不加描边——深色下任何边框都是一条亮线，分层靠底色差 + 投影。
  *
  * 这些卡片是**硬编码的奶油木色**，而"浅色主题 + 夜晚时段"会把整页色板翻成暗色
- * （见文件顶部的 --vx-* 覆盖）。如果只写 html[data-theme="dark"]，夜里就会出现
+ * （见文件顶部的 --vx-* 覆盖）。如果只写 :is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"])，夜里就会出现
  * "场景全黑、卡片还是亮奶油"的割裂（2026-10-26 截图反馈），所以深色规则统一用
- * :is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) 匹配。
+ * :is(:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]), html[data-theme="light"][data-daypart="night"]) 匹配。
  * ================================================================ */
 
 .vx-channels {
@@ -3695,10 +3695,10 @@ html[data-theme="dark"] .vx-link-warn-text {
 }
 
 /* ------------------------------ 深色 ------------------------------ */
-:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-channel {
+:is(:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]), html[data-theme="light"][data-daypart="night"]) .vx-channel {
   color: #f4e4c2;
 }
-:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-channel-main {
+:is(:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]), html[data-theme="light"][data-daypart="night"]) .vx-channel-main {
   background:
     linear-gradient(180deg, rgba(255, 236, 200, 0.07) 0%, rgba(255, 236, 200, 0) 34%),
     linear-gradient(180deg, #33291b 0%, #271f14 100%);
@@ -3706,30 +3706,30 @@ html[data-theme="dark"] .vx-link-warn-text {
     0 1px 0 rgba(255, 255, 255, 0.06) inset,
     0 8px 20px rgba(0, 0, 0, 0.42);
 }
-:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-channel-sub {
+:is(:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]), html[data-theme="light"][data-daypart="night"]) .vx-channel-sub {
   background: rgba(255, 236, 200, 0.05);
 }
-:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-channel-head {
+:is(:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]), html[data-theme="light"][data-daypart="night"]) .vx-channel-head {
   color: #f4e4c2;
 }
-:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-channel-desc,
-:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-channel-link,
-:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-channel-invite {
+:is(:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]), html[data-theme="light"][data-daypart="night"]) .vx-channel-desc,
+:is(:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]), html[data-theme="light"][data-daypart="night"]) .vx-channel-link,
+:is(:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]), html[data-theme="light"][data-daypart="night"]) .vx-channel-invite {
   color: #cbb28a;
 }
-:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-code-input {
+:is(:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]), html[data-theme="light"][data-daypart="night"]) .vx-code-input {
   background: rgba(0, 0, 0, 0.28);
   color: #f4e4c2;
 }
-:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-code-input:focus {
+:is(:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]), html[data-theme="light"][data-daypart="night"]) .vx-code-input:focus {
   box-shadow:
     0 1px 2px rgba(0, 0, 0, 0.2) inset,
     0 0 0 3px rgba(207, 150, 80, 0.28);
 }
-:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-code-input::placeholder {
+:is(:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]), html[data-theme="light"][data-daypart="night"]) .vx-code-input::placeholder {
   color: #9c8763;
 }
-:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-channel-error {
+:is(:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]), html[data-theme="light"][data-daypart="night"]) .vx-channel-error {
   color: #ff8a72;
 }
 
@@ -3837,7 +3837,7 @@ html[data-theme="dark"] .vx-link-warn-text {
 }
 
 /* ------------------------------ 深色 ------------------------------ */
-:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-id-chip {
+:is(:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]), html[data-theme="light"][data-daypart="night"]) .vx-id-chip {
   border-color: rgba(255, 226, 170, 0.28);
   background:
     repeating-linear-gradient(92deg, rgba(255, 226, 170, 0.05) 0 2px, rgba(255, 226, 170, 0) 2px 9px),
@@ -3846,24 +3846,24 @@ html[data-theme="dark"] .vx-link-warn-text {
     0 1px 0 rgba(255, 255, 255, 0.12) inset,
     0 2px 6px rgba(0, 0, 0, 0.35);
 }
-:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-id-name {
+:is(:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]), html[data-theme="light"][data-daypart="night"]) .vx-id-name {
   color: #f4e4c2;
   text-shadow: 0 1px 0 rgba(0, 0, 0, 0.35);
 }
-:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-id-name:hover {
+:is(:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]), html[data-theme="light"][data-daypart="night"]) .vx-id-name:hover {
   background: rgba(255, 236, 200, 0.14);
 }
-:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-id-input {
+:is(:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]), html[data-theme="light"][data-daypart="night"]) .vx-id-input {
   background: #3a2c15;
   border-color: rgba(255, 226, 170, 0.3);
   color: #f4e4c2;
 }
-:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-id-copy {
+:is(:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]), html[data-theme="light"][data-daypart="night"]) .vx-id-copy {
   border-color: rgba(255, 226, 170, 0.3);
   background: rgba(255, 236, 200, 0.12);
   color: #f4e4c2;
 }
-:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-id-copy:hover {
+:is(:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]), html[data-theme="light"][data-daypart="night"]) .vx-id-copy:hover {
   background: rgba(255, 236, 200, 0.22);
 }
 
@@ -4383,7 +4383,7 @@ html[data-scene="spring"] .vx-channel .vx-btn-primary:hover:not(:disabled) {
   color: var(--vx-text-dim, #7a6449);
   cursor: default;
 }
-:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-myroom-locked {
+:is(:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]), html[data-theme="light"][data-daypart="night"]) .vx-myroom-locked {
   color: #cbb28a;
 }
 

@@ -157,7 +157,7 @@
 }
 
 /* 深色主题：木牌换成深色木 */
-html[data-theme="dark"] .vx-signboard {
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-signboard {
   background:
     linear-gradient(180deg, rgba(255, 236, 200, 0.16) 0%, rgba(255, 236, 200, 0) 26%),
     repeating-linear-gradient(92deg, rgba(255, 226, 170, 0.06) 0 2px, rgba(255, 226, 170, 0) 2px 9px),
@@ -165,15 +165,15 @@ html[data-theme="dark"] .vx-signboard {
   border-color: rgba(255, 226, 170, 0.28);
 }
 
-html[data-theme="dark"] .vx-sign-brand,
-html[data-theme="dark"] .vx-sign-conn,
-html[data-theme="dark"] .vx-sign-count {
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-sign-brand,
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-sign-conn,
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-sign-count {
   color: #f4e4c2;
   text-shadow: 0 1px 0 rgba(0, 0, 0, 0.35);
 }
 
-html[data-theme="dark"] .vx-sign-code,
-html[data-theme="dark"] .vx-sign-settings {
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-sign-code,
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-sign-settings {
   background: linear-gradient(180deg, #4a3a1e 0%, #3a2c15 100%);
   border-color: rgba(255, 226, 170, 0.3);
   color: #f4e4c2;
@@ -355,7 +355,7 @@ html[data-theme="dark"] .vx-sign-settings {
     0 4px 10px rgba(120, 74, 16, 0.38);
 }
 
-html[data-theme="dark"] .vx-room .vx-btn-primary {
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-room .vx-btn-primary {
   color: #3a2406;
 }
 
@@ -560,7 +560,7 @@ html[data-vx-hidden="1"] .vx-signboard * {
   box-shadow: 0 2px 6px rgba(70, 45, 15, 0.26);
 }
 
-html[data-theme="dark"] .vx-npc-name {
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-npc-name {
   background: linear-gradient(180deg, #5d4726 0%, #453318 100%);
   border-color: rgba(255, 226, 170, 0.35);
   color: #f6e6c4;
@@ -648,7 +648,7 @@ html[data-theme="dark"] .vx-npc-name {
   }
 }
 
-html[data-theme="dark"] .vx-audio-blocked {
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-audio-blocked {
   background: linear-gradient(180deg, #5a2b1c 0%, #46200f 100%);
   border-color: rgba(255, 150, 120, 0.5);
   color: #ffc9b0;
@@ -707,8 +707,8 @@ html[data-theme="dark"] .vx-audio-blocked {
  * 深色主题把 .vx-sign-code 刷成了深棕底，但 .vx-sign-code-value 里写死了深棕字，
  * 于是「123456」几乎与底色同色。房号是房间里最该被一眼读到的信息，这里补回来。
  */
-html[data-theme="dark"] .vx-sign-code-value,
-html[data-theme="dark"] .vx-sign-code,
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-sign-code-value,
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-sign-code,
 html[data-theme="light"][data-daypart="night"] .vx-sign-code-value,
 html[data-theme="light"][data-daypart="night"] .vx-sign-code {
   color: #ffe9c0;
