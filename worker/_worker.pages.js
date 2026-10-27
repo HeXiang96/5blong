@@ -2321,6 +2321,16 @@ async function accountRemoveFriend(request, env, targetId) {
     // 两边残留的申请也一起清掉，免得删完又从「待处理」里冒出来
     env.DB.prepare("DELETE FROM friend_requests WHERE (from_id = ? AND to_id = ?) OR (from_id = ? AND to_id = ?)").bind(me.id, targetId, targetId, me.id),
     /*
+     * 邀请 / 敲门 / 最近一起玩 也要一起清（2026-10-27 补）。
+     *
+     * 不清的话会留下一条很别扭的路：删了好友，对方手里**还没过期的邀请**照样能
+     * 点进来（邀请是独立于好友关系的记录），「最近玩」里也还挂着他、
+     * 还能再点一次加好友。删就是删干净，别留半条门缝。
+     */
+    env.DB.prepare("DELETE FROM room_invites WHERE (from_id = ? AND to_id = ?) OR (from_id = ? AND to_id = ?)").bind(me.id, targetId, targetId, me.id),
+    env.DB.prepare("DELETE FROM knocks WHERE (from_id = ? AND to_id = ?) OR (from_id = ? AND to_id = ?)").bind(me.id, targetId, targetId, me.id),
+    env.DB.prepare("DELETE FROM recent_plays WHERE (owner_id = ? AND peer_id = ?) OR (owner_id = ? AND peer_id = ?)").bind(me.id, targetId, targetId, me.id),
+    /*
      * 给"被删的一方"留一条 24 小时冷却（2026-10-27）：
      * 被删的人不能立刻把你加回来（否则删了等于没删，骚扰也就没法止血）；
      * 但**删人的一方自己可以立刻加回来**（后悔药不算骚扰）——

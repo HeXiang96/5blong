@@ -694,3 +694,36 @@ describe("好友体验补全", () => {
     expect(entry.account.username).toBe("piga");
   });
 });
+
+describe("删好友的连带清理", () => {
+  it("删掉好友后：邀请、敲门、「最近一起玩」都不再留着他的记录", async () => {
+    const a = await register("pigdel1");
+    const b = await register("pigdel2");
+    await call("/friends", { method: "POST", body: { id: b.account.id }, token: a.token });
+    await call("/friends/accept", { method: "POST", body: { id: a.account.id }, token: b.token });
+
+    // 先造出三种"关系残留"
+    await call("/invites", {
+      method: "POST",
+      body: { id: b.account.id, code: "930005" },
+      token: a.token,
+    });
+    await call("/knocks", { method: "POST", body: { id: b.account.id }, token: a.token });
+    await call("/recent-plays", {
+      method: "POST",
+      body: { ids: [b.account.id] },
+      token: a.token,
+    });
+    expect((await json(await call("/invites", { token: b.token }))).data.invites).toHaveLength(1);
+
+    await call(`/friends/${b.account.id}`, { method: "DELETE", token: a.token });
+
+    // 列表层面：双方都看不到对方了
+    expect((await json(await call("/friends", { token: b.token }))).data.friends).toHaveLength(0);
+    // 残留记录也清了：否则对方还能凭旧邀请点进来、还能从「最近玩」再点一次加好友
+    expect((await json(await call("/invites", { token: b.token }))).data.invites).toHaveLength(0);
+    expect((await json(await call("/knocks", { token: b.token }))).data.knocks).toHaveLength(0);
+    expect((await json(await call("/recent-plays", { token: a.token }))).data.plays).toHaveLength(0);
+    expect((await json(await call("/recent-plays", { token: b.token }))).data.plays).toHaveLength(0);
+  });
+});

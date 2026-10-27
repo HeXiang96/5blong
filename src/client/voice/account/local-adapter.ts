@@ -446,6 +446,18 @@ export class LocalAccountAdapter implements AccountAdapter {
      */
     const cooldowns = (graph.cooldowns ??= {});
     cooldowns[accountId] = { ...(cooldowns[accountId] ?? {}), [me.id]: Date.now() };
+    // 邀请 / 敲门 / 最近一起玩 一起清：删就删干净，别留半条门缝（与线上一致）
+    if (graph.knocks?.[me.id]) delete graph.knocks[me.id][accountId];
+    if (graph.knocks?.[accountId]) delete graph.knocks[accountId][me.id];
+    if (graph.plays?.[me.id]) delete graph.plays[me.id][accountId];
+    if (graph.plays?.[accountId]) delete graph.plays[accountId][me.id];
+    const book = read<Record<string, Record<string, { code: string; at: number; roomKey?: string }>>>(
+      INVITES_KEY,
+      {},
+    );
+    if (book[me.id]) delete book[me.id][accountId];
+    if (book[accountId]) delete book[accountId][me.id];
+    write(INVITES_KEY, book);
     this.saveGraph(graph);
     this.emit();
     return {};
