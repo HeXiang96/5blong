@@ -30,7 +30,7 @@
 
 > **本节专为后续维护者（含 AI）而写**：交代"共享屏幕为什么卡、改了什么、怎么验证、别踩哪些坑"。  
 > 这一轮**只动共享链路，语音一行未碰**（语音零影响是硬约束）；四批次全部落地，  
-> `npm run check` 全绿（typecheck + <!-- AUTO:TESTS -->360<!-- /AUTO:TESTS --> 单测 + 构建）。  
+> `npm run check` 全绿（typecheck + <!-- AUTO:TESTS -->362<!-- /AUTO:TESTS --> 单测 + 构建）。  
 > 完整方案与逐条推理见 [SCREENSHARE-OPT-PLAN.md](./docs/archive/SCREENSHARE-OPT-PLAN.md)（已归档）；  
 > 早期 v1~v3 草稿 [SCREENSHARE-PERF-PLAN.md](./docs/archive/SCREENSHARE-PERF-PLAN.md) 已被其取代（仅存档）。
 
@@ -249,6 +249,50 @@ TURN key 与 SFU 的 appId/secret **是两套**，分别创建：
 
 ---
 
+## 最近更新（2026-10-27 · 1.9.11）
+
+### 🐞 好友「备注名 / 移除好友」点了没反应（界面还消失了）
+
+一个根因，两个现象：
+
+```
+浮层容器类名早已改成 .vx-friend-sheet
+但「点外面关闭」的 pointerdown 判断还写着 .vx-friend-menu
+→ 点浮层里的按钮被判定成"点了外面" → 先 setRow(null) 关掉浮层
+→ click 到达时按钮已经卸载 → onClick 永远不执行
+```
+
+修法：两处 `closest()` 认回 `.vx-friend-sheet`（`AccountPanels.tsx`），
+顺手删掉 `account.css` 里雪原场景对旧类名的死规则。
+
+**为什么之前截图验收没抓到**：夹具 `tests/fixtures/friends-panel.tsx` 用 `element.click()`，
+只发 click、**不发 pointerdown**，正好绕过了出问题的那一步。现在改成按真实顺序
+先 `dispatchEvent(new PointerEvent("pointerdown"))` 再 click，并且只点视口内可见的行。
+
+**新增守卫**：`tests/dom-selector-consistency.test.ts`
+
+- 所有 `closest/querySelector/matches` 里的类名，必须在某个 `.tsx` 的 `className` 里出现过；
+- 锁死 `.vx-friend-sheet` 不许退回 `.vx-friend-menu`。
+
+以后再出现「改名忘改调用处」，测试直接红，不用等人去点。
+
+### 📺 共享数据条把 SFU 误标成「直连」
+
+顶部木牌写「SFU 转发」、下面数据条写「直连」，自相矛盾。
+根因：`summarizeScreenStats` 只看 `candidate-pair` 的 `candidateType`，
+而 SFU 的候选同样是 `srflx`，于是被判成 direct——**画面确实绕了 Cloudflare，只是文案错**。
+
+修法：给 `summarizeScreenStats` / `summarizeScreenReport` 加可选 `transport`，
+`sfu` 时输出「SFU 转发」；`PenTV.tsx` 传 `state.transport`。
+
+### 已知未做（等业主拍板）
+
+**SFU 单档时观众没有画质开关**。P2P 有且真生效（`screen-pref` → 共享者逐连接 `setPreference`），
+SFU 多档（simulcast）也有；但房主有硬编时只发**一档**，SFU 不能转码，所以开关被有意隐藏。
+补法需要「观众偏好聚合到那条单档编码」（少数人拖累全房），属于产品取舍，本次未做。
+
+---
+
 ## 最近更新（2026-10-27 · 1.9.10）
 
 ### 🔒 强制更新闸门收紧到 1.9.9 + 删好友不再留半条门缝
@@ -436,7 +480,7 @@ TURN key 与 SFU 的 appId/secret **是两套**，分别创建：
 
 - 新增 `tests/game-room-code.test.ts`：6 位能进、老 4 位能进、5 位/7 位/字母不算码、首尾空白归一、邀请链接往返解析。
 - 新增视觉夹具 `tests/fixtures/game-join.html?code=<房号>&fill=1`：手输 6 位 / 链接带入 / 填完游戏 ID 三种状态可直接截图目检。
-- 全量用例 <!-- AUTO:TESTS -->360<!-- /AUTO:TESTS --> 项通过；`typecheck`、`build:web:pages`、`docs:check` 全绿。
+- 全量用例 <!-- AUTO:TESTS -->362<!-- /AUTO:TESTS --> 项通过；`typecheck`、`build:web:pages`、`docs:check` 全绿。
 
 ### 三、已知未修（单独排期，不在这版）
 
@@ -967,7 +1011,7 @@ npm install                 # 安装依赖
 npm run dev                 # 本地开发服务器（网页）
 npm run tauri dev           # 桌面端开发模式（自动起 dev 服务器 + Tauri 窗口）
 npm run typecheck           # 类型检查
-npm test                    # 单元测试（<!-- AUTO:TESTS -->360<!-- /AUTO:TESTS --> 项，由 docs:sync 注入）
+npm test                    # 单元测试（<!-- AUTO:TESTS -->362<!-- /AUTO:TESTS --> 项，由 docs:sync 注入）
 npm run build:web:pages     # 构建静态网页到 dist-web
 npm run tauri build         # 本地出桌面安装包（更新签名需要环境变量，一般直接用 CI）
 npm run deploy:pages        # 手动部署网页到 Cloudflare Pages（复用本机 wrangler 凭据）
@@ -1063,7 +1107,7 @@ npm run signal:setup        # 绑定 Pages → 信令 Worker（service binding S
 - `.github/workflows/`：`release.yml`（云出包，`app-v*` 标签触发）、
   `readme-log.yml`（自动更新 README 提交列表，`[skip ci]`）
 - `tests/`：协议 / 握手 / 准入、屏幕共享（含调谐器与硬编预检）、猪圈、说话检测、定时器、
-  ICE、反馈、会话统计、音量上限、blake3 等，当前合计 <!-- AUTO:TESTS -->360<!-- /AUTO:TESTS --> 项
+  ICE、反馈、会话统计、音量上限、blake3 等，当前合计 <!-- AUTO:TESTS -->362<!-- /AUTO:TESTS --> 项
 - `scripts/`：`deploy-pages.mjs`（部署）、`publish-desktop.mjs`（桌面端更新源发布）、
   `pages-status.mjs`、`bump-version.mjs`（发版一键化）、`readme-log.mjs`（AUTO-LOG，含畸形自愈）、
   `docs-sync.mjs` / `check-docs.mjs`（文档数字注入与校验）、`lib/blake3.mjs`

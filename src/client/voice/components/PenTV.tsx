@@ -375,7 +375,7 @@ export function PenTvLightbox({
     let prev: RateSample | null = null;
     const timer = window.setInterval(async () => {
       try {
-        const summary = summarizeScreenReport(await pc.getStats(), prev);
+        const summary = summarizeScreenReport(await pc.getStats(), prev, state.transport);
         prev = summary.sample;
         setLayers(formatScreenLayers(summary.layers));
         if (!summary.text) return;

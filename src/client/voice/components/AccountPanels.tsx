@@ -424,8 +424,8 @@ export function FriendsDrawer({
       if (target.closest(".vx-friends")) return;
       if (target.closest(".vx-friends-btn")) return;
       if (target.closest(".vx-sign-friends")) return;
-      // ⋯ 菜单是 portal 渲染的（不在 .vx-friends 里），点它不能把整个抽屉关掉
-      if (target.closest(".vx-friend-menu")) return;
+      // 操作浮层在抽屉内部；不能因为点它就关掉整个抽屉
+      if (target.closest(".vx-friend-sheet")) return;
       onClose();
     };
     const onKey = (event: KeyboardEvent) => {
@@ -440,17 +440,20 @@ export function FriendsDrawer({
   }, [open, onClose]);
 
   /*
-   * ⋯ 菜单自己也要"点外面关掉"。
-   * 用冒泡阶段而不是捕获：抽屉那层捕获监听会把落在菜单外的点击判成"关抽屉"，
-   * 两个都跑会先关菜单再关抽屉，手感很怪。
-   * 另外消息列表内部滚动时菜单会错位（它是 fixed 的），所以滚一下就收起来。
+   * 操作浮层自己也要「点外面关掉」。
+   *
+   * ⚠️ 这里必须认 **.vx-friend-sheet**（浮层的真实类名），而不是它前身的 `.vx-friend-menu`。
+   * 2026-10-27 业主报「点备注名/移除好友没反应，界面直接消失」就是这个原因：
+   * pointerdown 落在浮层按钮上却被判成「点了外面」→ 先 setRow(null) 关掉浮层，
+   * 等 click 事件到达时按钮已经不在 DOM 里，onClick 永远不执行。
+   * 换句话说：看到的「没反应」其实是「点空了」。
    */
   useEffect(() => {
     if (!row) return;
     const onDown = (event: PointerEvent) => {
       const target = event.target as HTMLElement | null;
       if (!target) return;
-      if (target.closest(".vx-friend-menu")) return;
+      if (target.closest(".vx-friend-sheet")) return;
       if (target.closest(".vx-friend-more")) return;
       if (target.closest(".vx-friend-row") && row.kind !== "menu") return;
       setRow(null);

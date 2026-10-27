@@ -15,6 +15,8 @@
  */
 
 import { isPenDebug } from "./pen";
+// 只借类型（type-only）：编译后消失，不违反"本文件不 import 引擎"的单向依赖约定
+import type { ScreenShareTransport } from "./protocol";
 
 /** SFU 代理的根路径（同源，vite 代理转发）。 */
 /**
@@ -758,7 +760,11 @@ const LIMITATION_TEXT: Record<string, string> = {
  *
  * 纯函数：只吃 stats 条目数组 + 上一次采样，方便单测（不依赖真实 RTCPeerConnection）。
  */
-export function summarizeScreenStats(entries: StatsEntry[], prev: RateSample | null): ScreenStatsSummary {
+export function summarizeScreenStats(
+  entries: StatsEntry[],
+  prev: RateSample | null,
+  transport?: ScreenShareTransport,
+): ScreenStatsSummary {
   const byId = new Map<string, StatsEntry>();
   let fallbackCodec = "";
   for (const entry of entries) {
@@ -890,8 +896,16 @@ export function summarizeScreenStats(entries: StatsEntry[], prev: RateSample | n
   else parts.push(`${kbps || "?"} kbps`);
   const accel = powerEfficient ? (send ? "硬编" : "硬解") : send ? "软编" : "软解";
   parts.push([codec, implementation, accel].filter(Boolean).join(" ") || "编码器?");
-  // 走没走中继直接写在数据条里：中继被限速时，"码率上不去"就不是编码参数能救的
-  if (linkType !== "unknown") parts.push(linkType === "relay" ? "经中继" : "直连");
+  /*
+   * 走没走中继直接写在数据条里：中继被限速时，"码率上不去"就不是编码参数能救的。
+   *
+   * ⚠️ SFU 必须单独判（2026-10-27 业主截图：顶上写「SFU 转发」，数据条写「直连」，
+   * 自相矛盾）。原因：SFU 的 candidate-pair 同样是 srflx/host，按候选类型推
+   * 只能得出 "direct"——但画面明明绕了 Cloudflare。所以链路类型由调用方传入的
+   * transport 说了算，SFU 就照实写「SFU 转发」。
+   */
+  if (transport === "sfu") parts.push("SFU 转发");
+  else if (linkType !== "unknown") parts.push(linkType === "relay" ? "经中继" : "直连");
   if (send) {
     if (limitation !== "none") parts.push(LIMITATION_TEXT[limitation] ?? limitation);
     if (encodeMs) parts.push(`编码 ${encodeMs}ms/帧`);
@@ -949,10 +963,14 @@ export function canProbeShareAudio(stream: MediaStream | null | undefined): bool
 }
 
 /** 直接吃 RTCStatsReport 的便捷包装（组件里用）。 */
-export function summarizeScreenReport(report: RTCStatsReport, prev: RateSample | null): ScreenStatsSummary {
+export function summarizeScreenReport(
+  report: RTCStatsReport,
+  prev: RateSample | null,
+  transport?: ScreenShareTransport,
+): ScreenStatsSummary {
   const entries: StatsEntry[] = [];
   report.forEach((entry) => entries.push(entry as unknown as StatsEntry));
-  return summarizeScreenStats(entries, prev);
+  return summarizeScreenStats(entries, prev, transport);
 }
 
 // ---------------------------------------------------------------------------

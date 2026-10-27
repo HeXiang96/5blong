@@ -1448,8 +1448,7 @@ html[data-scene="snow"]:not([data-daypart="night"]) .vx-friend-sheet {
 html[data-scene="snow"]:not([data-daypart="night"]) .vx-friend-sheet-head {
   border-bottom-color: rgba(74, 112, 152, 0.16);
 }
-html[data-scene="snow"]:not([data-daypart="night"]) .vx-friend-sheet-head b,
-html[data-scene="snow"]:not([data-daypart="night"]) .vx-friend-menu button {
+html[data-scene="snow"]:not([data-daypart="night"]) .vx-friend-sheet-head b {
   color: #1b2f44;
 }
 html[data-scene="snow"]:not([data-daypart="night"]) .vx-friend-sheet button {
