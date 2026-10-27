@@ -612,13 +612,13 @@ npm run feedback:admin list 20   # 终端查看最近反馈（url / list / rm �
 <!-- AUTO-LOG:START -->
 ### 近期提交（自动生成）
 
+- `b366fff` release: v1.9.7（10-27 10:56）
 - `431ba28` fix(rust): base_browser_args 改成 const 项，修 E0373 导致 1.9.6 打包失败（10-27 10:21）
 - `7f9101e` release: v1.9.6（10-27 10:13）
 - `4387a6d` release: v1.9.5（10-27 00:27）
 - `ff5c511` release: v1.9.4（10-27 00:01）
 - `d654d47` release: v1.9.3（10-26 22:28）
 - `322b85d` release: v1.9.2（10-26 20:21）
-- `f5b3ec8` fix(ui+share): 夜间场景复用深色控件（顶栏/房号/控件可读）；共享采集静音开播 3.5s 内明确提示，不再无声发布（10-26 20:21）
 <!-- AUTO-LOG:END -->
 
 ## 怎么用
