@@ -48,8 +48,17 @@ function readGpuModel(): string | undefined {
     if (typeof raw !== "string" || raw.length === 0) return undefined;
 
     let model: string = raw;
-    // ANGLE 形态：括号里第 2 段才是完整型号（第 1 段是厂商）
-    const inner = /\(([^)]*)\)/.exec(model)?.[1];
+    /*
+     * ANGLE 形态：括号里第 2 段才是完整型号（第 1 段是厂商）。
+     *
+     * ⚠️ 必须**贪婪**匹配到最后一个 `)`：真实串长这样
+     *   ANGLE (NVIDIA, NVIDIA GeForce RTX 4060 Ti (0x00002788) Direct3D11 vs_5_0 ps_5_0, D3D11)
+     * 型号里自己还带一层 `(0x…)` 设备 ID。用 `/\(([^)]*)\)/` 只取到第一个 `)`，
+     * 会剩下半截 `(0x00002788`，界面上就成了
+     *   "NVIDIA GeForce RTX 4060 Ti (0x00002788"
+     * （业主 2026-10-27 截图点名过）。
+     */
+    const inner = /\(([\s\S]*)\)/.exec(model)?.[1];
     if (inner) {
       const parts = inner
         .split(",")
@@ -59,6 +68,7 @@ function readGpuModel(): string | undefined {
     }
     return (
       model
+        .replace(/\(0x[0-9a-f]+\)/gi, "")
         .replace(/Direct3D\d+/gi, "")
         .replace(/vs_\d+_\d+/gi, "")
         .replace(/ps_\d+_\d+/gi, "")

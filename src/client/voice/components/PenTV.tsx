@@ -633,7 +633,21 @@ export function PenTvLightbox({
           */}
           <div className="vx-tv-statsline">
             {stats ? (
-              <span className="vx-tv-stats" title="实时链路数据（每 2 秒刷新）">
+              /*
+               * 设备信息放 **tooltip**，不进可视行。
+               * 2026-10-27：一开始把它当第四个 chip 塞进这一行，直接把行撑高、
+               * 下面的画质/音量按钮被挤出可视区（业主截图："都挡住了我看都不到按钮"）。
+               * 数据行本来就已有 链路/声音/三层 三个 chip，屏幕共享自己也是文字密集
+               * 画面，任何额外可见文字都会抢空间——需要排障时鼠标悬停即可。
+               */
+              <span
+                className="vx-tv-stats"
+                title={
+                  devLine
+                    ? `实时链路数据（每 2 秒刷新）｜本机 ${devLine}`
+                    : "实时链路数据（每 2 秒刷新）"
+                }
+              >
                 {statsRole === "send" ? "[发送端] " : statsRole === "recv" ? "[接收端] " : ""}
                 {stats}
               </span>
@@ -663,12 +677,7 @@ export function PenTvLightbox({
                 三层：{layers}
               </span>
             ) : null}
-            {/* 本机 GPU / OS / 硬解能力：报障时这一行就是对方的机器信息 */}
-            {devLine ? (
-              <span className="vx-tv-layers" title="本机设备与硬件解码能力（GPU 型号来自 WebGL，硬解能力来自 mediaCapabilities）">
-                本机：{devLine}
-              </span>
-            ) : null}
+            {/* 本机 GPU / OS / 硬解能力只放进上面那条的 tooltip——数据行已经塞不下了 */}
           </div>
           <div className="vx-tv-controls">
           {stream ? (

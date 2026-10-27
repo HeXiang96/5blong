@@ -17,10 +17,12 @@ import { canProbeShareAudio } from "../src/client/voice/screen-share";
 
 import {
   JITTER_ADAPTIVE_MS,
+  MAX_DEGRADE_STEP,
   RESOLUTION_LADDER,
   SHARE_QUALITY_PRESETS,
   autoTransportFor,
   boostScreenOfferSdp,
+  capDegradeSteps,
   h264ProfileRank,
   injectStartBitrate,
   jitterBufferTargetFor,
@@ -316,7 +318,7 @@ describe("ICE 链路读数（链路真相在 candidate-pair 里）", () => {
   });
 });
 
-describe("screenLinkStrained（降档判据：看链路，不看码率）", () => {
+describe("screenLinkStrained（降档判据：只认 cpu 受限）", () => {
   const CAP = 10_000_000;
 
   it("静态画面：码率只有 62 kbps 也不许降档（链路容量充足）", () => {
@@ -329,13 +331,18 @@ describe("screenLinkStrained（降档判据：看链路，不看码率）", () =
     expect(screenLinkStrained(s, CAP)).toBe(false);
   });
 
-  it("链路容量真的不够（如公共 TURN 被限速）→ 该降", () => {
-    const s = readSend(
+  it("带宽不足也不降分辨率（交给拥塞控制压码率）", () => {
+    /*
+     * 2026-10-27 起带宽相关路径整体移除。
+     * 屏幕共享的画面是文字，用分辨率换来的"流畅"没人要；更糟的是
+     * availableOutgoingBitrate 是估算值、来回抖，降档/回升反复切档就是闪屏。
+     */
+    const slow = readSend(
       { bytes: 1_000, ts: 10_000, available: 800_000 },
       { bytes: 8_750, ts: 11_000, available: 800_000 },
     );
-    expect(screenLinkStrained(s, CAP)).toBe(true);
-    // 同一份读数：链路容量充足时就不该降——判据看的是容量，不是码率
+    expect(screenLinkStrained(slow, CAP)).toBe(false);
+
     const ok = readSend(
       { bytes: 1_000, ts: 10_000, available: 20_000_000 },
       { bytes: 501_000, ts: 11_000, available: 20_000_000 },
@@ -344,12 +351,13 @@ describe("screenLinkStrained（降档判据：看链路，不看码率）", () =
     expect(screenLinkStrained(ok, CAP)).toBe(false);
   });
 
-  it("发送端自述受限（bandwidth / cpu）→ 该降，与容量读数无关", () => {
+  it("只有发送端自述 cpu 受限才降分辨率", () => {
+    // bandwidth 受限是拥塞控制在正常工作的表现：它会压码率，我们不该再砍像素
     const bw = readSend(
       { bytes: 1_000, ts: 10_000, available: 20_000_000, limitation: "bandwidth" },
       { bytes: 400_000, ts: 11_000, available: 20_000_000, limitation: "bandwidth" },
     );
-    expect(screenLinkStrained(bw, CAP)).toBe(true);
+    expect(screenLinkStrained(bw, CAP)).toBe(false);
 
     const cpu = summarizeScreenStats(
       sendStats({ bytes: 1_000, ts: 1_000, limitation: "cpu", available: 20_000_000 }),
@@ -805,5 +813,48 @@ describe("共享声音电平探针的准入（后进房的人白屏回归）", (
     expect(canProbeShareAudio(makeStream(0))).toBe(false); // 后进者的视频流：没有音轨
     expect(canProbeShareAudio(makeStream(1))).toBe(true);
     expect(canProbeShareAudio(makeStream(2))).toBe(true);
+  });
+});
+
+describe("画质上限提升不得连带抬高降档门槛（2026-10-27 事故）", () => {
+  /*
+   * 事故现场：1080p60 上限从 8 Mbps 提到 12 Mbps 后，判据 `容量 < 上限 × 0.6`
+   * 的门槛从 4.8 被抬到 **7.2 Mbps**，一条完全够用的 P2P 直连被判成"吃紧"。
+   * 发送端每 6 秒降一档一路降到底 → 观端 `670×378 · 20fps`，
+   * 而且降到底又回升、再降，来回切档正是业主报的**闪屏**。
+   *
+   * 结论：画质上限是"编码器最多能用到多少"，不是"低于它就算饿"。
+   * 判据参照固定值（CAPACITY_REFERENCE_BITRATE），不跟着档位涨。
+   */
+  it("可用 5 Mbps：上限 8M 与 12M 的判定必须一致（都不算吃紧）", () => {
+    const s = readSend(
+      { bytes: 1_000, ts: 10_000, available: 5_000_000 },
+      { bytes: 400_000, ts: 11_000, available: 5_000_000 },
+    );
+    expect(screenLinkStrained(s, 8_000_000)).toBe(false);
+    expect(screenLinkStrained(s, 12_000_000)).toBe(false);
+  });
+
+  it("容量再低也不降分辨率（判据里已经没有带宽这条路）", () => {
+    const low = readSend(
+      { bytes: 1_000, ts: 10_000, available: 4_700_000 },
+      { bytes: 400_000, ts: 11_000, available: 4_700_000 },
+    );
+    expect(screenLinkStrained(low, 12_000_000)).toBe(false);
+  });
+});
+
+describe("降档地板（不许降到 380p）", () => {
+  it("三种偏好的降档序列都不越过 MAX_DEGRADE_STEP", () => {
+    for (const pref of ["auto", "detail", "motion"] as const) {
+      const capped = capDegradeSteps(tuneLadder(pref, 60));
+      expect(capped.length).toBeGreaterThan(0);
+      for (const point of capped) expect(point.step).toBeLessThanOrEqual(MAX_DEGRADE_STEP);
+    }
+  });
+
+  it("地板允许的最差分辨率仍然可读（≥ 900px 宽）", () => {
+    const worstScale = RESOLUTION_LADDER[MAX_DEGRADE_STEP]!;
+    expect(1920 / worstScale).toBeGreaterThanOrEqual(900);
   });
 });

@@ -259,6 +259,19 @@ pub fn run_capture_with(
 /// 用途：UI 上让用户挑"只采集这个应用的声音"（INCLUDE 模式），
 /// 这样通知音、音乐、浏览器里的杂音都不会混进共享音频。
 pub fn list_audio_sessions() -> Result<Vec<(u32, String)>, String> {
+    Ok(audio_sessions()?
+        .into_iter()
+        .map(|(pid, name, _peak)| (pid, name))
+        .collect())
+}
+
+/// 正在出声的音频会话：`(pid, 进程名, 峰值)`。静音/挂起的会话不返回。
+///
+/// 峰值是**选目标进程**的关键：进程回环的 `TargetProcessId` 实测只匹配
+/// **精确的那一个 pid**（`_TREE` 后缀在 Win11 26300 上没实现成树，两个方向都验过），
+/// 所以同一个应用如果有多个子进程都可能出声，必须挑**正在出声**的那个，
+/// 而不是"窗口属于哪个进程"。
+pub fn audio_sessions() -> Result<Vec<(u32, String, f32)>, String> {
     use windows::Win32::Media::Audio::Endpoints::IAudioMeterInformation;
     use windows::Win32::Media::Audio::{
         eConsole, eRender, IAudioSessionControl2, IAudioSessionManager2, IMMDeviceEnumerator,
@@ -284,7 +297,7 @@ pub fn list_audio_sessions() -> Result<Vec<(u32, String)>, String> {
             .map_err(|e| format!("枚举会话失败：{e}"))?;
         let count = sessions.GetCount().map_err(|e| e.to_string())?;
 
-        let mut out: Vec<(u32, String)> = Vec::new();
+        let mut out: Vec<(u32, String, f32)> = Vec::new();
         for i in 0..count {
             let Ok(control) = sessions.GetSession(i) else { continue };
             let Ok(control2) = control.cast::<IAudioSessionControl2>() else { continue };
@@ -293,28 +306,109 @@ pub fn list_audio_sessions() -> Result<Vec<(u32, String)>, String> {
                 continue; // 系统声音（System Sounds）没有进程
             }
             // 只听正在出声的：静音/挂起的会话没必要列出来
-            let mut loud = true;
+            let mut peak = 1.0f32;
             if let Ok(meter) = control.cast::<IAudioMeterInformation>() {
-                if let Ok(peak) = meter.GetPeakValue() {
-                    loud = peak > 0.0005;
+                if let Ok(value) = meter.GetPeakValue() {
+                    peak = value;
                 }
             }
-            if !loud {
+            if peak <= 0.0005 {
                 continue;
             }
-            if out.iter().any(|(p, _)| *p == pid) {
+            // 同一进程可能有多条会话：取最响的那条
+            if let Some(existing) = out.iter_mut().find(|item| item.0 == pid) {
+                if peak > existing.2 {
+                    existing.2 = peak;
+                }
                 continue;
             }
             let name = process_name(pid).unwrap_or_else(|| format!("进程 {pid}"));
-            out.push((pid, name));
+            out.push((pid, name, peak));
         }
         out.sort_by(|a, b| a.1.cmp(&b.1));
         Ok(out)
     }
 }
 
+/// 全量父子表（一次快照）。用于判断"某个 pid 是不是某进程的子孙"。
+fn parent_table() -> std::collections::HashMap<u32, u32> {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+        TH32CS_SNAPPROCESS,
+    };
+
+    let mut table = std::collections::HashMap::new();
+    unsafe {
+        let Ok(snapshot) = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) else {
+            return table;
+        };
+        let mut entry = PROCESSENTRY32W {
+            dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
+            ..Default::default()
+        };
+        if Process32FirstW(snapshot, &mut entry).is_ok() {
+            loop {
+                table.insert(entry.th32ProcessID, entry.th32ParentProcessID);
+                if Process32NextW(snapshot, &mut entry).is_err() {
+                    break;
+                }
+            }
+        }
+        let _ = CloseHandle(snapshot);
+    }
+    table
+}
+
+/// `pid` 是否就是 `root`，或者位于 `root` 的子树里。
+///
+/// 为什么需要它：进程回环的 `TargetProcessId` **不认子树**（实测见 `exclude_target`），
+/// 于是我们得自己算出"谁属于谁"，再把精确的 pid 递给 API。
+pub fn in_subtree(pid: u32, root: u32) -> bool {
+    if pid == root {
+        return true;
+    }
+    let table = parent_table();
+    let mut current = pid;
+    // 进程树深度很小，64 层足够，同时防环
+    for _ in 0..64 {
+        match table.get(&current) {
+            Some(parent) if *parent != 0 => {
+                if *parent == root {
+                    return true;
+                }
+                current = *parent;
+            }
+            _ => return false,
+        }
+    }
+    false
+}
+
+/// 在"正在出声"的会话里挑峰值最大的一个（只考虑 `accept` 认可的 pid）。
+fn loudest_session(accept: impl Fn(u32) -> bool) -> Option<(u32, String, f32)> {
+    audio_sessions()
+        .ok()?
+        .into_iter()
+        .filter(|(pid, _, _)| accept(*pid))
+        .max_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal))
+}
+
+/// 某个应用（按窗口/进程 pid 定位）**真正在出声**的那个进程。
+///
+/// 窗口所属进程往往不是出声进程：Edge / WebView2 的音频由 browser 的子进程渲染。
+/// 而进程回环只认精确 pid，所以必须先把范围缩到这个应用子树里"正在出声"的进程。
+/// 找不到（该应用此刻没出声）返回 None，调用方退回用原 pid。
+pub fn audio_pid_for(app_pid: u32) -> Option<u32> {
+    loudest_session(|pid| pid == app_pid || in_subtree(pid, app_pid)).map(|(pid, _, _)| pid)
+}
+
 /// 取进程可执行文件名（不带路径），拿不到就返回 None。
-fn process_name(pid: u32) -> Option<String> {
+///
+/// 公开是为了**排障**：采集日志里要写清"排除了哪个进程"。
+/// 2026-10-27 出现"排除模式下仍然听到自己人声"，只看 pid 根本判断不出
+/// 排除的到底是 msedgewebview2（我们要的）还是别的进程。
+pub fn process_name(pid: u32) -> Option<String> {
     use windows::Win32::System::Threading::{
         OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
         PROCESS_QUERY_LIMITED_INFORMATION,
@@ -338,14 +432,15 @@ fn process_name(pid: u32) -> Option<String> {
 
 // ------------------------------------------------------- 更精确的"排除对象"
 //
-// 共享整个桌面时用的是 EXCLUDE 模式：整机混音 − 某个进程树。
-// 原来排除的是 app.exe（Tauri 主进程）。但房间语音实际是 **msedgewebview2.exe**
-// 渲染的，而它是不是 app.exe 的子孙取决于 WebView2 的进程拓扑与
-// "排除树在激活那一刻的快照"这两件事——一旦不在快照里，人声就整段被采进去
-// （表现就是"共享音频里听到两遍语音"）。
+// 共享整个桌面时用的是 EXCLUDE 模式：整机混音 − 某个进程。
 //
-// 这里改成优先排除 **WebView2 的 browser 进程树**：它的子进程里就有音频服务，
-// 排掉它等于排掉"我们自己播放的所有声音"，且不影响游戏/浏览器/音乐。
+// 演进过程（每一版都是被真实故障推着改的，别退回旧写法）：
+// ① 最早排除 app.exe（Tauri 主进程）——但语音是 WebView2 渲染的，
+//    它是不是 app.exe 的子孙取决于进程拓扑，漏掉就整段回声；
+// ② 改成排除 msedgewebview2 的 **browser 进程树**，以为"排掉树等于排掉所有子进程"；
+// ③ 2026-10-27 实测发现 **`_TREE` 根本不排子树**（见 `exclude_target` 的表格），
+//    browser 被排掉了、它的子进程还在出声 → 回声照旧。
+//    现在改为**按"谁在出声"精确排除**，不依赖任何树语义。
 
 /// 枚举某个进程的直接子进程。
 pub fn child_processes(parent: u32) -> Vec<(u32, String)> {
@@ -396,12 +491,38 @@ pub fn webview_browser_process() -> Option<u32> {
         .map(|(pid, _)| pid)
 }
 
-/// 整机采集时要排除的进程：优先 WebView2 browser（人声真正的来源），
-/// 否则退回排除自己。返回值同时用于诊断展示。
+/// 整机采集时要排除的进程（连同用于展示/日志的标签）。
+///
+/// ⚠️ **必须挑"正在出声的那个进程"，不能挑"browser 根进程"。**
+///
+/// 进程回环的 `TargetProcessId` 实测只匹配**精确的那一个 pid**：
+/// `PROCESS_LOOPBACK_MODE_EXCLUDE_TARGET_PROCESS_TREE` 里的 `_TREE` 在
+/// Win11 26300 上并没有实现成"排除子树"——用真实 WASAPI 输出流做的对照实验
+/// （`outputs/exclude_tree_probe.py`，父链已打印确认是子孙关系）结果：
+///
+/// | 目标 | 峰值 |
+/// |---|---|
+/// | INCLUDE 精确的出声进程 | 0.600 |
+/// | EXCLUDE 它的**祖先** | **0.600** ← 子孙没被排掉 |
+/// | INCLUDE 它的**祖先** | 0.000 ← 祖先也采不到子孙 |
+///
+/// 于是"排除 msedgewebview2 的 browser 进程"等于**什么都没排**——房间语音是它的
+/// 子进程渲染的，整段留在采集流里，观端就听到"同一句话两遍"（2026-10-27 实测回声）。
+///
+/// 所以这里先问"我方哪个进程正在出声"（`IAudioMeterInformation` 的峰值），
+/// 把它排除掉；挑不到（此刻没人说话）才退回老的 browser / 自身兜底。
 pub fn exclude_target() -> (u32, &'static str) {
+    let me = std::process::id();
+    if let Some((pid, name, peak)) = loudest_session(|candidate| candidate != me && in_subtree(candidate, me)) {
+        log::info!("[process-loopback] 排除目标 = 我方出声进程 {pid}({name}) 峰值 {peak:.3}");
+        // 标签仍用 "webview"：前端那句提示是"整机声音，已排除本应用语音"，
+        // 现在这句话终于是事实。精确 pid/进程名看上面的日志。
+        return (pid, "webview");
+    }
+    log::info!("[process-loopback] 我方此刻没有出声的会话，退回按 browser 进程排除");
     match webview_browser_process() {
         Some(pid) => (pid, "webview"),
-        None => (std::process::id(), "self"),
+        None => (me, "self"),
     }
 }
 

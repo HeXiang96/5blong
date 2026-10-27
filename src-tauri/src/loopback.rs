@@ -255,7 +255,22 @@ mod imp {
          *   webview  ：整机 − WebView2 进程树（我们自己的语音从这儿出）
          *   self     ：整机 − 本进程（拿不到 WebView2 进程时的兜底）
          */
-        let (mode, target) = match only_pid {
+        /*
+         * include 模式：把"窗口所属进程"解析成**该应用真正在出声的进程**。
+         *
+         * 进程回环只认精确 pid（`_TREE` 后缀不排子树，见 process_loopback 里的实测表），
+         * 而音频往往由 browser 的**子进程**渲染。直接拿窗口 pid 去 INCLUDE，
+         * 大概率采到静音——这也是"指定共享也没声音"的另一半原因
+         * （当时被 sample_rate 那个 bug 挡在前面，看不出来）。
+         */
+        let resolved_only_pid = only_pid.map(|pid| {
+            let resolved = crate::process_loopback::audio_pid_for(pid).unwrap_or(pid);
+            if resolved != pid {
+                log::info!("[loopback] 指定进程 {pid} 本身不出声，改用其出声子进程 {resolved}");
+            }
+            resolved
+        });
+        let (mode, target) = match resolved_only_pid {
             Some(pid) => ("include".to_string(), pid),
             None => {
                 let (pid, kind) = crate::process_loopback::exclude_target();
@@ -263,9 +278,21 @@ mod imp {
             }
         };
         // 整机采集时排除这个 pid；include 模式下用不到，随便传自身即可
-        let exclude_pid = if only_pid.is_some() { std::process::id() } else { target };
+        let exclude_pid = if resolved_only_pid.is_some() {
+            std::process::id()
+        } else {
+            target
+        };
+        /*
+         * 日志里带上**被排除进程的名字**，不只是一个 pid。
+         * 只写 pid 的话，出现"排除模式仍然听到自己人声"时根本判断不出
+         * 排的到底是 msedgewebview2（我们要的）还是别的什么进程
+         * ——2026-10-27 就在这儿卡过一次。
+         */
+        let target_name = crate::process_loopback::process_name(target)
+            .unwrap_or_else(|| "未知进程".to_string());
         log::info!(
-            "[loopback] 启动采集：mode={mode} target={target} exclude_pid={exclude_pid} only_pid={only_pid:?}"
+            "[loopback] 启动采集：mode={mode} target={target}({target_name}) exclude_pid={exclude_pid} only_pid={only_pid:?}"
         );
 
         let stop = Arc::new(AtomicBool::new(false));
@@ -281,7 +308,7 @@ mod imp {
                         thread_stop.clone(),
                         on_chunk.clone(),
                         thread_app.clone(),
-                        only_pid,
+                        resolved_only_pid,
                         exclude_pid,
                     )
                 }));

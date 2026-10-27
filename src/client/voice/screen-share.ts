@@ -275,6 +275,23 @@ export function perViewerBitrate(quality: ShareQuality, viewers: number): number
  */
 export const RESOLUTION_LADDER = [1, 1.5, 2, 2.85] as const;
 
+/**
+ * 自动降档**最多降到这一档**（下标 2 = 2× ≈ 960×544）。
+ *
+ * 为什么必须有地板：380p 的屏幕共享连正文都看不清——降到这里，"省带宽"已经
+ * 变成"没法用"。降档是"画质与流畅之间的权衡"，不是"可以无限牺牲画质"。
+ * 2026-10-27 业主实测：一条正常的一对一直连被判成链路吃紧，一路降到
+ * `670×378 · 20fps`，既糊又抖（而且降到底还会回升、再降，来回切档就是闪屏）。
+ * 加地板后最坏也只到 960×544，仍然可读。
+ */
+export const MAX_DEGRADE_STEP = 2;
+
+/** 把降档序列裁到地板之上（下标不超过 {@link MAX_DEGRADE_STEP}），至少保留一档。 */
+export function capDegradeSteps<T extends { step: number }>(ladder: T[]): T[] {
+  const kept = ladder.filter((point) => point.step <= MAX_DEGRADE_STEP);
+  return kept.length > 0 ? kept : ladder.slice(0, 1);
+}
+
 /** 阶梯档位的可读标签（界面提示用）。 */
 export const RESOLUTION_LADDER_LABEL = ["原始", "720p", "540p", "380p"] as const;
 
@@ -953,7 +970,12 @@ const RECOVER_SAMPLES = 6;
  *
  * 比旧判据（实际码率 < 上限 30%）宽松，且看的是链路真实容量、不是"发出去了多少"。
  */
-const CAPACITY_FLOOR = 0.6;
+/*
+ * 这里曾经有两个常量：`CAPACITY_FLOOR`（0.6）与 `CAPACITY_REFERENCE_BITRATE`（8 Mbps），
+ * 用来算"链路容量低于上限的 60% 就算吃紧"。2026-10-27 起判据只剩 `cpu`，
+ * 它们没有使用者了，故意删掉——留着会让人以为"带宽还会触发降档"。
+ * 需要恢复时看 `screenLinkStrained` 上方的历史事故记录再决定。
+ */
 
 export interface ScreenSenderTunerOptions {
   /** 码率上限（P2P 分摊后的值；缺省取档位值）。 */
@@ -1019,33 +1041,38 @@ function writeTuneMemory(quality: ShareQuality, preference: ScreenViewPreference
 }
 
 /**
- * 发送端此刻是否"链路吃紧"（该降档）。纯函数，便于把判据钉死在单测里。
+ * 发送端此刻是否"链路吃紧"、该不该降分辨率。纯函数，便于把判据钉死在单测里。
  *
- * ① 发送端自述受限（`bandwidth` / `cpu`）→ 是；
- * ② 否则看链路**真实可用带宽**是否明显低于我们要的码率上限（低于 60% 才算）；
- * ③ 两者都拿不到 → **判为不吃紧**（宁可不降档，也不误降）。
+ * **只有一条判据：发送端自己说 `cpu` 编码跟不上。**
  *
- * ⚠️ 绝对不要用"实际码率远低于上限"来反推：静态画面（PPT、看文档、桌面不动）
- * 本来就只产出几百 kbps 且 `limitation === "none"`，那会把"画面没动"读成"带宽不够"，
- * 每 6 秒降一档一路降到底；而回升判据若同样基于码率，静态画面永远不满足 →
- * 掉到最低档再也回不来（实测：2 人 P2P 房 1920×1080 自行走到 674×379）。
+ * 「带宽不足」从 2026-10-27 起**不再**触发降分辨率，理由三条：
  *
- * simulcast 多档发布时不做 ② 的推断：这条链路的容量由 SFU 按观众分层消化，
- * 源头降分辨率会连累所有观众。
+ * ① WebRTC 的拥塞控制本来就会把码率压下来——带宽不够时画面"变糊"是掉码率的
+ *    结果。我们再砍一道像素，只会让它更糊。
+ * ② `availableOutgoingBitrate` 是**估算**，在 P2P 直连上常年偏低且来回抖。
+ *    拿一个不准的数字去决定分辨率，等于用不准的尺子裁布
+ *    （业主原话："现在谁家网络不是几百 Mbps"）。
+ * ③ 它还会**来回触发**：降档 → 流量变小 → 估算回升 → 升档 → 再降，
+ *    每切一次档观端就闪一下，这就是"过几秒黑一下又有画面"。
+ *
+ * 历史教训（都是真事故，别重犯）：
+ * - 第一版把单位搞错（kbps 当 bps 比），判据恒为真，开播 20 秒降到底；
+ * - 第二版把 1080p60 上限从 8M 提到 12M，顺手把"吃紧"门槛 4.8→7.2M 抬上去，
+ *   正常直连又被判吃紧，一路降到 `670×378 · 20fps`。
+ *
+ * 一句话：**屏幕共享的画面是文字，分辨率就是可读性，比流畅度更不能让。**
+ * 带宽的事交给拥塞控制，我们只在编码器真的跟不上（cpu）时才动分辨率，
+ * 而且还有 `MAX_DEGRADE_STEP` 地板兜着。
  */
 export function screenLinkStrained(
   summary: ScreenStatsSummary,
+  /* 保留形参是为了调用点/单测签名稳定；判据已不看码率与档位上限 */
   maxBitrate: number,
   simulcast = false,
 ): boolean {
-  if (summary.limitation === "bandwidth" || summary.limitation === "cpu") return true;
-  if (simulcast) return false;
-  if (!(maxBitrate > 0) || !(summary.availableKbps > 0)) return false;
-  // ⚠️ 单位陷阱：availableKbps 是 kbps，maxBitrate 是 bps，必须统一后再比。
-  // 原实现的判据 `summary.kbps < baseBitrate * 0.3` 正是栽在这里——
-  // 62 kbps < 8_000_000 bps × 0.3（=2.4 Mbps）**恒为真**，
-  // 于是 P2P 发送端开播后每 6 秒无条件降一档，约 20 秒降到底（674×379）。
-  return summary.availableKbps * 1000 < maxBitrate * CAPACITY_FLOOR;
+  void maxBitrate;
+  void simulcast;
+  return summary.limitation === "cpu";
 }
 
 /**
@@ -1072,7 +1099,7 @@ export function createScreenSenderTuner(
 ): ScreenSenderTuner {
   const preset = SHARE_QUALITY_PRESETS[quality];
   let preference: ScreenViewPreference = options.preference ?? "auto";
-  let ladder = tuneLadder(preference, preset.fps);
+  let ladder = capDegradeSteps(tuneLadder(preference, preset.fps));
   let baseBitrate = options.maxBitrate;
   let strikes = 0;
   let healthy = 0;
@@ -1161,7 +1188,7 @@ export function createScreenSenderTuner(
       if (next === preference) return;
       const current = point();
       preference = next;
-      ladder = tuneLadder(preference, preset.fps);
+      ladder = capDegradeSteps(tuneLadder(preference, preset.fps));
       index = nearestLadderIndex(ladder, current);
       strikes = 0;
       healthy = 0;
