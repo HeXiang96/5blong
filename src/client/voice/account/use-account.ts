@@ -12,9 +12,26 @@ export type AccountAdapterWithFeed = AccountAdapter & {
   hydrate?(): Promise<void>;
 };
 
-export function useAccount(adapter: AccountAdapterWithFeed) {
+export function useAccount(
+  adapter: AccountAdapterWithFeed,
+  /**
+   * 好友快照的兜底轮询间隔（毫秒）。
+   *
+   * - 缺省 90 秒（2026-10-26 业主定的额度口径）；
+   * - `null` = 关闭内置轮询，由调用方自己调度（好友面板打开时想加速到 20 秒，
+   *   关掉面板又回到 90 秒——这种"随界面状态变"的节奏只能由上层决定）。
+   *
+   * 注意这里只管好友快照；邀请 / 敲门是另一条更短的节奏（见 App.tsx）。
+   */
+  options: { pollMs?: number | null } = {},
+) {
   const [me, setMe] = useState<AccountProfile | null>(() => adapter.current());
   const [snapshot, setSnapshot] = useState<FriendsSnapshot>(EMPTY);
+  /*
+   * 解构出原始值再进依赖数组：调用方通常写成 `useAccount(adapter, { pollMs: 20_000 })`，
+   * 对象每次渲染都是新的，直接依赖它会每秒重建一次定时器。
+   */
+  const pollMs = options.pollMs === undefined ? 90_000 : options.pollMs;
 
   const refresh = useCallback(async () => {
     const me = adapter.current();
@@ -53,7 +70,8 @@ export function useAccount(adapter: AccountAdapterWithFeed) {
      * ⚠️ 改这个值之前先看 `PRESENCE_ONLINE_MS`（服务端 75 秒）：只要 alarm 周期
      * 仍是 30 秒，轮询间隔调到多大都不会让状态判错，只会让它更新得更晚。
      */
-    const timer = window.setInterval(() => void refresh(), 90_000);
+    const timer =
+      pollMs === null ? null : window.setInterval(() => void refresh(), pollMs);
     /*
      * 兜底：界面这会儿是"未登录"，但网络刚恢复 / 上次核对被刷新打断时，
      * 每 20 秒再问一次服务端。真没登录态时服务端回 401，成本可忽略；
@@ -72,10 +90,10 @@ export function useAccount(adapter: AccountAdapterWithFeed) {
     }, 20_000);
     return () => {
       unsubscribe?.();
-      window.clearInterval(timer);
+      if (timer !== null) window.clearInterval(timer);
       window.clearInterval(retry);
     };
-  }, [adapter, refresh]);
+  }, [adapter, refresh, pollMs]);
 
   return { me, snapshot, refresh };
 }

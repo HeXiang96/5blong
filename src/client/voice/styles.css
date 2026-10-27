@@ -3593,11 +3593,25 @@ button.vx-topic {
   color: #7a6449; /* 原值 #8a7355 只有 4.33:1，这里提到 5.2:1 */
 }
 
-/* 房间码 + 加入一行；创建单独一行做主操作 */
+/*
+ * 房间码 + 加入一行；创建单独一行做主操作。
+ *
+ * 2026-10-27 业主实拍：输密码那一行展开后，两行的按钮宽度不一致
+ * （「加入」两字、「带密码进」四字），右边缘参差不齐，输入框宽度也跟着不一样。
+ * 改成 grid 并把按钮列**固定宽度**：两行永远同宽、右边永远对齐。
+ */
 .vx-code-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 116px;
   gap: 8px;
   margin-top: 2px;
+  align-items: stretch;
+}
+.vx-code-row .vx-btn {
+  width: 100%;
+  min-width: 0;
+  padding-inline: 10px;
+  white-space: nowrap;
 }
 .vx-code-input {
   flex: 1 1 auto;

@@ -107,6 +107,19 @@ export class GameMesh {
    */
   private readonly onewayHeals = new Map<string, number>();
   /**
+   * 这些对端下一次拨号**只收集中继候选**（2026-10-27）。
+   *
+   * 单向判定后置位：直连已证明只通一边，再按同样的候选重拨三次没有意义 ——
+   * 对称 NAT 下它们还是打不通。TURN 本来就有（Cloudflare，`/ice` 现签），
+   * 换条路比原路重试有用。收到包后自动清除，下一轮恢复直连优先。
+   */
+  private readonly relayPeers = new Set<string>();
+  /**
+   * 下一条要建的连接是否只走中继。
+   * `open()` 里那份 Peer config 是 getter 对象，PeerJS 建 PC 的同步段会读它。
+   */
+  private relayNextCall = false;
+  /**
    * 每条连接"是哪一刻建的"。
    *
    * 用来收拾僵尸连接：PeerJS 关掉一条**未应答**的呼叫不会给对方任何信令，
@@ -740,7 +753,7 @@ export class GameMesh {
         const silent = this.getSilentStream();
         if (!silent) continue;
         try {
-          const call = this.peer!.call(peerId, silent, { sdpTransform: opusSdpTransform("voice") });
+          const call = this.dial(peerId, silent);
           if (!call) continue;
           this.calls.set(peerId, call);
           this.callStartedAt.set(peerId, Date.now());
@@ -756,9 +769,7 @@ export class GameMesh {
       }
       if (this.myId >= peerId) continue;
       try {
-        const call = this.peer!.call(peerId, this.publishedStream ?? this.localStream ?? new MediaStream(), {
-          sdpTransform: opusSdpTransform("voice"),
-        });
+        const call = this.dial(peerId, this.publishedStream ?? this.localStream ?? new MediaStream());
         if (!call) continue;
         this.calls.set(peerId, call);
         this.callStartedAt.set(peerId, Date.now());
@@ -769,6 +780,23 @@ export class GameMesh {
       } catch {
         /* 单个呼叫失败不影响其他人 */
       }
+    }
+  }
+
+  /**
+   * 发起一条语音呼叫（统一处理"这一条要不要只走中继"）。
+   *
+   * 为什么要包一层：`relayNextCall` 是共享标志，必须在**同一段同步代码**里
+   * 设置 → call（PeerJS 在这里同步 `new RTCPeerConnection`）→ 复位，
+   * 否则下一条无关的连接也会被顺手改成只走中继。
+   */
+  private dial(peerId: string, stream: MediaStream): MediaConnection | undefined {
+    if (!this.peer) return undefined;
+    this.relayNextCall = this.relayPeers.has(peerId);
+    try {
+      return this.peer.call(peerId, stream, { sdpTransform: opusSdpTransform("voice") });
+    } finally {
+      this.relayNextCall = false;
     }
   }
 
@@ -858,6 +886,7 @@ export class GameMesh {
       if (grew) {
         this.onewayHeals.delete(peerId); // 通了：把"单向重连"次数清零
         this.redialBackoff.delete(peerId); // 重拨退避也清零
+        this.relayPeers.delete(peerId); // 通了就恢复"直连优先"，省掉中继的额外延迟
       }
       const hits = grew ? 0 : (prev?.hits ?? 0) + 1;
       this.mediaWatch.set(peerId, { packets, hits });
@@ -871,10 +900,19 @@ export class GameMesh {
       const name = member.gameId || peerId.slice(0, 6);
       if (healed > 3) {
         // 重连三次仍单向：大概率是对端/线路的持久问题，别再拆了，免得来回抖
-        this.events.status("error", `与「${name}」的语音仍然只有单向，建议让他重进房`);
+        this.events.status("error", `与「${name}」的语音仍然只有单向（中继也试过），建议让他重进房`);
         continue;
       }
-      this.events.status("error", `与「${name}」的语音只有单向，正在重连（第 ${healed} 次）`);
+      /*
+       * 判定单向：下一次拨号改走中继（2026-10-27）。
+       * 重拨一条同样的直连没有意义——ICE 会再选回同一条单向路径，
+       * 这也是"重连几次还是没声音"的原因。
+       */
+      this.relayPeers.add(peerId);
+      this.events.status(
+        "error",
+        `与「${name}」的语音只有单向，改走中继重连（第 ${healed} 次）`,
+      );
       try {
         call.close();
       } catch {
@@ -1346,13 +1384,30 @@ export class GameMesh {
         return;
       }
       const route = SIGNAL_ROUTES[Math.min(routeIndex, SIGNAL_ROUTES.length - 1)]!;
+      /*
+       * config 用 getter（2026-10-27）：PeerJS 在建 PC 的同步段里读这份 config，
+       * 所以 call 之前把 relayNextCall 立起来，就能让**这一条**只收集中继候选。
+       * 与语音房那边同一套做法，原因见 voice/engine.ts 的 openPeer。
+       */
+      const mesh = this;
+      const peerConfig = {
+        get iceServers() {
+          return iceServers();
+        },
+        get iceCandidatePoolSize() {
+          return 0;
+        },
+        get iceTransportPolicy(): RTCIceTransportPolicy {
+          return mesh.relayNextCall ? "relay" : "all";
+        },
+      };
       const peer = new Peer(id, {
         host: route.host,
         port: route.port,
         secure: route.secure,
         key: route.key,
         debug: 0,
-        config: { iceServers: iceServers(), iceCandidatePoolSize: 0 },
+        config: peerConfig,
       });
       this.peer = peer;
       let settled = false;

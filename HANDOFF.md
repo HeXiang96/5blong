@@ -1,6 +1,6 @@
 # 交接文档（2026-10-26）
 
-> 给下一位接手的 AI / 开发者。先读「必读的坑」，再按待办顺序做。
+> 给下一位接手的 AI / 开发者。先读「必读的坑」，再按待办顺序做。  
 > 所有改动**都在本地、未推送**（业主未授权推送）。
 
 ---
@@ -11,18 +11,18 @@
 
 ### 关键目录（都在 `src/client/`）
 
-| 路径 | 内容 |
-|---|---|
-| `voice/engine.ts` | 核心（~4500 行）：PeerJS 组网、名册、语音链路、屏幕共享发布/订阅、降档调谐 |
-| `voice/protocol.ts` | 信令消息定义 + 解析（**所有字段必须在这里校验**，容忍旧客户端缺字段） |
-| `voice/use-voice.ts` | React 绑定（App 只跟它打交道） |
-| `voice/screen-share.ts` | 共享采集/发布/SFU/调谐器/双端编解码协商 |
-| `voice/game/game-mesh.ts` | 开黑圈语音（独立一套，与语音房并列） |
-| `voice/account/*` | **账号/好友（本次新增）**：契约、本地适配器、React hook |
-| `voice/components/AccountPanels.tsx` | 登录/注册/我的资料 + 好友抽屉 |
-| `voice/components/FriendRequestToast.tsx` | 房间内好友请求轻提示 |
-| `voice/components/RoomView.tsx` | 房间 UI（顶栏木牌、成员菜单、猪圈） |
-| `voice/invite-text.ts` | 邀请文案（纯函数） |
+| 路径                                        | 内容                                           |
+| ----------------------------------------- | -------------------------------------------- |
+| `voice/engine.ts`                         | 核心（~4500 行）：PeerJS 组网、名册、语音链路、屏幕共享发布/订阅、降档调谐 |
+| `voice/protocol.ts`                       | 信令消息定义 + 解析（**所有字段必须在这里校验**，容忍旧客户端缺字段）       |
+| `voice/use-voice.ts`                      | React 绑定（App 只跟它打交道）                         |
+| `voice/screen-share.ts`                   | 共享采集/发布/SFU/调谐器/双端编解码协商                      |
+| `voice/game/game-mesh.ts`                 | 开黑圈语音（独立一套，与语音房并列）                           |
+| `voice/account/*`                         | **账号/好友（本次新增）**：契约、本地适配器、React hook          |
+| `voice/components/AccountPanels.tsx`      | 登录/注册/我的资料 + 好友抽屉                            |
+| `voice/components/FriendRequestToast.tsx` | 房间内好友请求轻提示                                   |
+| `voice/components/RoomView.tsx`           | 房间 UI（顶栏木牌、成员菜单、猪圈）                          |
+| `voice/invite-text.ts`                    | 邀请文案（纯函数）                                    |
 
 ## 二、Git 状态（重要）
 
@@ -109,12 +109,12 @@ npx vite --port 5178 --host 127.0.0.1        # 后台跑
 msedge --headless=new --remote-debugging-port=9223 --remote-allow-origins=* --user-data-dir=<临时目录>
 ```
 
-| 脚本 | 用途 |
-|---|---|
-| `probe-rejoin.mjs` | 两客户端进/退/重进回归 |
-| `verify-account-ui.mjs` | 登录→换头像→资料→好友面板全流程截图 |
-| `shot-friends.mjs` / `shot-toast.mjs` / `shot-member-menu.mjs` | 各 UI 截图 |
-| `check-dialog-dismiss.mjs` | 弹窗点外不关、Esc 关 |
+| 脚本                                                             | 用途                  |
+| -------------------------------------------------------------- | ------------------- |
+| `probe-rejoin.mjs`                                             | 两客户端进/退/重进回归        |
+| `verify-account-ui.mjs`                                        | 登录→换头像→资料→好友面板全流程截图 |
+| `shot-friends.mjs` / `shot-toast.mjs` / `shot-member-menu.mjs` | 各 UI 截图             |
+| `check-dialog-dismiss.mjs`                                     | 弹窗点外不关、Esc 关        |
 
 测试：`npx vitest run`（259 个）；类型：`npx tsc -b --pretty false`；构建：`npm run build:web:pages`。
 

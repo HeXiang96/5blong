@@ -114,3 +114,54 @@ ALTER TABLE accounts ADD COLUMN prev_id TEXT;
 -- 邀请里带上房间钥匙：私密房只给房号等于"告诉你门牌却不给钥匙"，
 -- 对方点「加入」只会被要求临时密码。钥匙仅好友可见、随邀请一起过期（24 小时）。
 ALTER TABLE room_invites ADD COLUMN room_key TEXT;
+
+-- ===========================================================================
+-- 好友体验补全（2026-10-27）
+-- ===========================================================================
+-- 备注名（仅自己可见）：好友把昵称改得面目全非、或者两个人同名时，
+-- 还能按你熟悉的名字找到他。存在 friendships 的**自己那一行**，天然只自己可见。
+ALTER TABLE friendships ADD COLUMN alias TEXT;
+
+-- 好友申请附言（≤30 字）：只给 8 位 ID 加人的时候，对方至少知道"我是谁"。
+ALTER TABLE friend_requests ADD COLUMN note TEXT;
+
+-- 申请状态：0 = 待处理，1 = 已被拒绝。
+-- 拒绝不再直接删行 —— 删了就查不到"上次被拒是什么时候"，对方可以无限重复申请。
+-- 保留一行并把 at 刷成拒绝时间，就能做 24 小时冷却；超时后重新申请会覆盖回 0。
+ALTER TABLE friend_requests ADD COLUMN status INTEGER NOT NULL DEFAULT 0;
+
+-- 最近一起玩（2026-10-27 业主批准）：
+-- 现在加好友只有两条路——知道 8 位 ID，或者在房间里点成员头像。
+-- 后者依赖对方客户端 ≥1.8.9 上报 accountId，旧客户端只能按昵称猜，经常加不上。
+-- 所以把"同房过"这件事记下来，好友面板里给一个一键加好友的入口。
+--
+-- 隐私口径（业主批准）：**只自己可见**，A 和 B 同房时 A 记一条 B、B 记一条 A，
+-- 不产生"谁看过谁"的第三方查询；7 天过期；每人最多 30 条。
+CREATE TABLE IF NOT EXISTS recent_plays (
+  owner_id TEXT NOT NULL,
+  peer_id TEXT NOT NULL,
+  at INTEGER NOT NULL,
+  PRIMARY KEY (owner_id, peer_id)
+);
+CREATE INDEX IF NOT EXISTS idx_recent_plays_owner ON recent_plays (owner_id, at DESC);
+
+-- 敲门（2026-10-27）：好友在某个房间里，但那是私密房 / 你不知道密码。
+-- 点一下"请求进入"，房主收到提示；**房主同意后才由他的客户端发出带钥匙的邀请**。
+-- 钥匙始终只由房主本机提供，服务端不生成、不推导——安全边界没有变松。
+CREATE TABLE IF NOT EXISTS knocks (
+  from_id TEXT NOT NULL,
+  to_id TEXT NOT NULL,
+  at INTEGER NOT NULL,
+  PRIMARY KEY (from_id, to_id)
+);
+CREATE INDEX IF NOT EXISTS idx_knocks_to ON knocks (to_id, at DESC);
+
+-- 每日动作计数：好友请求 / 邀请 / 敲门各有一个软上限，防止脚本刷。
+-- 按天一行（UPSERT 自增），不随次数膨胀；90 天前的行可以随手删。
+CREATE TABLE IF NOT EXISTS daily_actions (
+  account_id TEXT NOT NULL,
+  day TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  count INTEGER NOT NULL,
+  PRIMARY KEY (account_id, day, kind)
+);

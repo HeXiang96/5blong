@@ -145,10 +145,53 @@ async function main() {
   });
   const tables = (check?.[0]?.results ?? []).map((row) => row.name);
   log("tables", tables.join(", "));
-  for (const needed of ["accounts", "friendships", "friend_requests", "account_sessions", "account_presence", "room_invites"]) {
+  /*
+   * 校验清单必须跟着 schema 走（2026-10-27）：
+   * 上一版只查了 6 张老表，所以"新表没建成"也会打印 done —— 而少一张表
+   * 就是一片接口 500（recent_plays 挂了，好友面板里的「最近玩」直接空）。
+   */
+  const required = [
+    "accounts",
+    "friendships",
+    "friend_requests",
+    "account_sessions",
+    "account_presence",
+    "room_invites",
+    "recent_plays",
+    "knocks",
+    "daily_actions",
+    "room_holds",
+    "admin_audit",
+  ];
+  for (const needed of required) {
     if (!tables.includes(needed)) throw new Error(`建表失败：缺 ${needed}`);
   }
-  log("done", "账号 / 好友 / 固定房号 / 邀请 表已就绪");
+
+  /*
+   * 列也要查：ALTER 那条被"duplicate column"跳过时无法区分"早就有了"
+   * 和"这张表压根没有这一列"，只能靠 pragma 确认一次。
+   */
+  const columnsOf = async (table) => {
+    const rows = await api(token, `/accounts/${account.id}/d1/database/${database.uuid}/query`, {
+      method: "POST",
+      body: JSON.stringify({ sql: `PRAGMA table_info(${table})` }),
+    });
+    return (rows?.[0]?.results ?? []).map((row) => row.name);
+  };
+  const columns = [
+    ["friendships", "alias"],
+    ["friend_requests", "note"],
+    ["friend_requests", "status"],
+    ["room_invites", "room_key"],
+    ["accounts", "room_changes"],
+    ["accounts", "prev_id"],
+  ];
+  for (const [table, column] of columns) {
+    const names = await columnsOf(table);
+    if (!names.includes(column)) throw new Error(`加列失败：${table}.${column} 不存在`);
+  }
+  log("columns", "alias / note / status / room_key / room_changes / prev_id 均在位");
+  log("done", "账号 / 好友 / 固定房号 / 邀请 / 最近一起玩 / 敲门 表已就绪");
 }
 
 main().catch((error) => {

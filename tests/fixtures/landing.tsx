@@ -60,6 +60,8 @@ createRoot(document.getElementById("root")!).render(
       onStartMyRoom={() => {}}
       onCreateGame={() => {}}
       onJoinGame={() => {}}
+      /* ?pass=1 展开第二行「临时密码」——用来目检两行输入框的按钮是否对齐 */
+      needsPass={params.has("pass")}
     />
   </StrictMode>,
 );

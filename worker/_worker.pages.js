@@ -1628,6 +1628,22 @@ const SESSION_TTL_MS = 30 * 24 * 3600_000;
 const PRESENCE_ONLINE_MS = 75_000;
 const MAX_AVATAR_CHARS = 120_000;
 /**
+ * 好友相关的几个时间窗与额度（2026-10-27）。
+ *
+ * 数字都往"够用但刷不动"那一侧放：正常用户一天发不了 20 条好友请求、
+ * 也发不了 50 条邀请；但脚本要扫库/刷骚扰就会被挡住。
+ */
+const INVITE_TTL_MS = 24 * 3600_000;
+/** 敲门 10 分钟有效：再久的房间大概率已经散了，留着只会让房主点空。 */
+const KNOCK_TTL_MS = 10 * 60_000;
+/** 被拒绝后 24 小时内不许再申请（也用于"被删除的人不能立刻加回来"）。 */
+const REQUEST_COOLDOWN_MS = 24 * 3600_000;
+/** 「最近一起玩」留存 7 天。 */
+const RECENT_PLAY_TTL_MS = 7 * 24 * 3600_000;
+const FRIEND_REQUEST_DAILY = 20;
+const INVITE_DAILY = 50;
+const KNOCK_DAILY = 20;
+/**
  * PBKDF2-SHA256 迭代次数。
  *
  * ⚠️ Workers **硬上限是 100000**：超过就直接抛
@@ -1743,6 +1759,63 @@ function toProfile(row) {
     // 只在"刚被改过 ID"时出现：客户端用它迁移本机的房间钥匙
     ...(row.prev_id ? { previousId: row.prev_id } : {}),
   };
+}
+
+/**
+ * 别人看到的档案：**去掉只属于账号主人的字段**（2026-10-27）。
+ *
+ * 好友快照 / 搜索 / 邀请里原来直接复用 toProfile()，于是别人的固定房号、
+ * 房号锁定状态、previousId（后台刚改过 ID 时的旧号）都会跟着发出去。
+ * 房号展示有 presence 单独给，previousId 更是自己的私事，都不该外泄。
+ */
+function toPublicProfile(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    username: row.username,
+    name: row.name,
+    avatar: row.avatar ?? "",
+    avatarVersion: row.avatar_version ?? 0,
+    createdAt: row.created_at,
+  };
+}
+
+/** 附言：折叠空白、按**字符**截断（不切坏 emoji），空串存 NULL。 */
+function clampNote(value) {
+  const text = String(value ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!text) return null;
+  const chars = Array.from(text);
+  return chars.length > 30 ? chars.slice(0, 30).join("") : text;
+}
+
+/** 每日额度的日期键（UTC 日；跨 8 小时边界的误差对"防刷"没有影响）。 */
+function utcDay(now = Date.now()) {
+  return new Date(now).toISOString().slice(0, 10);
+}
+
+/**
+ * 每日动作计数：先读后写，超限就返回 false。
+ *
+ * 并发下可能多放过一两次，这是**软上限**，目的只是"让脚本刷不动"，
+ * 不值得为它上事务。
+ */
+async function bumpDaily(env, accountId, kind, limit) {
+  const day = utcDay();
+  const row = await env.DB.prepare(
+    "SELECT count FROM daily_actions WHERE account_id = ? AND day = ? AND kind = ?",
+  )
+    .bind(accountId, day, kind)
+    .first();
+  if (Number(row?.count ?? 0) >= limit) return false;
+  await env.DB.prepare(
+    "INSERT INTO daily_actions (account_id, day, kind, count) VALUES (?, ?, ?, 1) " +
+      "ON CONFLICT(account_id, day, kind) DO UPDATE SET count = count + 1",
+  )
+    .bind(accountId, day, kind)
+    .run();
+  return true;
 }
 
 async function accountById(env, id) {
@@ -2045,32 +2118,38 @@ async function accountSearch(request, env, url) {
   )
     .bind(me?.id ?? "", keyword, like, like)
     .all();
-  return accountJson(request, { accounts: (rows.results ?? []).map(toProfile) }, 200);
+  return accountJson(request, { accounts: (rows.results ?? []).map(toPublicProfile) }, 200);
 }
 
 async function accountSnapshot(request, env) {
   const me = await currentAccount(request, env);
   if (!me) return accountJson(request, { friends: [], incoming: [], outgoing: [] }, 200);
   const friends = await env.DB.prepare(
-    "SELECT a.*, f.since AS since, p.last_seen AS last_seen, p.room_code AS p_room " +
+    "SELECT a.*, f.since AS since, f.alias AS alias, p.last_seen AS last_seen, p.room_code AS p_room " +
       "FROM friendships f JOIN accounts a ON a.id = f.friend_id " +
       "LEFT JOIN account_presence p ON p.account_id = a.id " +
       "WHERE f.account_id = ? ORDER BY f.since DESC",
   )
     .bind(me.id)
     .all();
+  /*
+   * 只取待处理的申请（status = 0）。
+   * status = 1 的行是被拒绝过的"冷却记录"，留着是为了挡住 24 小时内的重复申请，
+   * 绝不能出现在界面上（否则拒绝完它还在原地）。
+   */
   const incoming = await env.DB.prepare(
-    "SELECT a.*, r.at AS at FROM friend_requests r JOIN accounts a ON a.id = r.from_id " +
-      "WHERE r.to_id = ? ORDER BY r.at DESC",
+    "SELECT a.*, r.at AS at, r.note AS note FROM friend_requests r JOIN accounts a ON a.id = r.from_id " +
+      "WHERE r.to_id = ? AND COALESCE(r.status, 0) = 0 ORDER BY r.at DESC",
   )
     .bind(me.id)
     .all();
   const outgoing = await env.DB.prepare(
-    "SELECT a.*, r.at AS at FROM friend_requests r JOIN accounts a ON a.id = r.to_id " +
-      "WHERE r.from_id = ? ORDER BY r.at DESC",
+    "SELECT a.*, r.at AS at, r.note AS note FROM friend_requests r JOIN accounts a ON a.id = r.to_id " +
+      "WHERE r.from_id = ? AND COALESCE(r.status, 0) = 0 ORDER BY r.at DESC",
   )
     .bind(me.id)
     .all();
+
   const now = Date.now();
   const presence = (row) =>
     row.last_seen && now - row.last_seen <= PRESENCE_ONLINE_MS
@@ -2080,12 +2159,22 @@ async function accountSnapshot(request, env) {
     request,
     {
       friends: (friends.results ?? []).map((row) => ({
-        account: toProfile(row),
+        account: toPublicProfile(row),
         since: row.since ?? now,
         presence: presence(row),
+        // 备注名（仅自己可见）：空则不出现这个字段，界面回落到对方昵称
+        ...(row.alias ? { alias: row.alias } : {}),
       })),
-      incoming: (incoming.results ?? []).map((row) => ({ account: toProfile(row), at: row.at ?? now })),
-      outgoing: (outgoing.results ?? []).map((row) => ({ account: toProfile(row), at: row.at ?? now })),
+      incoming: (incoming.results ?? []).map((row) => ({
+        account: toPublicProfile(row),
+        at: row.at ?? now,
+        ...(row.note ? { note: row.note } : {}),
+      })),
+      outgoing: (outgoing.results ?? []).map((row) => ({
+        account: toPublicProfile(row),
+        at: row.at ?? now,
+        ...(row.note ? { note: row.note } : {}),
+      })),
     },
     200,
   );
@@ -2108,13 +2197,32 @@ async function accountAddFriend(request, env) {
     .first();
   if (friend) return accountJson(request, { error: "already-friend" }, 409);
 
+  const now = Date.now();
+  /*
+   * 我这边那行申请记录的现状（2026-10-27 业主实拍：还没被同意时每点一次
+   * 「加好友」，对方就被推一次 FRIEND、红点被反复敲）。
+   *
+   *   status = 0 → 已经发过、还在等 → 直接回"已发送"，**不再推送**
+   *   status = 1 → 刚被拒绝过 → 24 小时内不许再来（防无限重发骚扰）
+   */
+  const mine = await env.DB.prepare(
+    "SELECT status, at FROM friend_requests WHERE from_id = ? AND to_id = ?",
+  )
+    .bind(me.id, targetId)
+    .first();
+  if (mine && Number(mine.status ?? 0) === 0) {
+    return accountJson(request, { account: toPublicProfile(target), pending: true }, 200);
+  }
+  if (mine && Number(mine.status ?? 0) === 1 && now - Number(mine.at ?? 0) < REQUEST_COOLDOWN_MS) {
+    return accountJson(request, { error: "cooldown" }, 429);
+  }
+
   // 对方已经请求过我 → 直接互相成为好友（少一次点击）
   const reverse = await env.DB.prepare(
-    "SELECT 1 AS x FROM friend_requests WHERE from_id = ? AND to_id = ?",
+    "SELECT 1 AS x FROM friend_requests WHERE from_id = ? AND to_id = ? AND COALESCE(status, 0) = 0",
   )
     .bind(targetId, me.id)
     .first();
-  const now = Date.now();
   if (reverse) {
     await env.DB.batch([
       env.DB.prepare("INSERT OR IGNORE INTO friendships (account_id, friend_id, since) VALUES (?, ?, ?)").bind(me.id, targetId, now),
@@ -2123,15 +2231,23 @@ async function accountAddFriend(request, env) {
     ]);
     // 对方先请求过我：这一次等于"请求被同意"，他那边的好友列表要立刻变
     await pushInboxHint(env, targetId, "FRIEND");
-    return accountJson(request, { account: toProfile(target) }, 200);
+    return accountJson(request, { account: toPublicProfile(target) }, 200);
   }
 
-  await env.DB.prepare("INSERT OR IGNORE INTO friend_requests (from_id, to_id, at) VALUES (?, ?, ?)")
-    .bind(me.id, targetId, now)
+  // 每日软上限：正常用户一天发不了 20 条，脚本会被挡住
+  if (!(await bumpDaily(env, me.id, "friend-req", FRIEND_REQUEST_DAILY))) {
+    return accountJson(request, { error: "rate-limited" }, 429);
+  }
+
+  await env.DB.prepare(
+    "INSERT INTO friend_requests (from_id, to_id, at, note, status) VALUES (?, ?, ?, ?, 0) " +
+      "ON CONFLICT(from_id, to_id) DO UPDATE SET at = excluded.at, note = excluded.note, status = 0",
+  )
+    .bind(me.id, targetId, now, clampNote(body?.note))
     .run();
-  // 让对方的好友面板立刻亮红点，而不是等下一次 90 秒轮询
+  // 让对方的好友面板立刻亮红点，而不是等下一次轮询
   await pushInboxHint(env, targetId, "FRIEND");
-  return accountJson(request, { account: toProfile(target) }, 200);
+  return accountJson(request, { account: toPublicProfile(target), pending: true }, 200);
 }
 
 async function accountAcceptFriend(request, env) {
@@ -2153,7 +2269,7 @@ async function accountAcceptFriend(request, env) {
   ]);
   // 申请方那边：他发的请求被同意了，好友列表要立刻出现我（不用等轮询）
   await pushInboxHint(env, fromId, "FRIEND");
-  return accountJson(request, { account: toProfile(await accountById(env, fromId)) }, 200);
+  return accountJson(request, { account: toPublicProfile(await accountById(env, fromId)) }, 200);
 }
 
 async function accountRejectFriend(request, env) {
@@ -2161,20 +2277,59 @@ async function accountRejectFriend(request, env) {
   if (!me) return accountJson(request, { error: "not-found" }, 401);
   const body = await request.json().catch(() => null);
   const fromId = String(body?.id ?? "").trim();
-  await env.DB.prepare("DELETE FROM friend_requests WHERE from_id = ? AND to_id = ?")
-    .bind(fromId, me.id)
+  /*
+   * 拒绝**不删行**（2026-10-27）：删了就查不到"上次被拒是什么时候"，
+   * 对方可以一次接一次地重发。这里把 status 盖成 1、at 刷成现在，
+   * 申请方 24 小时内再来会拿到 cooldown，界面上也自动从「待处理」里消失。
+   */
+  await env.DB.prepare(
+    "UPDATE friend_requests SET status = 1, at = ? WHERE from_id = ? AND to_id = ?",
+  )
+    .bind(Date.now(), fromId, me.id)
     .run();
   // 申请方那边：请求被拒了，他的"已发出请求"要消失，别让他一直等着
   await pushInboxHint(env, fromId, "FRIEND");
   return accountJson(request, { ok: true }, 200);
 }
 
+/**
+ * 改好友备注名（仅自己可见）。
+ *
+ * 空串 = 清除备注，界面回落到对方昵称。长度按字符算，12 个字足够区分重名。
+ */
+async function accountSetAlias(request, env, targetId) {
+  const me = await currentAccount(request, env);
+  if (!me) return accountJson(request, { error: "not-found" }, 401);
+  const body = await request.json().catch(() => null);
+  const raw = String(body?.alias ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
+  const alias = raw ? Array.from(raw).slice(0, 12).join("") : null;
+  await env.DB.prepare("UPDATE friendships SET alias = ? WHERE account_id = ? AND friend_id = ?")
+    .bind(alias, me.id, targetId)
+    .run();
+  return accountJson(request, { ok: true, alias }, 200);
+}
+
 async function accountRemoveFriend(request, env, targetId) {
   const me = await currentAccount(request, env);
   if (!me) return accountJson(request, { error: "not-found" }, 401);
+  const now = Date.now();
   await env.DB.batch([
     env.DB.prepare("DELETE FROM friendships WHERE account_id = ? AND friend_id = ?").bind(me.id, targetId),
     env.DB.prepare("DELETE FROM friendships WHERE account_id = ? AND friend_id = ?").bind(targetId, me.id),
+    // 两边残留的申请也一起清掉，免得删完又从「待处理」里冒出来
+    env.DB.prepare("DELETE FROM friend_requests WHERE (from_id = ? AND to_id = ?) OR (from_id = ? AND to_id = ?)").bind(me.id, targetId, targetId, me.id),
+    /*
+     * 给"被删的一方"留一条 24 小时冷却（2026-10-27）：
+     * 被删的人不能立刻把你加回来（否则删了等于没删，骚扰也就没法止血）；
+     * 但**删人的一方自己可以立刻加回来**（后悔药不算骚扰）——
+     * 因为冷却只按 `from_id = 申请者` 这一侧判定。
+     */
+    env.DB.prepare(
+      "INSERT INTO friend_requests (from_id, to_id, at, note, status) VALUES (?, ?, ?, NULL, 1) " +
+        "ON CONFLICT(from_id, to_id) DO UPDATE SET at = excluded.at, status = 1",
+    ).bind(targetId, me.id, now),
   ]);
   // 被删的人那边也要立刻消失，别让他在列表里点一个已经不是好友的人
   await pushInboxHint(env, targetId, "FRIEND");
@@ -2225,6 +2380,10 @@ async function accountSendInvite(request, env) {
    */
   const roomKey = String(body?.roomKey ?? "").trim();
   const safeKey = /^[A-Za-z0-9_-]{16,128}$/.test(roomKey) ? roomKey : null;
+  // 每日软上限：房主一天拉 50 个人已经很多了，再多基本是脚本
+  if (!(await bumpDaily(env, me.id, "invite", INVITE_DAILY))) {
+    return accountJson(request, { error: "rate-limited" }, 429);
+  }
   await env.DB.prepare(
     "INSERT INTO room_invites (from_id, to_id, code, at, room_key) VALUES (?, ?, ?, ?, ?) " +
       "ON CONFLICT(from_id, to_id) DO UPDATE SET code = excluded.code, at = excluded.at, room_key = excluded.room_key",
@@ -2283,20 +2442,32 @@ async function accountInvites(request, env) {
   const me = await currentAccount(request, env);
   if (!me) return accountJson(request, { invites: [] }, 200);
   // 只保留 24 小时内的：再久的房间基本早就散了，留着只会让人白点一次
-  const alive = Date.now() - 24 * 3600_000;
+  const now = Date.now();
   const rows = await env.DB.prepare(
-    "SELECT a.*, i.code AS invite_code, i.at AS invite_at, i.room_key AS invite_key FROM room_invites i " +
-      "JOIN accounts a ON a.id = i.from_id WHERE i.to_id = ? AND i.at > ? ORDER BY i.at DESC LIMIT 20",
+    "SELECT a.*, i.code AS invite_code, i.at AS invite_at, i.room_key AS invite_key, " +
+      "p.last_seen AS from_last_seen, p.room_code AS from_room " +
+      "FROM room_invites i JOIN accounts a ON a.id = i.from_id " +
+      "LEFT JOIN account_presence p ON p.account_id = i.from_id " +
+      "WHERE i.to_id = ? AND i.at > ? ORDER BY i.at DESC LIMIT 20",
   )
-    .bind(me.id, alive)
+    .bind(me.id, now - INVITE_TTL_MS)
     .all();
   return accountJson(
     request,
     {
       invites: (rows.results ?? []).map((row) => ({
-        from: toProfile(row),
+        from: toPublicProfile(row),
         code: row.invite_code,
         at: row.invite_at,
+        /*
+         * 房主此刻在不在线（2026-10-27）：
+         * 23 小时前的邀请如果房主早走了，点「加入」只会得到"房主不在线"——
+         * 不如在列表里就标出来，别让人白点一次。
+         */
+        fromPresence:
+          row.from_last_seen && now - row.from_last_seen <= PRESENCE_ONLINE_MS
+            ? { state: "online", lastSeen: row.from_last_seen, ...(row.from_room ? { roomCode: row.from_room } : {}) }
+            : { state: "offline", lastSeen: row.from_last_seen ?? 0 },
         ...(row.invite_key ? { roomKey: row.invite_key } : {}),
       })),
     },
@@ -2311,6 +2482,204 @@ async function accountDismissInvite(request, env, fromId) {
   await env.DB.prepare("DELETE FROM room_invites WHERE from_id = ? AND to_id = ?")
     .bind(fromId, me.id)
     .run();
+  return accountJson(request, { ok: true }, 200);
+}
+
+// ---------------------------------------------------------------------------
+// 敲门（2026-10-27）：好友在某个房间里，我进不去（私密房没钥匙 / 不知道密码）
+// ---------------------------------------------------------------------------
+//
+// 完整链路：
+//   1. A 点「请求进入」→ POST /knocks { id: B } → knocks 表 + 推 B 一次 INVITE 提示；
+//   2. B 的客户端收到提示去拉 GET /knocks，房间里弹出「A 想进你的房间」；
+//   3. B 点同意 → POST /knocks/accept { from: A, code, roomKey }：
+//      **钥匙由 B 的客户端提供**，服务端只负责转交（写进 room_invites）+ 推 A；
+//   4. A 收到 INVITE → 邀请列表里出现一条带钥匙的邀请 → 一键进房。
+//
+// 为什么复用 INVITE 这种推送类型，而不是新加一种 KNOCK：
+//   推送白名单在**独立的信令 Worker**（worker/signal/index.js）里，改它要单独
+//   `npm run signal:deploy` 且必须先于网页部署；而 INVITE 的语义本来就是
+//   "房间邀请相关的事变了"，客户端收到后顺带拉一次 /knocks 即可，零部署风险。
+
+/** 我收到的敲门（10 分钟内有效）。 */
+async function accountKnocks(request, env) {
+  const me = await currentAccount(request, env);
+  if (!me) return accountJson(request, { knocks: [] }, 200);
+  const rows = await env.DB.prepare(
+    "SELECT a.*, k.at AS knock_at FROM knocks k JOIN accounts a ON a.id = k.from_id " +
+      "WHERE k.to_id = ? AND k.at > ? ORDER BY k.at DESC LIMIT 10",
+  )
+    .bind(me.id, Date.now() - KNOCK_TTL_MS)
+    .all();
+  return accountJson(
+    request,
+    {
+      knocks: (rows.results ?? []).map((row) => ({ from: toPublicProfile(row), at: row.knock_at })),
+    },
+    200,
+  );
+}
+
+/** 请求进入好友所在的房间。同一对好友 1 小时只敲一次（重复点不再打扰房主）。 */
+async function accountKnock(request, env) {
+  const me = await currentAccount(request, env);
+  if (!me) return accountJson(request, { error: "not-found" }, 401);
+  const body = await request.json().catch(() => null);
+  const toId = String(body?.id ?? "").trim();
+  if (!/^\d{8}$/.test(toId)) return accountJson(request, { error: "not-found" }, 404);
+  if (toId === me.id) return accountJson(request, { error: "self" }, 400);
+  // 只允许敲好友：陌生人之间没有"敲门"这回事
+  const friend = await env.DB.prepare(
+    "SELECT 1 AS x FROM friendships WHERE account_id = ? AND friend_id = ?",
+  )
+    .bind(me.id, toId)
+    .first();
+  if (!friend) return accountJson(request, { error: "not-found" }, 403);
+
+  const now = Date.now();
+  const existing = await env.DB.prepare("SELECT at FROM knocks WHERE from_id = ? AND to_id = ?")
+    .bind(me.id, toId)
+    .first();
+  if (existing && now - Number(existing.at ?? 0) < 3600_000) {
+    return accountJson(request, { ok: true, pending: true }, 200);
+  }
+  if (!(await bumpDaily(env, me.id, "knock", KNOCK_DAILY))) {
+    return accountJson(request, { error: "rate-limited" }, 429);
+  }
+  await env.DB.prepare(
+    "INSERT INTO knocks (from_id, to_id, at) VALUES (?, ?, ?) " +
+      "ON CONFLICT(from_id, to_id) DO UPDATE SET at = excluded.at",
+  )
+    .bind(me.id, toId, now)
+    .run();
+  await pushInviteHint(env, toId);
+  return accountJson(request, { ok: true }, 200);
+}
+
+/** 房主同意敲门：把他的房间（连同钥匙）作为一条邀请发给申请者。 */
+async function accountAcceptKnock(request, env) {
+  const me = await currentAccount(request, env);
+  if (!me) return accountJson(request, { error: "not-found" }, 401);
+  const body = await request.json().catch(() => null);
+  const fromId = String(body?.from ?? "").trim();
+  const code = String(body?.code ?? "").trim();
+  if (!/^\d{8}$/.test(fromId)) return accountJson(request, { error: "not-found" }, 404);
+  if (!/^\d{4}$|^\d{6}$/.test(code)) return accountJson(request, { error: "room-taken" }, 400);
+  const now = Date.now();
+  // 只处理还有效的敲门：过期的（房间可能都散了）不许凭旧记录发邀请
+  const knock = await env.DB.prepare(
+    "SELECT 1 AS x FROM knocks WHERE from_id = ? AND to_id = ? AND at > ?",
+  )
+    .bind(fromId, me.id, now - KNOCK_TTL_MS)
+    .first();
+  if (!knock) return accountJson(request, { error: "not-found" }, 404);
+
+  const roomKey = String(body?.roomKey ?? "").trim();
+  const safeKey = /^[A-Za-z0-9_-]{16,128}$/.test(roomKey) ? roomKey : null;
+  await env.DB.batch([
+    env.DB.prepare(
+      "INSERT INTO room_invites (from_id, to_id, code, at, room_key) VALUES (?, ?, ?, ?, ?) " +
+        "ON CONFLICT(from_id, to_id) DO UPDATE SET code = excluded.code, at = excluded.at, room_key = excluded.room_key",
+    ).bind(me.id, fromId, code, now, safeKey),
+    env.DB.prepare("DELETE FROM knocks WHERE from_id = ? AND to_id = ?").bind(fromId, me.id),
+  ]);
+  await pushInviteHint(env, fromId);
+  return accountJson(request, { ok: true }, 200);
+}
+
+/** 忽略一次敲门。 */
+async function accountDismissKnock(request, env, fromId) {
+  const me = await currentAccount(request, env);
+  if (!me) return accountJson(request, { ok: false }, 401);
+  await env.DB.prepare("DELETE FROM knocks WHERE from_id = ? AND to_id = ?")
+    .bind(fromId, me.id)
+    .run();
+  return accountJson(request, { ok: true }, 200);
+}
+
+// ---------------------------------------------------------------------------
+// 最近一起玩（2026-10-27）
+// ---------------------------------------------------------------------------
+//
+// 数据来源是客户端上报（房间名册里本来就有 accountId），服务端只做存在性校验、
+// 去重、7 天过期与 30 条上限。**只自己可见**：recent_plays 按 owner_id 查，
+// 没有"谁和谁玩过"的第三方查询接口。
+//
+// 伪造边界：我最多能把一个陌生人塞进**我自己的**列表（还要对方同意才能变好友），
+// 塞不进别人的列表，也变不出好友关系。
+
+/** 我最近一起玩过的人（7 天内、最多 30 条）。 */
+async function accountRecentPlays(request, env) {
+  const me = await currentAccount(request, env);
+  if (!me) return accountJson(request, { plays: [] }, 200);
+  const rows = await env.DB.prepare(
+    "SELECT a.*, r.at AS play_at FROM recent_plays r JOIN accounts a ON a.id = r.peer_id " +
+      "WHERE r.owner_id = ? AND r.at > ? ORDER BY r.at DESC LIMIT 30",
+  )
+    .bind(me.id, Date.now() - RECENT_PLAY_TTL_MS)
+    .all();
+  return accountJson(
+    request,
+    {
+      plays: (rows.results ?? []).map((row) => ({
+        account: toPublicProfile(row),
+        at: row.play_at,
+      })),
+    },
+    200,
+  );
+}
+
+/** 上报"我刚和这些人在同一个房间"。客户端节流后调用（一次最多 20 个 ID）。 */
+async function accountReportRecentPlays(request, env) {
+  const me = await currentAccount(request, env);
+  if (!me) return accountJson(request, { ok: false }, 401);
+  const body = await request.json().catch(() => null);
+  const raw = Array.isArray(body?.ids) ? body.ids : [];
+  const now = Date.now();
+  const ids = [...new Set(raw.map((id) => String(id).trim()))]
+    .filter((id) => /^\d{8}$/.test(id) && id !== me.id)
+    .slice(0, 20);
+  if (ids.length === 0) return accountJson(request, { ok: true }, 200);
+
+  const statements = [
+    // 顺手清理自己的过期记录（每次上报都清，不需要额外的定时任务）
+    env.DB.prepare("DELETE FROM recent_plays WHERE owner_id = ? AND at < ?").bind(
+      me.id,
+      now - RECENT_PLAY_TTL_MS,
+    ),
+  ];
+
+  /*
+   * 先确认这些 ID 真实存在，再插入。
+   *
+   * 早先写的是 `INSERT ... SELECT ... WHERE EXISTS (...) ON CONFLICT`：
+   * SQLite 允许，但「SELECT + upsert」这个组合在解析上有歧义（必须带 WHERE 才不报错），
+   * 换成一次 IN 查询 + 普通 VALUES upsert，语义一样、可读性好，也不依赖那条解析规则。
+   */
+  const placeholders = ids.map(() => "?").join(", ");
+  const found = await env.DB.prepare(`SELECT id FROM accounts WHERE id IN (${placeholders})`)
+    .bind(...ids)
+    .all();
+  const valid = (found.results ?? []).map((row) => row.id);
+  if (valid.length === 0) return accountJson(request, { ok: true }, 200);
+
+  for (const id of valid) {
+    statements.push(
+      env.DB.prepare(
+        "INSERT INTO recent_plays (owner_id, peer_id, at) VALUES (?, ?, ?) " +
+          "ON CONFLICT(owner_id, peer_id) DO UPDATE SET at = excluded.at",
+      ).bind(me.id, id, now),
+    );
+  }
+  // 超量裁剪：只留最近 30 条
+  statements.push(
+    env.DB.prepare(
+      "DELETE FROM recent_plays WHERE owner_id = ? AND peer_id NOT IN " +
+        "(SELECT peer_id FROM recent_plays WHERE owner_id = ? ORDER BY at DESC LIMIT 30)",
+    ).bind(me.id, me.id),
+  );
+  await env.DB.batch(statements);
   return accountJson(request, { ok: true }, 200);
 }
 
@@ -2342,11 +2711,20 @@ async function handleAccount(request, env, url) {
     if (path === "/friends/reject" && request.method === "POST") return await accountRejectFriend(request, env);
     const removeMatch = /^\/friends\/(\d{8})$/.exec(path);
     if (removeMatch && request.method === "DELETE") return await accountRemoveFriend(request, env, removeMatch[1]);
+    // 同一个路径：PATCH 改备注名（仅自己可见），DELETE 删好友
+    if (removeMatch && request.method === "PATCH") return await accountSetAlias(request, env, removeMatch[1]);
     if (path === "/presence" && request.method === "POST") return await accountPresence(request, env);
     if (path === "/invites" && request.method === "POST") return await accountSendInvite(request, env);
     if (path === "/invites" && request.method === "GET") return await accountInvites(request, env);
     const inviteMatch = /^\/invites\/(\d{8})$/.exec(path);
     if (inviteMatch && request.method === "DELETE") return await accountDismissInvite(request, env, inviteMatch[1]);
+    if (path === "/knocks" && request.method === "GET") return await accountKnocks(request, env);
+    if (path === "/knocks" && request.method === "POST") return await accountKnock(request, env);
+    if (path === "/knocks/accept" && request.method === "POST") return await accountAcceptKnock(request, env);
+    const knockMatch = /^\/knocks\/(\d{8})$/.exec(path);
+    if (knockMatch && request.method === "DELETE") return await accountDismissKnock(request, env, knockMatch[1]);
+    if (path === "/recent-plays" && request.method === "GET") return await accountRecentPlays(request, env);
+    if (path === "/recent-plays" && request.method === "POST") return await accountReportRecentPlays(request, env);
     return accountJson(request, { error: "not found" }, 404);
   } catch (error) {
     /*

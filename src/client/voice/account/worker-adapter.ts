@@ -19,6 +19,8 @@ import {
   type AuthResult,
   type FriendRequest,
   type FriendsSnapshot,
+  type Knock,
+  type RecentPlay,
   type RoomInvite,
 } from "./types";
 
@@ -52,6 +54,9 @@ function toError(code: unknown): AccountError {
     case "already-friend":
     case "self":
     case "room-taken":
+      return code;
+    case "cooldown":
+    case "rate-limited":
       return code;
     default:
       return "unknown";
@@ -222,8 +227,11 @@ export class WorkerAccountAdapter implements AccountAdapter {
     return { account: account ?? undefined };
   }
 
-  addFriend(accountId: string): Promise<AuthResult> {
-    return this.friendAction("/friends", accountId);
+  addFriend(accountId: string, note?: string): Promise<AuthResult> {
+    return this.friendAction("/friends", accountId, "POST", {
+      id: accountId,
+      ...(note ? { note } : {}),
+    });
   }
 
   acceptFriend(accountId: string): Promise<AuthResult> {
@@ -236,6 +244,42 @@ export class WorkerAccountAdapter implements AccountAdapter {
 
   removeFriend(accountId: string): Promise<AuthResult> {
     return this.friendAction(`/friends/${accountId}`, "", "DELETE");
+  }
+
+  /** 备注名：PATCH /friends/:id（仅自己可见，存 friendships 的自己那一行） */
+  setAlias(accountId: string, alias: string): Promise<AuthResult> {
+    return this.friendAction(`/friends/${accountId}`, accountId, "PATCH", { alias });
+  }
+
+  knock(accountId: string): Promise<AuthResult> {
+    return this.friendAction("/knocks", accountId);
+  }
+
+  async knocks(): Promise<Knock[]> {
+    const { data } = await this.request("/knocks");
+    return (data["knocks"] as Knock[] | undefined) ?? [];
+  }
+
+  acceptKnock(fromAccountId: string, roomCode: string, roomKey?: string): Promise<AuthResult> {
+    return this.friendAction("/knocks/accept", fromAccountId, "POST", {
+      from: fromAccountId,
+      code: roomCode,
+      ...(roomKey ? { roomKey } : {}),
+    });
+  }
+
+  async dismissKnock(fromAccountId: string): Promise<void> {
+    await this.request(`/knocks/${fromAccountId}`, { method: "DELETE" });
+  }
+
+  async recentPlays(): Promise<RecentPlay[]> {
+    const { data } = await this.request("/recent-plays");
+    return (data["plays"] as RecentPlay[] | undefined) ?? [];
+  }
+
+  async reportRecentPlays(accountIds: string[]): Promise<void> {
+    if (!this.me || accountIds.length === 0) return;
+    await this.request("/recent-plays", { method: "POST", body: { ids: accountIds } });
   }
 
   async snapshot(): Promise<FriendsSnapshot> {

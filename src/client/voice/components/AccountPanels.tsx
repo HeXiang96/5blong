@@ -4,8 +4,8 @@
  * 视觉沿用首页那套「纸面 + 木框」，不引入白底卡片——见 styles.css 里的
  * .vx-sheet / .vx-sheet-* 类。
  */
-import { useCallback, useEffect, useRef, useState } from "react";
-import { Copy, LogOut, Search, UserPlus, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Copy, DoorOpen, LogOut, MoreHorizontal, Pencil, Search, Trash2, UserPlus, X } from "lucide-react";
 
 import landingPigUrl from "../assets/landing-pig.webp?url";
 
@@ -14,7 +14,10 @@ import type {
   AccountAdapter,
   AccountError,
   AccountProfile,
+  FriendEntry,
   FriendsSnapshot,
+  Knock,
+  RecentPlay,
   RoomInvite,
 } from "../account/types";
 import { ACCOUNT_ERROR_TEXT, validatePassword, validateUsername } from "../account/types";
@@ -312,32 +315,57 @@ function minutesAgo(at: number): string {
   return `${Math.floor(diff / 86_400_000)} 天前`;
 }
 
+/** 备注名优先、昵称兜底（2026-10-27）：好友改了昵称，你还按熟悉的名字找到他。 */
+function nameOf(entry: FriendEntry): string {
+  return entry.alias?.trim() || entry.account.name;
+}
+
+/** 一行里正在展开的东西：⋯ 菜单 / 改备注 / 确认移除。 */
+type RowState = { id: string; kind: "menu" | "alias" | "remove" } | null;
+
 interface FriendsDrawerProps {
   open: boolean;
   adapter: AccountAdapter;
   snapshot: FriendsSnapshot;
   onClose: () => void;
   onChanged: () => void;
-  /** 当前所在房间（用于显示"在 2354 房"） */
+  /** 当前所在房间（用于显示"在 2354 房"、判断能不能邀请） */
   roomCode?: string | null;
-  /** 邀请：复制一条邀请文案（真正的推送通道还没接） */
+  /** 邀请：把邀请推到对方的好友面板（离线也不丢） */
   onInvite?: (account: AccountProfile) => Promise<boolean>;
   /**
    * 能不能邀请：**只有房主可以**（2026-10-26 业主口径）。
    * 成员可以自己复制房间码发给朋友，但"从好友列表拉人"是房主的动作。
    */
   canInvite?: boolean;
-  /**
-   * 好友发来的房间邀请（会留档，不靠一闪而过的弹窗）。
-   * 业主口径 2026-10-26：没看见也不该耽误，回来在「邀请」里还留着。
-   */
+  /** 好友发来的房间邀请（会留档，不靠一闪而过的弹窗） */
   invites?: RoomInvite[];
-  /** 加入这条邀请的房间（私密房会在进房时再要临时密码） */
   onJoinInvite?: (invite: RoomInvite) => void;
-  /** 忽略这条邀请（从列表里移除） */
   onDismissInvite?: (invite: RoomInvite) => void;
+  /**
+   * 敲门：好友在某个房间里、但我进不去（私密房没钥匙）时，请求他放我进去。
+   * 房主同意后，他会发一条带钥匙的邀请过来。
+   */
+  onKnock?: (account: AccountProfile) => Promise<boolean>;
+  /** 我收到的敲门（房主侧，10 分钟内有效） */
+  knocks?: Knock[];
+  onAcceptKnock?: (knock: Knock) => void;
+  onDismissKnock?: (knock: Knock) => void;
+  /** 最近一起玩过的人：加好友最自然的入口（同房记录，只自己可见） */
+  recentPlays?: RecentPlay[];
 }
 
+/**
+ * 好友抽屉（2026-10-27 重做）。
+ *
+ * 这一版解决四件事：
+ *   1. **删得掉**：每行有 ⋯ 菜单（邀请 / 请求进入 / 备注名 / 移除好友）。
+ *      上一版只有「邀请」一个按钮，加错人以后用户没有任何自救手段。
+ *   2. **看得清谁叫得动**：按 在房间里 → 在线 → 离线 三段分组，不再按"加好友时间"排。
+ *   3. **四个 tab 收成三个**：请求和邀请本来就是同一件事的两面（都是"待你处理"），
+ *      合并后新用户不用猜该点哪个；敲门也放进这里。
+ *   4. **有入口能找到人**：底部「最近一起玩」解决"刚一起玩得很开心却加不上"。
+ */
 export function FriendsDrawer({
   open,
   adapter,
@@ -350,13 +378,24 @@ export function FriendsDrawer({
   invites = [],
   onJoinInvite,
   onDismissInvite,
+  onKnock,
+  knocks = [],
+  onAcceptKnock,
+  onDismissKnock,
+  recentPlays = [],
 }: FriendsDrawerProps) {
-  const [tab, setTab] = useState<"friends" | "invites" | "requests" | "add">("friends");
+  const [tab, setTab] = useState<"friends" | "pending" | "recent" | "add">("friends");
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<AccountProfile[]>([]);
+  /** 附言草稿：所有"加好友"入口共用（搜索结果 / 最近一起玩） */
   const [note, setNote] = useState("");
-  /** 已经复制过邀请的好友（按钮显示"已复制"，2 秒后复原） */
+  const [feedback, setFeedback] = useState("");
+  const [row, setRow] = useState<RowState>(null);
+  const [aliasDraft, setAliasDraft] = useState("");
+  /** 已经邀请过的好友（按钮显示「已邀请」，2.4 秒后复原） */
   const [invited, setInvited] = useState<Set<string>>(new Set());
+  /** 已经敲过门的好友 */
+  const [knocked, setKnocked] = useState<Set<string>>(new Set());
   const searchTimer = useRef(0);
 
   const runSearch = useCallback(
@@ -374,6 +413,8 @@ export function FriendsDrawer({
       setQuery("");
       setResults([]);
       setNote("");
+      setFeedback("");
+      setRow(null);
       return;
     }
     // popover 语义：点卡片外面关闭；点在卡片内或好友按钮上不关
@@ -383,6 +424,8 @@ export function FriendsDrawer({
       if (target.closest(".vx-friends")) return;
       if (target.closest(".vx-friends-btn")) return;
       if (target.closest(".vx-sign-friends")) return;
+      // ⋯ 菜单是 portal 渲染的（不在 .vx-friends 里），点它不能把整个抽屉关掉
+      if (target.closest(".vx-friend-menu")) return;
       onClose();
     };
     const onKey = (event: KeyboardEvent) => {
@@ -396,17 +439,264 @@ export function FriendsDrawer({
     };
   }, [open, onClose]);
 
+  /*
+   * ⋯ 菜单自己也要"点外面关掉"。
+   * 用冒泡阶段而不是捕获：抽屉那层捕获监听会把落在菜单外的点击判成"关抽屉"，
+   * 两个都跑会先关菜单再关抽屉，手感很怪。
+   * 另外消息列表内部滚动时菜单会错位（它是 fixed 的），所以滚一下就收起来。
+   */
+  useEffect(() => {
+    if (!row) return;
+    const onDown = (event: PointerEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (!target) return;
+      if (target.closest(".vx-friend-menu")) return;
+      if (target.closest(".vx-friend-more")) return;
+      if (target.closest(".vx-friend-row") && row.kind !== "menu") return;
+      setRow(null);
+    };
+    const onScroll = () => {
+      if (row.kind === "menu") setRow(null);
+    };
+    window.addEventListener("pointerdown", onDown);
+    window.addEventListener("scroll", onScroll, true);
+    return () => {
+      window.removeEventListener("pointerdown", onDown);
+      window.removeEventListener("scroll", onScroll, true);
+    };
+  }, [row]);
+
+  const pendingCount = snapshot.incoming.length + invites.length + knocks.length;
+
+  /** 在房间里 → 在线 → 离线（组内按显示名）。 */
+  const groups = useMemo(() => {
+    const inRoom: FriendEntry[] = [];
+    const online: FriendEntry[] = [];
+    const offline: FriendEntry[] = [];
+    for (const entry of snapshot.friends) {
+      const isOnline = entry.presence.state === "online";
+      const away = Boolean(entry.presence.roomCode && entry.presence.roomCode !== roomCode);
+      if (isOnline && away) inRoom.push(entry);
+      else if (isOnline) online.push(entry);
+      else offline.push(entry);
+    }
+    const byName = (a: FriendEntry, b: FriendEntry) =>
+      nameOf(a).localeCompare(nameOf(b), "zh-Hans-CN");
+    inRoom.sort(byName);
+    online.sort(byName);
+    offline.sort(byName);
+    return (
+      [
+        { key: "in-room", label: "在房间里", entries: inRoom },
+        { key: "online", label: "在线", entries: online },
+        { key: "offline", label: "离线", entries: offline },
+      ] as const
+    ).filter((group) => group.entries.length > 0);
+  }, [snapshot.friends, roomCode]);
+
+  /** 最近一起玩：去掉已经是好友的（那是废话），最多 8 条。 */
+  const recent = useMemo(() => {
+    const friendIds = new Set(snapshot.friends.map((entry) => entry.account.id));
+    return recentPlays.filter((play) => !friendIds.has(play.account.id)).slice(0, 8);
+  }, [recentPlays, snapshot.friends]);
+
   if (!open) return null;
 
-  const pending = snapshot.incoming.length;
-  const friendIds = new Set(snapshot.friends.map((entry) => entry.account.id));
+  /**
+   * 当前展开 ⋯ 菜单的那位好友。
+   *
+   * 菜单做在**抽屉底部的浮条**里，而不是跟在行后面：
+   *   1. 列表是 `overflow-y: auto`，跟在行后面的绝对定位元素会被裁掉（最后几行看不见）；
+   *   2. 挂到 body 用 fixed 坐标又会被页面自身的缩放/布局带偏（实测偏了 90px）。
+   * 底部浮条不依赖任何坐标，位置永远稳定，也不遮挡"我是对谁操作"——标题写着名字。
+   */
+  const menuEntry =
+    row?.kind === "menu"
+      ? (snapshot.friends.find((entry) => entry.account.id === row.id) ?? null)
+      : null;
+
+  const doInvite = async (account: AccountProfile) => {
+    const ok = await onInvite?.(account);
+    if (!ok) return;
+    // 文案：这是"邀请已推送"，不是"复制"——上一版写成「已复制」，用户会去剪贴板找
+    setInvited((prev) => new Set(prev).add(account.id));
+    window.setTimeout(() => {
+      setInvited((prev) => {
+        const next = new Set(prev);
+        next.delete(account.id);
+        return next;
+      });
+    }, 2_400);
+  };
+
+  const doKnock = async (account: AccountProfile) => {
+    const ok = await onKnock?.(account);
+    setRow(null);
+    if (!ok) return;
+    setKnocked((prev) => new Set(prev).add(account.id));
+    window.setTimeout(() => {
+      setKnocked((prev) => {
+        const next = new Set(prev);
+        next.delete(account.id);
+        return next;
+      });
+    }, 3_000);
+  };
+
+  const saveAlias = async (accountId: string) => {
+    await adapter.setAlias(accountId, aliasDraft);
+    setRow(null);
+    onChanged();
+  };
+
+  const doRemove = async (accountId: string) => {
+    await adapter.removeFriend(accountId);
+    setRow(null);
+    setFeedback("已移除。对方那边也会从列表里消失。");
+    onChanged();
+  };
+
+  const addFriend = async (account: AccountProfile) => {
+    const result = await adapter.addFriend(account.id, note);
+    setFeedback(
+      result.error ? ACCOUNT_ERROR_TEXT[result.error] : "已发送请求，等对方同意（附言会一起带过去）",
+    );
+    setNote("");
+    onChanged();
+  };
+
+  /** 好友行（含 ⋯ 菜单、备注名编辑、移除确认）。 */
+  const renderFriend = (entry: FriendEntry) => {
+    const online = entry.presence.state === "online";
+    const awayRoom = entry.presence.roomCode;
+    const inOtherRoom = Boolean(awayRoom && awayRoom !== roomCode);
+    const inMyRoom = Boolean(awayRoom && roomCode && awayRoom === roomCode);
+    const id = entry.account.id;
+    const isMenu = row !== null && row.id === id && row.kind === "menu";
+    const isAlias = row !== null && row.id === id && row.kind === "alias";
+    const isRemove = row !== null && row.id === id && row.kind === "remove";
+
+    return (
+      <div
+        className={`vx-friend-row ${online ? "vx-friend-row-on" : "vx-friend-row-off"}`}
+        key={id}
+      >
+        <span className={`vx-friend-dot${online ? " vx-friend-dot-on" : ""}`} aria-hidden />
+        <Avatar avatar={entry.account.avatar} color="#b783d9" name={nameOf(entry)} size={34} />
+
+        {isAlias ? (
+          <div className="vx-friend-main">
+            <input
+              className="vx-friend-edit"
+              autoFocus
+              value={aliasDraft}
+              maxLength={12}
+              placeholder={entry.account.name}
+              onChange={(event) => setAliasDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") void saveAlias(id);
+                if (event.key === "Escape") setRow(null);
+              }}
+            />
+            <span className="vx-friend-sub">备注只你自己看得见 · Enter 保存</span>
+          </div>
+        ) : isRemove ? (
+          <div className="vx-friend-main">
+            <b>移除 {nameOf(entry)}？</b>
+            <span className="vx-friend-sub">双方列表里都会消失，24 小时内他不能再加你</span>
+          </div>
+        ) : (
+          <div className="vx-friend-main">
+            <b title={`${entry.account.username} · ${entry.account.id}`}>{nameOf(entry)}</b>
+            <span className="vx-friend-sub" title={inOtherRoom ? `在 ${awayRoom} 房` : undefined}>
+              {/*
+               * 状态压到最短（2026-10-27 实拍）：原来写"在 612845 房"，占掉 80px，
+               * 长名字直接被截成 "Foam..."。现在只留房号徽标 / 本房 / 在线 / 离线。
+               */}
+              {inMyRoom ? (
+                "本房"
+              ) : online ? (
+                inOtherRoom ? (
+                  <i className="vx-friend-room">{awayRoom}</i>
+                ) : (
+                  "在线"
+                )
+              ) : (
+                "离线"
+              )}
+            </span>
+          </div>
+        )}
+
+        {isAlias ? (
+          <>
+            <button type="button" className="vx-btn vx-btn-small vx-btn-primary" onClick={() => void saveAlias(id)}>
+              保存
+            </button>
+            <button type="button" className="vx-btn vx-btn-small vx-btn-quiet" onClick={() => setRow(null)}>
+              取消
+            </button>
+          </>
+        ) : isRemove ? (
+          <>
+            <button type="button" className="vx-btn vx-btn-small vx-friend-danger" onClick={() => void doRemove(id)}>
+              移除
+            </button>
+            <button type="button" className="vx-btn vx-btn-small vx-btn-quiet" onClick={() => setRow(null)}>
+              取消
+            </button>
+          </>
+        ) : (
+          <>
+            {/*
+              主按钮只放"此刻真能做的事"：
+              在别的房间 → 请求进入；我是不房主但对方在线 → 邀请；
+              其它情况（我在房间里、或对方离线）不放大按钮，收进 ⋯ 里。
+            */}
+            {inOtherRoom ? (
+              <button
+                type="button"
+                className="vx-friend-act"
+                onClick={() => void doKnock(entry.account)}
+                title="发一条请求，房主同意后会把房间钥匙发给你"
+              >
+                {knocked.has(id) ? "已请求" : "进房"}
+              </button>
+            ) : canInvite && online && roomCode && !inMyRoom ? (
+              <button
+                type="button"
+                className="vx-friend-act"
+                onClick={() => void doInvite(entry.account)}
+                title="把邀请推到他的好友面板（离线也不会丢）"
+              >
+                {invited.has(id) ? "已邀请" : "邀请"}
+              </button>
+            ) : null}
+
+            <button
+              type="button"
+              className={`vx-friend-more${isMenu ? " vx-friend-more-on" : ""}`}
+              aria-label="更多操作"
+              aria-expanded={isMenu}
+              onClick={() => setRow(isMenu ? null : { id, kind: "menu" })}
+            >
+              <MoreHorizontal size={16} />
+            </button>
+          </>
+        )}
+      </div>
+    );
+  };
 
   return (
     <aside className="vx-friends" aria-label="好友">
       <div className="vx-friends-head">
         <div className="vx-friends-title">
           <b>好友</b>
-          <span>{snapshot.friends.length} 位</span>
+          <span>
+            {snapshot.friends.length} 位
+            {pendingCount > 0 ? ` · ${pendingCount} 条待处理` : ""}
+          </span>
         </div>
         <button type="button" className="vx-icon-btn" onClick={onClose} aria-label="关闭">
           <X size={16} />
@@ -423,17 +713,21 @@ export function FriendsDrawer({
         </button>
         <button
           type="button"
-          className={tab === "invites" ? "vx-friends-tab-on" : ""}
-          onClick={() => setTab("invites")}
+          className={tab === "pending" ? "vx-friends-tab-on" : ""}
+          onClick={() => setTab("pending")}
         >
-          邀请 {invites.length > 0 ? <b className="vx-friends-badge">{invites.length}</b> : null}
+          待处理 {pendingCount > 0 ? <b className="vx-friends-badge">{pendingCount}</b> : null}
         </button>
+        {/*
+          「最近一起玩」单独一个 tab（2026-10-27 业主问"在哪看"）：
+          原来塞在好友列表最底部，好友一多就得滚半天，等于没有入口。
+        */}
         <button
           type="button"
-          className={tab === "requests" ? "vx-friends-tab-on" : ""}
-          onClick={() => setTab("requests")}
+          className={tab === "recent" ? "vx-friends-tab-on" : ""}
+          onClick={() => setTab("recent")}
         >
-          请求 {pending > 0 ? <b className="vx-friends-badge">{pending}</b> : null}
+          最近玩 {recent.length > 0 ? <b className="vx-friends-badge-soft">{recent.length}</b> : null}
         </button>
         <button
           type="button"
@@ -445,49 +739,8 @@ export function FriendsDrawer({
       </div>
 
       <div className="vx-friends-body">
-        {tab === "invites" ? (
-          invites.length === 0 ? (
-            <div className="vx-friends-empty">
-              <EmptyArt variant="pig" />
-              <b>还没有邀请</b>
-              <p>好友在房间里点「邀请」后，这里会留一条记录（不会一闪就没）</p>
-            </div>
-          ) : (
-            invites.map((invite) => (
-              <div className="vx-friend-row" key={invite.from.id}>
-                <Avatar
-                  avatar={invite.from.avatar}
-                  color="#b783d9"
-                  name={invite.from.name}
-                  size={34}
-                />
-                <div className="vx-friend-main">
-                  <b>{invite.from.name}</b>
-                  <span className="vx-friend-sub">
-                    邀请你进语音房 <i className="vx-friend-room">{invite.code}</i> ·{" "}
-                    {minutesAgo(invite.at)}
-                    {/* 带钥匙的邀请点一下就进；只带房号的是旧版邀请/普通房 */}
-                    {invite.roomKey ? <b className="vx-friend-onepress"> · 点「加入」直接进</b> : null}
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  className="vx-btn vx-btn-small vx-btn-primary"
-                  onClick={() => onJoinInvite?.(invite)}
-                >
-                  加入
-                </button>
-                <button
-                  type="button"
-                  className="vx-btn vx-btn-small vx-btn-quiet"
-                  onClick={() => onDismissInvite?.(invite)}
-                >
-                  忽略
-                </button>
-              </div>
-            ))
-          )
-        ) : tab === "friends" ? (
+        {/* ── 好友 ───────────────────────────────────────────── */}
+        {tab === "friends" ? (
           snapshot.friends.length === 0 ? (
             <div className="vx-friends-empty">
               <EmptyArt variant="pig" />
@@ -495,119 +748,207 @@ export function FriendsDrawer({
               <p>用 8 位 ID 搜人，或在房间里点成员加好友</p>
             </div>
           ) : (
-            snapshot.friends.map((entry) => {
-              const online = entry.presence.state === "online";
-              const inOtherRoom = Boolean(
-                entry.presence.roomCode && entry.presence.roomCode !== roomCode,
-              );
-              return (
-                <div
-                  className={`vx-friend-row ${online ? "vx-friend-row-on" : "vx-friend-row-off"}`}
-                  key={entry.account.id}
-                >
-                  <span className={`vx-friend-dot${online ? " vx-friend-dot-on" : ""}`} aria-hidden />
+            <>
+              {feedback ? <p className="vx-friend-feedback">{feedback}</p> : null}
+              {groups.map((group) => (
+                <section className="vx-friends-group" key={group.key}>
+                  <h4>{group.label}</h4>
+                  {group.entries.map(renderFriend)}
+                </section>
+              ))}
+            </>
+          )
+        ) : null}
+
+        {/* ── 最近一起玩 ───────────────────────────────────── */}
+        {tab === "recent" ? (
+          recent.length === 0 ? (
+            <div className="vx-friends-empty">
+              <EmptyArt variant="pig" />
+              <b>还没有一起玩过的人</b>
+              <p>进一个房间待一会儿，同房过的人会出现在这里（只你自己看得见，保留 7 天）</p>
+            </div>
+          ) : (
+            <>
+              <p className="vx-recent-hint">
+                同房过的人 · 只你自己看得见 · 保留 7 天
+              </p>
+              {feedback ? <p className="vx-friend-feedback">{feedback}</p> : null}
+              {recent.map((play) => (
+                <div className="vx-friend-row" key={play.account.id}>
                   <Avatar
-                    avatar={entry.account.avatar}
+                    avatar={play.account.avatar}
                     color="#b783d9"
-                    name={entry.account.name}
-                    size={34}
+                    name={play.account.name}
+                    size={32}
                   />
                   <div className="vx-friend-main">
-                    <b>{entry.account.name}</b>
-                    {/*
-                     * 状态从"第二行"挪到名字右侧（2026-10-27）：
-                     * 原来每行长两行文字，一屏只放得下 6 个人；同行后排布压到
-                     * 约 48px，同样高度多放 2 个人。信息一个字没少。
-                     */}
-                    <span className="vx-friend-sub">
-                      {online ? (
-                        inOtherRoom ? (
-                          <>
-                            在 <i className="vx-friend-room">{entry.presence.roomCode}</i> 房
-                          </>
-                        ) : (
-                          "在线"
-                        )
-                      ) : (
-                        "离线"
-                      )}
-                    </span>
+                    <b>{play.account.name}</b>
+                    <span className="vx-friend-sub">{minutesAgo(play.at)}一起玩过</span>
                   </div>
-                  {canInvite ? (
                   <button
                     type="button"
                     className="vx-friend-act"
-                    disabled={!online || inOtherRoom || !roomCode}
-                    title={
-                      inOtherRoom
-                        ? "对方在别的房间里"
-                        : roomCode
-                          ? "把邀请推到他的好友面板（离线也不会丢）"
-                          : "先建一个房间，才能邀请"
-                    }
-                    onClick={() => {
-                      void onInvite?.(entry.account).then((ok) => {
-                        if (!ok) return;
-                        setInvited((prev) => new Set(prev).add(entry.account.id));
-                        window.setTimeout(() => {
-                          setInvited((prev) => {
-                            const next = new Set(prev);
-                            next.delete(entry.account.id);
-                            return next;
-                          });
-                        }, 2_000);
-                      });
-                    }}
+                    onClick={() => void addFriend(play.account)}
                   >
-                    {invited.has(entry.account.id) ? "已复制" : "邀请"}
+                    加好友
                   </button>
-                  ) : null}
                 </div>
-              );
-            })
+              ))}
+            </>
           )
         ) : null}
 
-        {tab === "requests" ? (
-          snapshot.incoming.length === 0 ? (
+        {/* ── 待处理：好友请求 + 房间邀请 + 敲门 ─────────────── */}
+        {tab === "pending" ? (
+          pendingCount === 0 ? (
             <div className="vx-friends-empty">
               <EmptyArt variant="leaf" />
-              <b>没有待处理的请求</b>
-              <p>别人加你时会出现在这里</p>
+              <b>没有待处理的事</b>
+              <p>别人加你、邀请你进房、请求进你的房，都会出现在这里</p>
             </div>
           ) : (
-            snapshot.incoming.map((request) => (
-              <div className="vx-friend-row vx-friend-row-req" key={request.account.id}>
-                <Avatar avatar={request.account.avatar} color="#b783d9" name={request.account.name} size={34} />
-                <div className="vx-friend-main">
-                  <b>{request.account.name}</b>
-                  <span className="vx-friend-sub">
-                    {request.account.username} · {request.account.id}
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  className="vx-btn vx-btn-small vx-btn-primary"
-                  onClick={() => {
-                    void adapter.acceptFriend(request.account.id).then(onChanged);
-                  }}
-                >
-                  同意
-                </button>
-                <button
-                  type="button"
-                  className="vx-btn vx-btn-small vx-btn-ghost"
-                  onClick={() => {
-                    void adapter.rejectFriend(request.account.id).then(onChanged);
-                  }}
-                >
-                  拒绝
-                </button>
-              </div>
-            ))
+            <>
+              {snapshot.incoming.length > 0 ? (
+                <section className="vx-friends-section">
+                  <h4>
+                    好友请求 <b>{snapshot.incoming.length}</b>
+                  </h4>
+                  {snapshot.incoming.map((request) => (
+                    <div className="vx-friend-row vx-friend-row-req" key={request.account.id}>
+                      <Avatar
+                        avatar={request.account.avatar}
+                        color="#b783d9"
+                        name={request.account.name}
+                        size={34}
+                      />
+                      <div className="vx-friend-main">
+                        <b>{request.account.name}</b>
+                        <span className="vx-friend-sub">
+                          {request.account.username} · {request.account.id}
+                        </span>
+                        {/* 附言：陌生人加你时唯一能判断"这人是谁"的线索 */}
+                        {request.note ? (
+                          <span className="vx-friend-note">「{request.note}」</span>
+                        ) : null}
+                      </div>
+                      <div className="vx-friend-acts">
+                        <button
+                          type="button"
+                          className="vx-btn vx-btn-small vx-btn-primary"
+                          onClick={() => {
+                            void adapter.acceptFriend(request.account.id).then(onChanged);
+                          }}
+                        >
+                          同意
+                        </button>
+                        <button
+                          type="button"
+                          className="vx-btn vx-btn-small vx-btn-ghost"
+                          onClick={() => {
+                            void adapter.rejectFriend(request.account.id).then(onChanged);
+                          }}
+                        >
+                          拒绝
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </section>
+              ) : null}
+
+              {invites.length > 0 ? (
+                <section className="vx-friends-section">
+                  <h4>
+                    房间邀请 <b>{invites.length}</b>
+                  </h4>
+                  {invites.map((invite) => {
+                    const hostOffline = invite.fromPresence?.state === "offline";
+                    return (
+                      <div className="vx-friend-row vx-friend-row-req" key={invite.from.id}>
+                        <Avatar
+                          avatar={invite.from.avatar}
+                          color="#b783d9"
+                          name={invite.from.name}
+                          size={34}
+                        />
+                        <div className="vx-friend-main">
+                          <b>{invite.from.name}</b>
+                          <span className="vx-friend-sub">
+                            邀请你进语音房 <i className="vx-friend-room">{invite.code}</i> ·{" "}
+                            {minutesAgo(invite.at)}
+                          </span>
+                          {hostOffline ? (
+                            // 23 小时前的邀请如果房主早走了，先标出来，别让人白点
+                            <span className="vx-friend-warn">房主已离线 · 这条邀请可能已失效</span>
+                          ) : invite.roomKey ? (
+                            <span className="vx-friend-onepress">点「加入」直接进（带钥匙）</span>
+                          ) : null}
+                        </div>
+                        <div className="vx-friend-acts">
+                          <button
+                            type="button"
+                            className="vx-btn vx-btn-small vx-btn-primary"
+                            onClick={() => onJoinInvite?.(invite)}
+                          >
+                            加入
+                          </button>
+                          <button
+                            type="button"
+                            className="vx-btn vx-btn-small vx-btn-quiet"
+                            onClick={() => onDismissInvite?.(invite)}
+                          >
+                            忽略
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </section>
+              ) : null}
+
+              {knocks.length > 0 ? (
+                <section className="vx-friends-section">
+                  <h4>
+                    想进你的房间 <b>{knocks.length}</b>
+                  </h4>
+                  {knocks.map((knock) => (
+                    <div className="vx-friend-row vx-friend-row-req" key={knock.from.id}>
+                      <Avatar
+                        avatar={knock.from.avatar}
+                        color="#b783d9"
+                        name={knock.from.name}
+                        size={34}
+                      />
+                      <div className="vx-friend-main">
+                        <b>{knock.from.name}</b>
+                        <span className="vx-friend-sub">{minutesAgo(knock.at)}想进你的房间</span>
+                      </div>
+                      <div className="vx-friend-acts">
+                        <button
+                          type="button"
+                          className="vx-btn vx-btn-small vx-btn-primary"
+                          onClick={() => onAcceptKnock?.(knock)}
+                        >
+                          <DoorOpen size={13} /> 放他进来
+                        </button>
+                        <button
+                          type="button"
+                          className="vx-btn vx-btn-small vx-btn-quiet"
+                          onClick={() => onDismissKnock?.(knock)}
+                        >
+                          忽略
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </section>
+              ) : null}
+            </>
           )
         ) : null}
 
+        {/* ── 添加 ───────────────────────────────────────────── */}
         {tab === "add" ? (
           <>
             <div className="vx-friends-search">
@@ -621,37 +962,43 @@ export function FriendsDrawer({
                 }}
               />
             </div>
-            {note ? <p className="vx-sheet-hint">{note}</p> : null}
+            <input
+              className="vx-friends-addnote"
+              value={note}
+              maxLength={30}
+              placeholder="附言（可选，让对方知道你是谁）"
+              onChange={(event) => setNote(event.target.value)}
+            />
+            {feedback ? <p className="vx-friend-feedback">{feedback}</p> : null}
             {results.map((candidate) => {
-              const already = friendIds.has(candidate.id);
+              const already = snapshot.friends.some((entry) => entry.account.id === candidate.id);
+              const sent = snapshot.outgoing.some((entry) => entry.account.id === candidate.id);
               return (
                 <div className="vx-friend-row" key={candidate.id}>
                   <Avatar avatar={candidate.avatar} color="#b783d9" name={candidate.name} size={32} />
                   <div className="vx-friend-main">
                     <b>{candidate.name}</b>
-                    <span>{candidate.username} · {candidate.id}</span>
+                    <span>
+                      {candidate.username} · {candidate.id}
+                    </span>
                   </div>
                   <button
                     type="button"
                     className="vx-btn vx-btn-small vx-btn-ghost"
-                    disabled={already}
-                    onClick={() => {
-                      void adapter.addFriend(candidate.id).then((result) => {
-                        setNote(
-                          result.error
-                            ? ACCOUNT_ERROR_TEXT[result.error]
-                            : "已发送请求，等对方同意",
-                        );
-                        onChanged();
-                      });
-                    }}
+                    disabled={already || sent}
+                    onClick={() => void addFriend(candidate)}
                   >
-                    <UserPlus size={13} /> {already ? "已是好友" : "加好友"}
+                    <UserPlus size={13} /> {already ? "已是好友" : sent ? "已发送" : "加好友"}
                   </button>
                 </div>
               );
             })}
             {query && results.length === 0 ? <p className="vx-sheet-hint">没找到这个账号。</p> : null}
+            {!query ? (
+              <p className="vx-sheet-hint">
+                让他把「我的资料 → 我的 ID」那串 8 位数字发给你；也可以直接输用户名。
+              </p>
+            ) : null}
           </>
         ) : null}
       </div>
@@ -660,9 +1007,79 @@ export function FriendsDrawer({
         {roomCode && !canInvite ? (
           <span>本房由房主邀请好友，你可以用顶部「复制邀请」把房间码发给朋友</span>
         ) : (
-          <span>{snapshot.outgoing.length > 0 ? `已发出 ${snapshot.outgoing.length} 条请求` : ""}</span>
+          <span>
+            {snapshot.outgoing.length > 0 ? `已发出 ${snapshot.outgoing.length} 条请求` : ""}
+          </span>
         )}
       </div>
+
+      {menuEntry
+        ? (() => {
+            const entry = menuEntry;
+            const online = entry.presence.state === "online";
+            const awayRoom = entry.presence.roomCode;
+            const inOtherRoom = Boolean(awayRoom && awayRoom !== roomCode);
+            const inMyRoom = Boolean(awayRoom && roomCode && awayRoom === roomCode);
+            return (
+              <>
+                {/* 点遮罩关掉：和"点外面关闭"同一个意思，只是这里有个明确的命中区域 */}
+                <div className="vx-friend-scrim" onClick={() => setRow(null)} aria-hidden />
+                <div className="vx-friend-sheet" role="menu">
+                  <div className="vx-friend-sheet-head">
+                    <b>{nameOf(entry)}</b>
+                    {/* 显示 8 位 ID：同名好友多的时候，这一个数字才是唯一能确认"没点错人"的 */}
+                    <span title={`${entry.account.username} · ${entry.account.id}`}>
+                      {entry.account.id}
+                    </span>
+                    <button
+                      type="button"
+                      className="vx-icon-btn"
+                      aria-label="关闭"
+                      onClick={() => setRow(null)}
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
+                  {canInvite && online && roomCode && !inOtherRoom && !inMyRoom ? (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setRow(null);
+                        void doInvite(entry.account);
+                      }}
+                    >
+                      <DoorOpen size={14} /> 邀请进我的房间
+                    </button>
+                  ) : null}
+                  {inOtherRoom ? (
+                    <button type="button" role="menuitem" onClick={() => void doKnock(entry.account)}>
+                      <DoorOpen size={14} /> 请求进入 {awayRoom} 房
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setAliasDraft(entry.alias ?? "");
+                      setRow({ id: entry.account.id, kind: "alias" });
+                    }}
+                  >
+                    <Pencil size={14} /> 设置备注名
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="vx-friend-menu-danger"
+                    onClick={() => setRow({ id: entry.account.id, kind: "remove" })}
+                  >
+                    <Trash2 size={14} /> 移除好友
+                  </button>
+                </div>
+              </>
+            );
+          })()
+        : null}
     </aside>
   );
 }

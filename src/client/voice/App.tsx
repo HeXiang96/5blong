@@ -14,12 +14,19 @@ import { shouldShowWhatsNew } from "./whats-new";
 import { SettingsView } from "./components/SettingsView";
 import { AccountDialog, FriendsDrawer } from "./components/AccountPanels";
 import { FriendRequestToast } from "./components/FriendRequestToast";
+import { KnockToast } from "./components/KnockToast";
 import { buildInviteText } from "./invite-text";
 import { LocalAccountAdapter, seedDemoAccounts } from "./account/local-adapter";
 import { WorkerAccountAdapter } from "./account/worker-adapter";
 import { startInbox, type InboxHandle } from "./account/inbox";
 import { useAccount } from "./account/use-account";
-import { ACCOUNT_ERROR_TEXT, type AccountProfile, type RoomInvite } from "./account/types";
+import {
+  ACCOUNT_ERROR_TEXT,
+  type AccountProfile,
+  type Knock,
+  type RecentPlay,
+  type RoomInvite,
+} from "./account/types";
 import { Banner } from "./components/ui";
 import { gameCodeFromUrl } from "../game/game-links";
 /*
@@ -49,9 +56,15 @@ export function App() {
     }
     return adapter;
   });
-  const account = useAccount(accountAdapter);
   const [accountOpen, setAccountOpen] = useState(false);
   const [friendsOpen, setFriendsOpen] = useState(false);
+  /*
+   * 好友快照的节奏随面板状态走（2026-10-27）：
+   * - 面板开着 → 20 秒，看到的就是"现在"（谁会为了一分钟前的状态点开面板）；
+   * - 关着 → 90 秒（业主 10-26 定的额度口径，绝大多数时间面板是关的）。
+   * 只影响 /friends 一个接口，邀请/敲门走下面那条更短的节奏。
+   */
+  const account = useAccount(accountAdapter, { pollMs: friendsOpen ? 20_000 : 90_000 });
   /*
    * 房间内收到好友请求：排一条轻提示，能就地同意（不用退出房间去好友面板）。
    * seen 记录已经提示过的账号，避免每次刷新重复弹。
@@ -83,6 +96,10 @@ export function App() {
    * - 收件箱断开 → 回到 8 秒（代理/弱网下推送不可用，轮询就是唯一通路）。
    */
   const [invites, setInvites] = useState<RoomInvite[]>([]);
+  /** 我收到的敲门（房主侧）：10 分钟内有效，同意后转成一条带钥匙的邀请 */
+  const [knocks, setKnocks] = useState<Knock[]>([]);
+  /** 最近一起玩过的人：只在打开好友面板时拉，随快照一起展示 */
+  const [recentPlays, setRecentPlays] = useState<RecentPlay[]>([]);
   const [inboxLive, setInboxLive] = useState(false);
   /**
    * 服务端声明"在线状态我代管"（收件箱里 `presence: true`）。
@@ -100,13 +117,27 @@ export function App() {
   useEffect(() => {
     if (!account.me) {
       setInvites([]);
+      setKnocks([]);
+      setRecentPlays([]);
       return;
     }
     let alive = true;
+    let tick = 0;
     const load = () => {
       void accountAdapter.invites().then((list) => {
         if (alive) setInvites(list);
       });
+      /*
+       * 敲门单独放慢：inbox 断开时这条循环是 8 秒一轮，
+       * 每轮都拉 /knocks 会在弱网环境下多花一个数量级的请求，
+       * 所以只在"推送可用"或每第 8 轮（≈64 秒）兜底拉一次。
+       */
+      if (inboxLive || tick === 0 || tick % 8 === 0) {
+        void accountAdapter.knocks().then((list) => {
+          if (alive) setKnocks(list);
+        });
+      }
+      tick += 1;
     };
     load();
     const timer = window.setInterval(load, inboxLive ? 60_000 : 8_000);
@@ -133,6 +164,8 @@ export function App() {
     const handle = startInbox(meId, {
       onInvite: () => {
         void accountAdapter.invites().then(setInvites);
+        // 敲门复用 INVITE 这条提示（见 worker 里的说明：不改信令 Worker 的推送白名单）
+        void accountAdapter.knocks().then(setKnocks);
       },
       /*
        * 好友关系变了（对方加我/同意我/拒绝我/删我）：立刻拉一次全量快照。
@@ -155,13 +188,18 @@ export function App() {
   /**
    * 打开好友面板时先拉一次快照（2026-10-27）。
    *
-   * 好友快照是 90 秒一轮（为了省请求），如果只靠定时器，点开面板那一刻看到的
-   * 可能是 90 秒前的旧数据 —— 刚被同意的好友还没出现、刚发的请求还没消。
+   * 好友快照是 20 秒一轮（面板关着是 90 秒），如果只靠定时器，点开面板那一刻看到的
+   * 可能是上一轮的数据 —— 刚被同意的好友还没出现、刚发的请求还没消。
    * 每次点开多 1 次请求，换来"看到的就是现在"，很划算。
+   *
+   * 「最近一起玩」也在这时候拉：它只在面板里有用，没必要常驻轮询。
    */
   useEffect(() => {
-    if (friendsOpen) void refreshAccountRef.current();
-  }, [friendsOpen]);
+    if (!friendsOpen) return;
+    void refreshAccountRef.current();
+    if (!account.me) return;
+    void accountAdapter.recentPlays().then(setRecentPlays);
+  }, [friendsOpen, account.me?.id, accountAdapter]);
 
   /**
    * 后台改过数字 ID：把本机房间钥匙搬到新 ID 名下，再告诉服务端已迁移。
@@ -274,6 +312,60 @@ export function App() {
     [accountAdapter, voice],
   );
 
+  /**
+   * 敲门（2026-10-27）：好友在别的房间、而我进不去时用。
+   *
+   * 为什么不是"直接进"：私密房没有钥匙就是进不去，硬闯只会看到"需要临时密码"。
+   * 所以改成请求——房主同意后，由**他的客户端**把带钥匙的邀请发回来，
+   * 安全边界和"只有房主能邀请"完全一致。
+   */
+  const knockFriend = useCallback(
+    async (target: AccountProfile) => {
+      const result = await accountAdapter.knock(target.id);
+      if (result.error) {
+        voice.setNotice({ kind: "error", text: ACCOUNT_ERROR_TEXT[result.error] });
+        return false;
+      }
+      voice.setNotice({
+        kind: "info",
+        text: `已请求进入 ${target.name} 的房间，等他同意（他同意后会在「待处理」里出现一条邀请）`,
+      });
+      return true;
+    },
+    [accountAdapter, voice],
+  );
+
+  /** 房主同意敲门：把我这间房（私密房连钥匙）作为邀请发给他。 */
+  const acceptKnock = useCallback(
+    (knock: Knock) => {
+      const code = voice.invite?.code;
+      if (!code) return;
+      const roomKey = voice.privateRoom ? voice.invite?.roomKey : undefined;
+      setKnocks((list) => list.filter((item) => item.from.id !== knock.from.id));
+      void accountAdapter.acceptKnock(knock.from.id, code, roomKey).then((result) => {
+        voice.setNotice(
+          result.error
+            ? { kind: "error", text: ACCOUNT_ERROR_TEXT[result.error] }
+            : {
+                kind: "info",
+                text: voice.privateRoom
+                  ? `已放 ${knock.from.name} 进来：他那边收到的是带钥匙的邀请，点一下就能进`
+                  : `已放 ${knock.from.name} 进来：他那边会收到一条邀请`,
+              },
+        );
+      });
+    },
+    [accountAdapter, voice],
+  );
+
+  const dismissKnock = useCallback(
+    (knock: Knock) => {
+      setKnocks((list) => list.filter((item) => item.from.id !== knock.from.id));
+      void accountAdapter.dismissKnock(knock.from.id);
+    },
+    [accountAdapter],
+  );
+
   /** 主操作：有账号就开自己那间，没登录就随手开一间。 */
   const startRoom = useCallback(async () => {
     const me = account.me;
@@ -318,6 +410,27 @@ export function App() {
     [account, accountAdapter, voice],
   );
 
+
+  /**
+   * 房主刷新 / 关页前确认（2026-10-27 业主实拍）。
+   *
+   * 屏蔽右键只是关掉**一个**误触入口：F5、点地址栏刷新、习惯性关标签页都还在。
+   * P2P 房间跟着房主存在，房主一刷新，其他人集体掉线——所以这里再兜一层系统确认。
+   *
+   * 只对房主生效（`voice.invite` 非空 = 我是这间房的主人），访客刷新只影响自己。
+   * 开发环境跳过：dev 下每次热更新都弹，没法干活。
+   */
+  useEffect(() => {
+    const code = voice.invite?.code;
+    if (!code || import.meta.env.DEV) return;
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      // 现代浏览器不显示自定义文案，但必须给 returnValue 一个值才会真的拦一下
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [voice.invite?.code]);
 
   // 账号 ID 只用于「加好友」：登录/退出时同步给引擎，不参与任何进房校验
   useEffect(() => {
@@ -423,6 +536,38 @@ export function App() {
     }
     return map;
   }, [account.snapshot.friends, voice.roomCode]);
+
+  /**
+   * 「最近一起玩」上报（2026-10-27）。
+   *
+   * 名册里本来就带 accountId（1.8.9 起），所以"同房过"这件事客户端最清楚。
+   * 只报有账号的人；服务端再校验账号是否存在、去重、7 天过期、最多 30 条。
+   *
+   * 为什么节流 5 分钟：进房、切页面、成员进出都会让这段重跑，
+   * 每次重渲染写一次库的话，一个下午就能把 D1 写额度磨掉。
+   */
+  const roomMemberIds = useMemo(
+    () =>
+      voice.members
+        .map((member) => member.accountId)
+        .filter((id): id is string => Boolean(id))
+        .sort(),
+    [voice.members],
+  );
+  const roomMemberKey = roomMemberIds.join(",");
+  const lastReportRef = useRef<{ key: string; at: number }>({ key: "", at: 0 });
+  useEffect(() => {
+    const me = account.me;
+    if (!me || !roomMemberKey) return;
+    const ids = roomMemberIds.filter((id) => id !== me.id);
+    if (ids.length === 0) return;
+    const now = Date.now();
+    if (lastReportRef.current.key === roomMemberKey && now - lastReportRef.current.at < 300_000) {
+      return;
+    }
+    lastReportRef.current = { key: roomMemberKey, at: now };
+    void accountAdapter.reportRecentPlays(ids);
+  }, [account.me?.id, roomMemberKey, accountAdapter]);
 
   const [onboardingOpen, setOnboardingOpen] = useState(false);
   const [whatsNewOpen, setWhatsNewOpen] = useState(false);
@@ -565,7 +710,7 @@ export function App() {
       <RoomView
         selfAccountId={account.me?.id ?? null}
         onOpenAccount={() => setAccountOpen(true)}
-        friendRequestCount={account.snapshot.incoming.length + invites.length}
+        friendRequestCount={account.snapshot.incoming.length + invites.length + knocks.length}
         onOpenFriends={() => setFriendsOpen(true)}
         friendAccountIds={new Set(account.snapshot.friends.map((entry) => entry.account.id))}
         onAddFriend={(accountId) =>
@@ -700,6 +845,18 @@ export function App() {
             );
           })()
         : null}
+      {/*
+        敲门提示（2026-10-27）：只有在房间里才可能"放人进来"，
+        不在房间时这条会留在好友面板的「待处理」里（红点已经算进去了）。
+      */}
+      {knocks.length > 0 ? (
+        <KnockToast
+          knock={knocks[0]!}
+          canAccept={Boolean(voice.invite?.code)}
+          onAccept={() => acceptKnock(knocks[0]!)}
+          onDismiss={() => dismissKnock(knocks[0]!)}
+        />
+      ) : null}
       <AccountDialog
         open={accountOpen}
         adapter={accountAdapter}
@@ -716,13 +873,22 @@ export function App() {
         adapter={accountAdapter}
         snapshot={account.snapshot}
         onClose={() => setFriendsOpen(false)}
-        onChanged={() => void account.refresh()}
+        onChanged={() => {
+          void account.refresh();
+          // 加好友之后「最近一起玩」里那条就该消失，顺手刷新一次
+          void accountAdapter.recentPlays().then(setRecentPlays);
+        }}
         roomCode={voice.invite?.code ?? null}
         canInvite={voice.members.some((member) => member.local && member.isHost)}
         onInvite={inviteFriend}
         invites={invites}
         onJoinInvite={joinInvite}
         onDismissInvite={dismissInvite}
+        knocks={knocks}
+        onKnock={knockFriend}
+        onAcceptKnock={acceptKnock}
+        onDismissKnock={dismissKnock}
+        recentPlays={recentPlays}
       />
       </>
     );
@@ -780,7 +946,7 @@ export function App() {
             onClaimMyRoom={claimRoomCode}
             needsPass={voice.needsPass}
             account={account.me}
-            friendRequests={account.snapshot.incoming.length + invites.length}
+            friendRequests={account.snapshot.incoming.length + invites.length + knocks.length}
             onOpenAccount={() => setAccountOpen(true)}
             onOpenFriends={() => setFriendsOpen(true)}
             onCreateGame={() => openGame("create")}
@@ -844,13 +1010,22 @@ export function App() {
         adapter={accountAdapter}
         snapshot={account.snapshot}
         onClose={() => setFriendsOpen(false)}
-        onChanged={() => void account.refresh()}
+        onChanged={() => {
+          void account.refresh();
+          // 加好友之后「最近一起玩」里那条就该消失，顺手刷新一次
+          void accountAdapter.recentPlays().then(setRecentPlays);
+        }}
         roomCode={voice.invite?.code ?? null}
         canInvite={voice.members.some((member) => member.local && member.isHost)}
         onInvite={inviteFriend}
         invites={invites}
         onJoinInvite={joinInvite}
         onDismissInvite={dismissInvite}
+        knocks={knocks}
+        onKnock={knockFriend}
+        onAcceptKnock={acceptKnock}
+        onDismissKnock={dismissKnock}
+        recentPlays={recentPlays}
       />
     </>
   );

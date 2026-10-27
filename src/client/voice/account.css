@@ -146,7 +146,9 @@
   top: 62px;
   right: 18px;
   z-index: 130;
-  width: 300px;
+  /* 336：每行要放得下 名字 + 状态 + 主按钮 + ⋯，300 会把长名字挤成省略号 */
+  width: 336px;
+  max-width: calc(100vw - 24px);
   max-height: min(460px, calc(100vh - 90px));
   display: flex;
   flex-direction: column;
@@ -942,4 +944,985 @@ html[data-theme="light"][data-daypart="night"] .vx-sign-pass-on:hover {
   :is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-sheet {
     scrollbar-color: rgba(255, 226, 170, 0.32) transparent;
   }
+}
+
+/* ===========================================================================
+   好友抽屉重做（2026-10-27）
+   ---------------------------------------------------------------------------
+   这一版新增/改动的东西：分组标题、行内 ⋯ 菜单、备注名行内编辑、
+   移除二次确认、待处理分区、最近一起玩、附言。
+   全部沿用「纸面 + 木框」这套语言：不铺底色块，只用发丝线、下划线和字重分层次。
+   =========================================================================== */
+
+/* 行要能承载绝对定位的 ⋯ 菜单 */
+.vx-friend-row {
+  position: relative;
+}
+
+/* 分组标题：在房间里 / 在线 / 离线 */
+.vx-friends-group {
+  display: flex;
+  flex-direction: column;
+}
+.vx-friends-group h4,
+.vx-friends-section h4 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 9px 5px 2px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: #8a7355;
+}
+.vx-friends-group:first-child h4 {
+  margin-top: 2px;
+}
+.vx-friends-group h4::after,
+.vx-friends-section h4::after {
+  content: "";
+  flex: 1 1 auto;
+  height: 1px;
+  background: linear-gradient(90deg, rgba(120, 78, 34, 0.16), rgba(120, 78, 34, 0));
+}
+/* 分区标题里的数字：比 tab 上的红点低调，只是告诉你有几条 */
+.vx-friends-section h4 b {
+  order: -1;
+  min-width: 15px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: rgba(194, 65, 12, 0.14);
+  color: #a33a24;
+  font-size: 9.5px;
+  line-height: 15px;
+  text-align: center;
+}
+
+/* ⋯ 按钮：和「邀请」同一行的次要动作，别抢主按钮 */
+.vx-friend-more {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: #8a7355;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.vx-friend-more:hover,
+.vx-friend-more-on {
+  background: rgba(168, 111, 44, 0.14);
+  color: #4a3212;
+}
+
+/* 遮罩：只在抽屉范围内变暗一点，让浮层从列表里浮起来（不遮整页） */
+.vx-friend-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 7;
+  border-radius: 15px;
+  background: rgba(74, 50, 18, 0.16);
+}
+
+/*
+ * 操作浮层：在**抽屉正中**悬浮（2026-10-27 业主定）。
+ *
+ * 走过的两版都不对：
+ *   1. 跟着那一行展开 —— 列表 overflow 会把它裁掉，最后几行根本看不见；
+ *   2. 贴在抽屉底部 —— 等于把列表拦腰截断，视觉上很丑。
+ * 居中悬浮既不会被裁，也不切列表，标题里写着是谁，遮罩一点就关。
+ */
+.vx-friend-sheet {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(248px, calc(100% - 36px));
+  z-index: 8;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 6px;
+  border-radius: 14px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.5) 0%, rgba(255, 255, 255, 0) 40%),
+    linear-gradient(180deg, #fffdf6 0%, #f7ecd6 100%);
+  border: 1px solid rgba(120, 78, 34, 0.28);
+  box-shadow: 0 12px 26px rgba(70, 44, 14, 0.24);
+  /*
+   * 不加淡入动画（2026-10-27 实拍踩到）：portal 到 body 之后，
+   * 无头截图/低帧率场景下动画会停在 opacity 0 的起始帧，菜单看着像"幽灵"。
+   * 菜单是"点了立刻要用的东西"，瞬间出现反而更跟手。
+   */
+}
+.vx-friend-sheet button {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 9px;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  color: #4a3212;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.vx-friend-sheet button:hover {
+  background: rgba(255, 246, 222, 0.92);
+}
+.vx-friend-sheet .vx-friend-menu-danger {
+  color: #a33a24;
+}
+.vx-friend-sheet .vx-friend-menu-danger:hover {
+  background: rgba(196, 74, 43, 0.1);
+}
+
+/* 备注名：就地输入，不弹窗（弹窗会丢焦点、还挡住列表） */
+.vx-friend-edit {
+  width: 100%;
+  min-width: 0;
+  padding: 5px 8px;
+  border: none;
+  border-radius: 8px;
+  background: rgba(255, 253, 246, 0.95);
+  box-shadow:
+    0 1px 2px rgba(70, 44, 14, 0.1) inset,
+    0 0 0 2px rgba(207, 150, 80, 0.28);
+  color: #4a3212;
+  font: inherit;
+  font-size: 12.5px;
+  outline: none;
+}
+
+/* 移除确认里的红色按钮：比「拒绝」更不可逆，必须一眼区分 */
+.vx-friend-danger {
+  border-color: rgba(163, 58, 36, 0.42) !important;
+  background: rgba(196, 74, 43, 0.1) !important;
+  color: #a33a24 !important;
+}
+.vx-friend-danger:hover {
+  background: rgba(196, 74, 43, 0.18) !important;
+}
+
+/* 申请附言 / 邀请失效提示 */
+.vx-friend-note {
+  margin-top: 1px;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: #6d5a3d;
+  font-style: italic;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.vx-friend-warn {
+  margin-top: 1px;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: #b4622f;
+}
+
+/* 操作反馈：加好友/移除之后的一句人话 */
+.vx-friend-feedback {
+  margin: 2px 5px 6px;
+  font-size: 11px;
+  line-height: 1.55;
+  color: #6d5a3d;
+}
+
+/* 待处理分区之间留一道虚线，别让人以为请求和邀请是同一种东西 */
+.vx-friends-section + .vx-friends-section {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px dashed rgba(120, 78, 34, 0.14);
+}
+
+/* 最近一起玩：折叠区，默认展开但可以收起 */
+.vx-recent {
+  margin-top: 10px;
+  padding-top: 6px;
+  border-top: 1px dashed rgba(120, 78, 34, 0.18);
+}
+.vx-recent-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 3px 5px;
+  border: none;
+  background: none;
+  color: #6d4b21;
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  text-align: left;
+}
+.vx-recent-head:hover {
+  color: #4a3212;
+}
+.vx-recent-head b {
+  margin-left: auto;
+  min-width: 15px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: rgba(168, 111, 44, 0.16);
+  color: #7a5220;
+  font-size: 9.5px;
+  line-height: 15px;
+  text-align: center;
+}
+.vx-recent-hint {
+  margin: 0 5px 4px;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: #9a8a70;
+}
+
+/* 添加 tab 的附言输入：比搜索框低一档，不抢视线 */
+.vx-friends-addnote {
+  width: 100%;
+  margin: 0 0 8px;
+  padding: 7px 10px;
+  border: none;
+  border-radius: 10px;
+  background: rgba(255, 253, 246, 0.9);
+  box-shadow: 0 1px 2px rgba(70, 44, 14, 0.1) inset;
+  color: #4a3212;
+  font: inherit;
+  font-size: 11.5px;
+  outline: none;
+}
+.vx-friends-addnote::placeholder {
+  color: #a2937a;
+}
+.vx-friends-addnote:focus {
+  box-shadow:
+    0 1px 2px rgba(70, 44, 14, 0.08) inset,
+    0 0 0 3px rgba(207, 150, 80, 0.22);
+}
+
+/* ---------------- 深色 / 夜晚 ---------------- */
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-friends-group h4,
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-friends-section h4,
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-recent-hint,
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-friend-feedback,
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-friend-note {
+  color: #cbb28a;
+}
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-friends-group h4::after,
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-friends-section h4::after {
+  background: linear-gradient(90deg, rgba(255, 226, 170, 0.18), rgba(255, 226, 170, 0));
+}
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-friends-section h4 b {
+  background: rgba(255, 158, 110, 0.18);
+  color: #ffc3a8;
+}
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-friend-more {
+  color: #cbb28a;
+}
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-friend-more:hover,
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-friend-more-on {
+  background: rgba(255, 226, 170, 0.14);
+  color: #ffe9c8;
+}
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-friend-sheet {
+  background:
+    linear-gradient(180deg, rgba(255, 236, 200, 0.08) 0%, rgba(255, 236, 200, 0) 40%),
+    linear-gradient(180deg, #33291b 0%, #271f14 100%);
+  border-color: rgba(255, 226, 170, 0.24);
+}
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-friend-sheet button {
+  color: #f4e4c2;
+}
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-friend-sheet button:hover {
+  background: rgba(255, 236, 200, 0.1);
+}
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-friend-sheet .vx-friend-menu-danger {
+  color: #ffb4a2;
+}
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-friend-edit,
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-friends-addnote {
+  background: rgba(0, 0, 0, 0.28);
+  color: #f4e4c2;
+}
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-friends-addnote::placeholder {
+  color: #a08a6a;
+}
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-friend-danger {
+  border-color: rgba(255, 180, 162, 0.36) !important;
+  background: rgba(255, 120, 90, 0.14) !important;
+  color: #ffc3b0 !important;
+}
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-friend-warn {
+  color: #ffb98a;
+}
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-recent {
+  border-top-color: rgba(255, 226, 170, 0.16);
+}
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-recent-head {
+  color: #e8d5b2;
+}
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-recent-head b {
+  background: rgba(255, 226, 170, 0.16);
+  color: #f0d6a8;
+}
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-friends-section + .vx-friends-section {
+  border-top-color: rgba(255, 226, 170, 0.12);
+}
+
+/* 操作浮条的标题行：写清楚"我在对谁操作"，避免浮条遮住列表后认错人 */
+.vx-friend-sheet-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 1px 4px 6px;
+  margin-bottom: 3px;
+  border-bottom: 1px solid rgba(120, 78, 34, 0.14);
+}
+.vx-friend-sheet-head b {
+  min-width: 0;
+  font-size: 12.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.vx-friend-sheet-head span {
+  flex: 0 0 auto;
+  font-size: 10.5px;
+  color: #8a7355;
+}
+.vx-friend-sheet-head .vx-icon-btn {
+  margin-left: auto;
+}
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-friend-sheet-head {
+  border-bottom-color: rgba(255, 226, 170, 0.14);
+}
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-friend-sheet-head b {
+  color: #f4e4c2;
+}
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-friend-sheet-head span {
+  color: #cbb28a;
+}
+
+/* ── 待处理行的排布（2026-10-27 实拍修正）────────────────────────────
+ * 原来请求/邀请行是 `flex-wrap` + 两个按钮直接当 flex item：
+ * 附言一长，整块 main 被挤到下一行，头像孤零零留在上面、按钮掉到左下角。
+ * 现在把按钮包进 `.vx-friend-acts`（独占一整行、右对齐），
+ * main 给一个最小宽度，头像和文案永远同行。
+ */
+/* 文案块占到除头像和按钮列之外的全部宽度；buttons 不给固定 basis */
+.vx-friend-row-req .vx-friend-main {
+  flex: 1 1 0;
+  min-width: 0;
+}
+/*
+ * 按钮列竖排在右侧（2026-10-27 业主二审）：
+ * 一开始让按钮独占一整行、靠右对齐，结果左边空出一大片，整条看着很空。
+ * 竖排后文案能占满中间，按钮两个叠在右边，行高和 3 行文字差不多，视觉是紧凑的。
+ */
+.vx-friend-acts {
+  flex: 0 0 auto;
+  align-self: center;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.vx-friend-acts .vx-btn {
+  min-width: 66px;
+  justify-content: center;
+}
+
+/*
+ * 分区标题里的数量挪到文字后面（原来用 order:-1 放在前面，
+ * 看着像"1 好友请求 / 2 房间邀请"的序号，容易误会）。
+ */
+.vx-friends-section h4 b {
+  order: 0;
+  flex: 0 0 auto;
+}
+
+/* 「点加入直接进（带钥匙）」原来加粗+亮黄，抢了「加入」按钮的视线，降一档 */
+.vx-friend-onepress {
+  font-size: 10.5px;
+  font-weight: 500;
+}
+
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-friend-scrim {
+  background: rgba(0, 0, 0, 0.42);
+}
+
+/* ===========================================================================
+   场景主题适配（2026-10-27 业主：雪原 / 万圣夜 / 春节，面板要跟着变）
+   ---------------------------------------------------------------------------
+   以前好友抽屉、资料弹窗永远是那套暖木色纸面 —— 雪原的冷蓝白、万圣的紫黑、
+   春节的红金摆在旁边，面板像贴上去的。这里按场景各给一套配色。
+
+   为什么不做成 CSS 变量重构：那要动上百处历史颜色，风险远大于收益；
+   这里用「场景选择器 + 少量属性覆盖」，作用域只有 .vx-friends / .vx-sheet /
+   .vx-freq 三块浮层，改坏了也只影响浮层，不碰场景与猪圈。
+
+   优先级：本段在文件最后，覆盖前面的 dark / night 规则；所以每套场景都要
+   **自己写全**（浅色版 + 夜间版），不能指望继承。
+   =========================================================================== */
+
+/* ---------------------------------------------------------------- 雪原 · 白天 */
+html[data-scene="snow"]:not([data-daypart="night"]) .vx-friends,
+html[data-scene="snow"]:not([data-daypart="night"]) .vx-sheet,
+html[data-scene="snow"]:not([data-daypart="night"]) .vx-freq {
+  background:
+    radial-gradient(120% 60% at 100% 0%, rgba(206, 228, 248, 0.7) 0%, rgba(206, 228, 248, 0) 62%),
+    linear-gradient(180deg, #fbfdff 0%, #e8f0f8 100%);
+  border-color: rgba(74, 112, 152, 0.26);
+  color: #22384f;
+}
+html[data-scene="snow"]:not([data-daypart="night"]) .vx-friends-title b,
+html[data-scene="snow"]:not([data-daypart="night"]) .vx-friend-main b,
+html[data-scene="snow"]:not([data-daypart="night"]) .vx-friends-tabs .vx-friends-tab-on,
+html[data-scene="snow"]:not([data-daypart="night"]) .vx-friends-empty b,
+html[data-scene="snow"]:not([data-daypart="night"]) .vx-sheet-head strong,
+html[data-scene="snow"]:not([data-daypart="night"]) .vx-freq-main b {
+  color: #1b2f44;
+}
+html[data-scene="snow"]:not([data-daypart="night"]) .vx-friends-title span,
+html[data-scene="snow"]:not([data-daypart="night"]) .vx-friend-sub,
+html[data-scene="snow"]:not([data-daypart="night"]) .vx-friends-foot,
+html[data-scene="snow"]:not([data-daypart="night"]) .vx-friends-group h4,
+html[data-scene="snow"]:not([data-daypart="night"]) .vx-friends-section h4,
+html[data-scene="snow"]:not([data-daypart="night"]) .vx-friends-empty p,
+html[data-scene="snow"]:not([data-daypart="night"]) .vx-friend-feedback,
+html[data-scene="snow"]:not([data-daypart="night"]) .vx-recent-hint,
+html[data-scene="snow"]:not([data-daypart="night"]) .vx-sheet-hint,
+html[data-scene="snow"]:not([data-daypart="night"]) .vx-sheet-row > span:first-child,
+html[data-scene="snow"]:not([data-daypart="night"]) .vx-freq-main span {
+  color: #5b7189;
+}
+html[data-scene="snow"]:not([data-daypart="night"]) .vx-friends-tabs {
+  border-bottom-color: rgba(74, 112, 152, 0.18);
+}
+html[data-scene="snow"]:not([data-daypart="night"]) .vx-friends-tabs button {
+  color: #6b8098;
+}
+html[data-scene="snow"]:not([data-daypart="night"]) .vx-friends-tabs .vx-friends-tab-on::after {
+  background: linear-gradient(90deg, #8fb6d6, #4a7fb5);
+}
+html[data-scene="snow"]:not([data-daypart="night"]) .vx-friend-row {
+  border-bottom-color: rgba(74, 112, 152, 0.12);
+}
+html[data-scene="snow"]:not([data-daypart="night"]) .vx-friend-row:hover {
+  background: rgba(226, 240, 252, 0.85);
+}
+html[data-scene="snow"]:not([data-daypart="night"]) .vx-friend-act {
+  border-color: rgba(74, 112, 152, 0.34);
+  background: rgba(251, 253, 255, 0.9);
+  color: #2b4a68;
+}
+html[data-scene="snow"]:not([data-daypart="night"]) .vx-friend-room,
+html[data-scene="snow"]:not([data-daypart="night"]) .vx-recent-head b {
+  background: rgba(126, 169, 204, 0.22);
+  color: #33628f;
+}
+html[data-scene="snow"]:not([data-daypart="night"]) .vx-friend-more,
+html[data-scene="snow"]:not([data-daypart="night"]) .vx-recent-head {
+  color: #4a6d8f;
+}
+html[data-scene="snow"]:not([data-daypart="night"]) .vx-friends-search,
+html[data-scene="snow"]:not([data-daypart="night"]) .vx-friends-addnote,
+html[data-scene="snow"]:not([data-daypart="night"]) .vx-sheet-input {
+  background: rgba(251, 253, 255, 0.92);
+  color: #22384f;
+}
+html[data-scene="snow"]:not([data-daypart="night"]) .vx-friend-sheet {
+  background: linear-gradient(180deg, #fdfeff 0%, #eaf2f9 100%);
+  border-color: rgba(74, 112, 152, 0.3);
+}
+html[data-scene="snow"]:not([data-daypart="night"]) .vx-friend-sheet-head {
+  border-bottom-color: rgba(74, 112, 152, 0.16);
+}
+html[data-scene="snow"]:not([data-daypart="night"]) .vx-friend-sheet-head b,
+html[data-scene="snow"]:not([data-daypart="night"]) .vx-friend-menu button {
+  color: #1b2f44;
+}
+html[data-scene="snow"]:not([data-daypart="night"]) .vx-friend-sheet button {
+  color: #22384f;
+}
+html[data-scene="snow"]:not([data-daypart="night"]) .vx-friend-sheet button:hover {
+  background: rgba(226, 240, 252, 0.9);
+}
+html[data-scene="snow"]:not([data-daypart="night"]) .vx-friend-scrim {
+  background: rgba(24, 45, 68, 0.22);
+}
+html[data-scene="snow"]:not([data-daypart="night"]) .vx-friends-section + .vx-friends-section,
+html[data-scene="snow"]:not([data-daypart="night"]) .vx-recent {
+  border-color: rgba(74, 112, 152, 0.16);
+}
+html[data-scene="snow"]:not([data-daypart="night"]) .vx-friend-warn {
+  color: #9a5a2a;
+}
+
+/* ---------------------------------------------------------------- 雪原 · 夜里（深蓝） */
+html[data-scene="snow"][data-daypart="night"] .vx-friends,
+html[data-scene="snow"][data-daypart="night"] .vx-sheet,
+html[data-scene="snow"][data-daypart="night"] .vx-freq {
+  background:
+    radial-gradient(120% 60% at 100% 0%, rgba(120, 170, 220, 0.12) 0%, rgba(120, 170, 220, 0) 60%),
+    linear-gradient(180deg, #1a2434 0%, #121a26 100%);
+  border-color: rgba(150, 190, 230, 0.22);
+  color: #e6eef8;
+}
+html[data-scene="snow"][data-daypart="night"] .vx-friends-title b,
+html[data-scene="snow"][data-daypart="night"] .vx-friend-main b,
+html[data-scene="snow"][data-daypart="night"] .vx-friends-tabs .vx-friends-tab-on,
+html[data-scene="snow"][data-daypart="night"] .vx-friends-empty b,
+html[data-scene="snow"][data-daypart="night"] .vx-sheet-head strong,
+html[data-scene="snow"][data-daypart="night"] .vx-freq-main b {
+  color: #f2f7fd;
+}
+html[data-scene="snow"][data-daypart="night"] .vx-friends-title span,
+html[data-scene="snow"][data-daypart="night"] .vx-friend-sub,
+html[data-scene="snow"][data-daypart="night"] .vx-friends-foot,
+html[data-scene="snow"][data-daypart="night"] .vx-friends-group h4,
+html[data-scene="snow"][data-daypart="night"] .vx-friends-section h4,
+html[data-scene="snow"][data-daypart="night"] .vx-friends-empty p,
+html[data-scene="snow"][data-daypart="night"] .vx-friend-feedback,
+html[data-scene="snow"][data-daypart="night"] .vx-recent-hint,
+html[data-scene="snow"][data-daypart="night"] .vx-sheet-hint,
+html[data-scene="snow"][data-daypart="night"] .vx-sheet-row > span:first-child,
+html[data-scene="snow"][data-daypart="night"] .vx-freq-main span {
+  color: #a8bdd2;
+}
+html[data-scene="snow"][data-daypart="night"] .vx-friends-tabs {
+  border-bottom-color: rgba(150, 190, 230, 0.18);
+}
+html[data-scene="snow"][data-daypart="night"] .vx-friends-tabs button {
+  color: #9db4ca;
+}
+html[data-scene="snow"][data-daypart="night"] .vx-friends-tabs .vx-friends-tab-on::after {
+  background: linear-gradient(90deg, #9cc6ea, #5a9bd4);
+}
+html[data-scene="snow"][data-daypart="night"] .vx-friend-row {
+  border-bottom-color: rgba(150, 190, 230, 0.12);
+}
+html[data-scene="snow"][data-daypart="night"] .vx-friend-row:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+html[data-scene="snow"][data-daypart="night"] .vx-friend-act {
+  border-color: rgba(150, 190, 230, 0.3);
+  background: rgba(255, 255, 255, 0.08);
+  color: #e6eef8;
+}
+html[data-scene="snow"][data-daypart="night"] .vx-friend-room,
+html[data-scene="snow"][data-daypart="night"] .vx-recent-head b {
+  background: rgba(126, 169, 204, 0.24);
+  color: #bcd8f2;
+}
+html[data-scene="snow"][data-daypart="night"] .vx-friend-more,
+html[data-scene="snow"][data-daypart="night"] .vx-recent-head {
+  color: #a8bdd2;
+}
+html[data-scene="snow"][data-daypart="night"] .vx-friends-search,
+html[data-scene="snow"][data-daypart="night"] .vx-friends-addnote,
+html[data-scene="snow"][data-daypart="night"] .vx-sheet-input,
+html[data-scene="snow"][data-daypart="night"] .vx-friend-edit {
+  background: rgba(0, 0, 0, 0.28);
+  color: #e6eef8;
+}
+html[data-scene="snow"][data-daypart="night"] .vx-friend-sheet {
+  background: linear-gradient(180deg, #22303f 0%, #16202c 100%);
+  border-color: rgba(150, 190, 230, 0.26);
+}
+html[data-scene="snow"][data-daypart="night"] .vx-friend-sheet-head {
+  border-bottom-color: rgba(150, 190, 230, 0.16);
+}
+html[data-scene="snow"][data-daypart="night"] .vx-friend-sheet button {
+  color: #e6eef8;
+}
+html[data-scene="snow"][data-daypart="night"] .vx-friend-sheet button:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+html[data-scene="snow"][data-daypart="night"] .vx-friend-scrim {
+  background: rgba(0, 0, 0, 0.46);
+}
+html[data-scene="snow"][data-daypart="night"] .vx-friends-section + .vx-friends-section,
+html[data-scene="snow"][data-daypart="night"] .vx-recent {
+  border-color: rgba(150, 190, 230, 0.16);
+}
+html[data-scene="snow"][data-daypart="night"] .vx-friend-warn {
+  color: #ffc178;
+}
+html[data-scene="snow"][data-daypart="night"] .vx-friend-danger,
+html[data-scene="snow"][data-daypart="night"] .vx-friend-menu-danger {
+  color: #ffb4a2 !important;
+}
+
+/* ---------------------------------------------------------------- 万圣夜（固定紫黑，不看时段） */
+html[data-scene="halloween"] .vx-friends,
+html[data-scene="halloween"] .vx-sheet,
+html[data-scene="halloween"] .vx-freq {
+  background:
+    radial-gradient(120% 60% at 100% 0%, rgba(168, 110, 220, 0.22) 0%, rgba(168, 110, 220, 0) 62%),
+    linear-gradient(180deg, #2c2035 0%, #1c1526 100%);
+  border-color: rgba(190, 140, 230, 0.28);
+  color: #f2e8fa;
+}
+html[data-scene="halloween"] .vx-friends-title b,
+html[data-scene="halloween"] .vx-friend-main b,
+html[data-scene="halloween"] .vx-friends-tabs .vx-friends-tab-on,
+html[data-scene="halloween"] .vx-friends-empty b,
+html[data-scene="halloween"] .vx-sheet-head strong,
+html[data-scene="halloween"] .vx-freq-main b {
+  color: #fbf3ff;
+}
+html[data-scene="halloween"] .vx-friends-title span,
+html[data-scene="halloween"] .vx-friend-sub,
+html[data-scene="halloween"] .vx-friends-foot,
+html[data-scene="halloween"] .vx-friends-group h4,
+html[data-scene="halloween"] .vx-friends-section h4,
+html[data-scene="halloween"] .vx-friends-empty p,
+html[data-scene="halloween"] .vx-friend-feedback,
+html[data-scene="halloween"] .vx-recent-hint,
+html[data-scene="halloween"] .vx-sheet-hint,
+html[data-scene="halloween"] .vx-sheet-row > span:first-child,
+html[data-scene="halloween"] .vx-freq-main span {
+  color: #c3b2d6;
+}
+html[data-scene="halloween"] .vx-friends-tabs {
+  border-bottom-color: rgba(190, 140, 230, 0.2);
+}
+html[data-scene="halloween"] .vx-friends-tabs button {
+  color: #b6a3cb;
+}
+html[data-scene="halloween"] .vx-friends-tabs .vx-friends-tab-on::after {
+  background: linear-gradient(90deg, #ffb95e, #e2762b);
+}
+html[data-scene="halloween"] .vx-friend-row {
+  border-bottom-color: rgba(190, 140, 230, 0.14);
+}
+html[data-scene="halloween"] .vx-friend-row:hover {
+  background: rgba(255, 200, 120, 0.08);
+}
+/* 万圣的按钮走"南瓜橙"，这是整套主题里唯一的暖色，正好当强调色 */
+html[data-scene="halloween"] .vx-friend-act {
+  border-color: rgba(255, 169, 77, 0.42);
+  background: rgba(255, 169, 77, 0.12);
+  color: #ffcb8f;
+}
+html[data-scene="halloween"] .vx-friend-room,
+html[data-scene="halloween"] .vx-recent-head b {
+  background: rgba(255, 169, 77, 0.18);
+  color: #ffc98a;
+}
+html[data-scene="halloween"] .vx-friend-more,
+html[data-scene="halloween"] .vx-recent-head {
+  color: #c3b2d6;
+}
+html[data-scene="halloween"] .vx-friends-search,
+html[data-scene="halloween"] .vx-friends-addnote,
+html[data-scene="halloween"] .vx-sheet-input,
+html[data-scene="halloween"] .vx-friend-edit {
+  background: rgba(0, 0, 0, 0.32);
+  color: #f2e8fa;
+}
+html[data-scene="halloween"] .vx-friend-sheet {
+  background: linear-gradient(180deg, #33243f 0%, #22182c 100%);
+  border-color: rgba(190, 140, 230, 0.3);
+}
+html[data-scene="halloween"] .vx-friend-sheet-head {
+  border-bottom-color: rgba(190, 140, 230, 0.18);
+}
+html[data-scene="halloween"] .vx-friend-sheet button {
+  color: #f2e8fa;
+}
+html[data-scene="halloween"] .vx-friend-sheet button:hover {
+  background: rgba(255, 200, 120, 0.1);
+}
+html[data-scene="halloween"] .vx-friend-scrim {
+  background: rgba(10, 6, 14, 0.5);
+}
+html[data-scene="halloween"] .vx-friends-section + .vx-friends-section,
+html[data-scene="halloween"] .vx-recent {
+  border-color: rgba(190, 140, 230, 0.16);
+}
+html[data-scene="halloween"] .vx-friend-warn {
+  color: #ffbe6b;
+}
+html[data-scene="halloween"] .vx-friend-danger,
+html[data-scene="halloween"] .vx-friend-menu-danger {
+  color: #ff9a86 !important;
+}
+html[data-scene="halloween"] .vx-friend-onepress,
+html[data-scene="halloween"] .vx-friend-menu-danger,
+html[data-scene="halloween"] .vx-sheet-danger {
+  color: #ffb27a;
+}
+
+/* ---------------------------------------------------------------- 春节 · 白天（红金） */
+html[data-scene="spring"]:not([data-daypart="night"]) .vx-friends,
+html[data-scene="spring"]:not([data-daypart="night"]) .vx-sheet,
+html[data-scene="spring"]:not([data-daypart="night"]) .vx-freq {
+  background:
+    radial-gradient(120% 60% at 100% 0%, rgba(255, 214, 170, 0.6) 0%, rgba(255, 214, 170, 0) 62%),
+    linear-gradient(180deg, #fffaf3 0%, #fbe6d4 100%);
+  border-color: rgba(178, 60, 40, 0.28);
+  color: #5a2b1c;
+}
+html[data-scene="spring"]:not([data-daypart="night"]) .vx-friends-title b,
+html[data-scene="spring"]:not([data-daypart="night"]) .vx-friend-main b,
+html[data-scene="spring"]:not([data-daypart="night"]) .vx-friends-tabs .vx-friends-tab-on,
+html[data-scene="spring"]:not([data-daypart="night"]) .vx-friends-empty b,
+html[data-scene="spring"]:not([data-daypart="night"]) .vx-sheet-head strong,
+html[data-scene="spring"]:not([data-daypart="night"]) .vx-freq-main b {
+  color: #4a1f12;
+}
+html[data-scene="spring"]:not([data-daypart="night"]) .vx-friends-title span,
+html[data-scene="spring"]:not([data-daypart="night"]) .vx-friend-sub,
+html[data-scene="spring"]:not([data-daypart="night"]) .vx-friends-foot,
+html[data-scene="spring"]:not([data-daypart="night"]) .vx-friends-group h4,
+html[data-scene="spring"]:not([data-daypart="night"]) .vx-friends-section h4,
+html[data-scene="spring"]:not([data-daypart="night"]) .vx-friends-empty p,
+html[data-scene="spring"]:not([data-daypart="night"]) .vx-friend-feedback,
+html[data-scene="spring"]:not([data-daypart="night"]) .vx-recent-hint,
+html[data-scene="spring"]:not([data-daypart="night"]) .vx-sheet-hint,
+html[data-scene="spring"]:not([data-daypart="night"]) .vx-sheet-row > span:first-child,
+html[data-scene="spring"]:not([data-daypart="night"]) .vx-freq-main span {
+  color: #8a5f4a;
+}
+html[data-scene="spring"]:not([data-daypart="night"]) .vx-friends-tabs {
+  border-bottom-color: rgba(178, 60, 40, 0.18);
+}
+html[data-scene="spring"]:not([data-daypart="night"]) .vx-friends-tabs button {
+  color: #9a6a52;
+}
+html[data-scene="spring"]:not([data-daypart="night"]) .vx-friends-tabs .vx-friends-tab-on::after {
+  background: linear-gradient(90deg, #d99a4e, #b8342a);
+}
+html[data-scene="spring"]:not([data-daypart="night"]) .vx-friend-row {
+  border-bottom-color: rgba(178, 60, 40, 0.12);
+}
+html[data-scene="spring"]:not([data-daypart="night"]) .vx-friend-row:hover {
+  background: rgba(255, 236, 214, 0.9);
+}
+html[data-scene="spring"]:not([data-daypart="night"]) .vx-friend-act {
+  border-color: rgba(178, 60, 40, 0.32);
+  background: rgba(255, 250, 243, 0.92);
+  color: #7a3320;
+}
+html[data-scene="spring"]:not([data-daypart="night"]) .vx-friend-room,
+html[data-scene="spring"]:not([data-daypart="night"]) .vx-recent-head b {
+  background: rgba(200, 137, 47, 0.2);
+  color: #8a5a10;
+}
+html[data-scene="spring"]:not([data-daypart="night"]) .vx-friend-more,
+html[data-scene="spring"]:not([data-daypart="night"]) .vx-recent-head {
+  color: #8a5f4a;
+}
+html[data-scene="spring"]:not([data-daypart="night"]) .vx-friends-search,
+html[data-scene="spring"]:not([data-daypart="night"]) .vx-friends-addnote,
+html[data-scene="spring"]:not([data-daypart="night"]) .vx-sheet-input,
+html[data-scene="spring"]:not([data-daypart="night"]) .vx-friend-edit {
+  background: rgba(255, 250, 243, 0.94);
+  color: #4a1f12;
+}
+html[data-scene="spring"]:not([data-daypart="night"]) .vx-friend-sheet {
+  background: linear-gradient(180deg, #fffaf4 0%, #fbe9da 100%);
+  border-color: rgba(178, 60, 40, 0.3);
+}
+html[data-scene="spring"]:not([data-daypart="night"]) .vx-friend-sheet-head {
+  border-bottom-color: rgba(178, 60, 40, 0.16);
+}
+html[data-scene="spring"]:not([data-daypart="night"]) .vx-friend-sheet button {
+  color: #5a2b1c;
+}
+html[data-scene="spring"]:not([data-daypart="night"]) .vx-friend-sheet button:hover {
+  background: rgba(255, 236, 214, 0.92);
+}
+html[data-scene="spring"]:not([data-daypart="night"]) .vx-friend-scrim {
+  background: rgba(90, 30, 16, 0.2);
+}
+html[data-scene="spring"]:not([data-daypart="night"]) .vx-friends-section + .vx-friends-section,
+html[data-scene="spring"]:not([data-daypart="night"]) .vx-recent {
+  border-color: rgba(178, 60, 40, 0.16);
+}
+html[data-scene="spring"]:not([data-daypart="night"]) .vx-friend-warn {
+  color: #b4622f;
+}
+
+/* ---------------------------------------------------------------- 春节 · 夜里（深红） */
+html[data-scene="spring"][data-daypart="night"] .vx-friends,
+html[data-scene="spring"][data-daypart="night"] .vx-sheet,
+html[data-scene="spring"][data-daypart="night"] .vx-freq {
+  background:
+    radial-gradient(120% 60% at 100% 0%, rgba(230, 120, 60, 0.16) 0%, rgba(230, 120, 60, 0) 60%),
+    linear-gradient(180deg, #2b1512 0%, #1d0e0c 100%);
+  border-color: rgba(255, 180, 140, 0.24);
+  color: #fbe9dd;
+}
+html[data-scene="spring"][data-daypart="night"] .vx-friends-title b,
+html[data-scene="spring"][data-daypart="night"] .vx-friend-main b,
+html[data-scene="spring"][data-daypart="night"] .vx-friends-tabs .vx-friends-tab-on,
+html[data-scene="spring"][data-daypart="night"] .vx-friends-empty b,
+html[data-scene="spring"][data-daypart="night"] .vx-sheet-head strong,
+html[data-scene="spring"][data-daypart="night"] .vx-freq-main b {
+  color: #fff3ea;
+}
+html[data-scene="spring"][data-daypart="night"] .vx-friends-title span,
+html[data-scene="spring"][data-daypart="night"] .vx-friend-sub,
+html[data-scene="spring"][data-daypart="night"] .vx-friends-foot,
+html[data-scene="spring"][data-daypart="night"] .vx-friends-group h4,
+html[data-scene="spring"][data-daypart="night"] .vx-friends-section h4,
+html[data-scene="spring"][data-daypart="night"] .vx-friends-empty p,
+html[data-scene="spring"][data-daypart="night"] .vx-friend-feedback,
+html[data-scene="spring"][data-daypart="night"] .vx-recent-hint,
+html[data-scene="spring"][data-daypart="night"] .vx-sheet-hint,
+html[data-scene="spring"][data-daypart="night"] .vx-sheet-row > span:first-child,
+html[data-scene="spring"][data-daypart="night"] .vx-freq-main span {
+  color: #d4ac96;
+}
+html[data-scene="spring"][data-daypart="night"] .vx-friends-tabs {
+  border-bottom-color: rgba(255, 180, 140, 0.18);
+}
+html[data-scene="spring"][data-daypart="night"] .vx-friends-tabs button {
+  color: #c79f88;
+}
+html[data-scene="spring"][data-daypart="night"] .vx-friends-tabs .vx-friends-tab-on::after {
+  background: linear-gradient(90deg, #ffc579, #e0603a);
+}
+html[data-scene="spring"][data-daypart="night"] .vx-friend-row {
+  border-bottom-color: rgba(255, 180, 140, 0.12);
+}
+html[data-scene="spring"][data-daypart="night"] .vx-friend-row:hover {
+  background: rgba(255, 200, 150, 0.08);
+}
+html[data-scene="spring"][data-daypart="night"] .vx-friend-act {
+  border-color: rgba(255, 180, 140, 0.3);
+  background: rgba(255, 180, 140, 0.1);
+  color: #fbe9dd;
+}
+html[data-scene="spring"][data-daypart="night"] .vx-friend-room,
+html[data-scene="spring"][data-daypart="night"] .vx-recent-head b {
+  background: rgba(255, 180, 140, 0.18);
+  color: #ffd0a8;
+}
+html[data-scene="spring"][data-daypart="night"] .vx-friend-more,
+html[data-scene="spring"][data-daypart="night"] .vx-recent-head {
+  color: #d4ac96;
+}
+html[data-scene="spring"][data-daypart="night"] .vx-friends-search,
+html[data-scene="spring"][data-daypart="night"] .vx-friends-addnote,
+html[data-scene="spring"][data-daypart="night"] .vx-sheet-input,
+html[data-scene="spring"][data-daypart="night"] .vx-friend-edit {
+  background: rgba(0, 0, 0, 0.3);
+  color: #fbe9dd;
+}
+html[data-scene="spring"][data-daypart="night"] .vx-friend-sheet {
+  background: linear-gradient(180deg, #331a15 0%, #241110 100%);
+  border-color: rgba(255, 180, 140, 0.28);
+}
+html[data-scene="spring"][data-daypart="night"] .vx-friend-sheet-head {
+  border-bottom-color: rgba(255, 180, 140, 0.16);
+}
+html[data-scene="spring"][data-daypart="night"] .vx-friend-sheet button {
+  color: #fbe9dd;
+}
+html[data-scene="spring"][data-daypart="night"] .vx-friend-sheet button:hover {
+  background: rgba(255, 200, 150, 0.1);
+}
+html[data-scene="spring"][data-daypart="night"] .vx-friend-scrim {
+  background: rgba(0, 0, 0, 0.48);
+}
+html[data-scene="spring"][data-daypart="night"] .vx-friends-section + .vx-friends-section,
+html[data-scene="spring"][data-daypart="night"] .vx-recent {
+  border-color: rgba(255, 180, 140, 0.16);
+}
+html[data-scene="spring"][data-daypart="night"] .vx-friend-warn {
+  color: #ffb98a;
+}
+html[data-scene="spring"][data-daypart="night"] .vx-friend-danger,
+html[data-scene="spring"][data-daypart="night"] .vx-friend-menu-danger {
+  color: #ffb0a0 !important;
+}
+
+/* 4 个 tab 之后间距收一点（336 宽里再放 14px 会挤） */
+.vx-friends-tabs {
+  gap: 12px;
+}
+
+/* 「最近玩」的数量用低调的暖色徽标：它不是"待办"，不需要红点那种催促感 */
+.vx-friends-badge-soft {
+  display: inline-block;
+  min-width: 16px;
+  margin-left: 4px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: rgba(168, 111, 44, 0.18);
+  color: #7a5220;
+  font-size: 10px;
+  line-height: 16px;
+  vertical-align: 1px;
+}
+:is(html[data-theme="dark"], html[data-theme="light"][data-daypart="night"]) .vx-friends-badge-soft {
+  background: rgba(255, 226, 170, 0.18);
+  color: #f0d6a8;
+}
+
+/* 「最近玩」徽标也跟着场景走（就一条，和房号 chip 同色系） */
+html[data-scene="snow"]:not([data-daypart="night"]) .vx-friends-badge-soft {
+  background: rgba(126, 169, 204, 0.2);
+  color: #33628f;
+}
+html[data-scene="snow"][data-daypart="night"] .vx-friends-badge-soft {
+  background: rgba(126, 169, 204, 0.24);
+  color: #bcd8f2;
+}
+html[data-scene="halloween"] .vx-friends-badge-soft {
+  background: rgba(255, 169, 77, 0.18);
+  color: #ffc98a;
+}
+html[data-scene="spring"]:not([data-daypart="night"]) .vx-friends-badge-soft {
+  background: rgba(200, 137, 47, 0.2);
+  color: #8a5a10;
+}
+html[data-scene="spring"][data-daypart="night"] .vx-friends-badge-soft {
+  background: rgba(255, 180, 140, 0.18);
+  color: #ffd0a8;
+}
+
+/* ---------------------------------------------------------------------------
+   顶部提示条也跟场景走（2026-10-27 截图发现：深紫面板旁边浮着一条暖木色提示，
+   特别跳）。`.vx-banner-error` 必须排除在外 —— 错误提示永远是红的，
+   不能被场景色盖掉。
+   --------------------------------------------------------------------------- */
+html[data-scene="snow"]:not([data-daypart="night"]) .vx-banner:not(.vx-banner-error) {
+  background: linear-gradient(180deg, #fdfeff 0%, #eaf2f9 100%);
+  border-color: rgba(74, 112, 152, 0.26);
+  color: #22384f;
+}
+html[data-scene="snow"][data-daypart="night"] .vx-banner:not(.vx-banner-error) {
+  background: linear-gradient(180deg, #22303f 0%, #16202c 100%);
+  border-color: rgba(150, 190, 230, 0.24);
+  color: #e6eef8;
+}
+html[data-scene="halloween"] .vx-banner:not(.vx-banner-error) {
+  background: linear-gradient(180deg, #33243f 0%, #22182c 100%);
+  border-color: rgba(190, 140, 230, 0.28);
+  color: #f2e8fa;
+}
+html[data-scene="spring"]:not([data-daypart="night"]) .vx-banner:not(.vx-banner-error) {
+  background: linear-gradient(180deg, #fffaf4 0%, #fbe9da 100%);
+  border-color: rgba(178, 60, 40, 0.26);
+  color: #5a2b1c;
+}
+html[data-scene="spring"][data-daypart="night"] .vx-banner:not(.vx-banner-error) {
+  background: linear-gradient(180deg, #331a15 0%, #241110 100%);
+  border-color: rgba(255, 180, 140, 0.24);
+  color: #fbe9dd;
 }

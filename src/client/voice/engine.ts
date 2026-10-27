@@ -82,6 +82,7 @@ import type { AudioProcessing, VoiceSettings } from "./settings";
 import { MIC_VOLUME_MAX, PEER_VOLUME_MAX } from "./settings";
 import { bindSpeaker, openMic, resumeAudio } from "./devices";
 import { ensureIceServers, iceServers } from "./ice";
+import { oneWayStep } from "./one-way";
 import { latestChangelog } from "./changelog";
 import { isTauriRuntime } from "./loopback";
 import { SessionStatsRecorder, STATS_SAMPLE_SEC, type SessionSummary } from "./session-stats";
@@ -1352,13 +1353,34 @@ export class VoiceMesh {
         resolve("已离开房间");
         return;
       }
+      /*
+       * config 用 getter 而不是普通对象（2026-10-27）。
+       *
+       * PeerJS 内部是 `new RTCPeerConnection(provider.options.config)`，而且是在
+       * `peer.call()` 的**同步段**里读这份 config。所以只要在 call 之前把
+       * `relayNextCall` 立起来，这一条 PC 就只收集中继候选，别的连接完全不受影响。
+       * 这是 PeerJS 唯一支持的「按次切 ICE 策略」的方式（它不支持重协商，
+       * `setConfiguration + restartIce` 这条路实测不可靠）。
+       */
+      const engine = this;
+      const peerConfig = {
+        get iceServers() {
+          return iceServers();
+        },
+        get iceCandidatePoolSize() {
+          return 0;
+        },
+        get iceTransportPolicy(): RTCIceTransportPolicy {
+          return engine.relayNextCall ? "relay" : "all";
+        },
+      };
       const peer = new Peer(id, {
         host: route.host,
         port: route.port,
         secure: route.secure,
         key: route.key,
         debug: 0,
-        config: { iceServers: iceServers(), iceCandidatePoolSize: 0 },
+        config: peerConfig,
       });
       this.peer = peer;
 
@@ -3569,6 +3591,34 @@ export class VoiceMesh {
   /** 每个成员最近的媒体链路状态（direct/relay/…），供遥测取"接入方式"。 */
   private roomLinkState = new Map<string, string>();
 
+  /**
+   * 单向链路监看（2026-10-27）。
+   *
+   * 背景：ICE 只验证 STUN 包一来一返，**不验证媒体**。对称 NAT / 端口预测失败时
+   * 经常出现"ICE 标 connected、实际只有一边有声音"，而 ICE 会一直认为这条腿是好的。
+   * 更糟的是旧的自动自愈重拨三次用的都是**同一套候选、同一套策略**，
+   * 于是永远选回那条单向路 —— 用户点「重新连接」也修不好（业主 2026-10-27 实测）。
+   *
+   * 这里做两件事：
+   *   1. 每 5 秒看一次 `inbound-rtp.packetsReceived` 是否在涨，连续停涨判定"收不到他"；
+   *   2. 判定后重拨，并且**只收集中继候选**（`iceTransportPolicy: "relay"`），
+   *      直接绕开打不通的直连路径。TURN 本来就有（Cloudflare Realtime，`/ice` 现签）。
+   *
+   * 为什么用「包数」而不是「字节数」：静音 / DTX 时字节数会长时间不动，但包数照涨，
+   * 用包数误判更少（开黑圈那边也是这个判法）。
+   */
+  private voiceWatch = new Map<string, { packets: number; hits: number }>();
+  /** 单向重连次数（一通就清零）：到顶就不再拆，免得来回抖。 */
+  private oneWayHeals = new Map<string, number>();
+  private voiceWatchTimer = 0;
+  /** 上一轮 checkVoiceLinks 还没跑完（getStats 慢的时候会发生） */
+  private voiceCheckBusy = false;
+  /**
+   * 下一条要建的语音连接是否**只走中继**。
+   * `openPeer` 里那份 config 是 getter 对象，PeerJS 在建 PC 的同步段读到它。
+   */
+  private relayNextCall = false;
+
   /** 开播确认后（自己就是共享者）：向所有成员发起画面直连（幂等）。 */
   private startScreenCalls(): void {
     if (!this.screenStream || this.destroyed) return;
@@ -3834,6 +3884,8 @@ export class VoiceMesh {
   }
 
   private callPeers(): void {
+    // 单向链路监看与对账同步启动（幂等：只启一次，之后每次进来直接返回）
+    this.startVoiceWatch();
     // 与房主的媒体立即建立；访客间逐个错峰，避免信令风暴把公共云队列打爆
     // （人越多越明显：这正是"前两个人能进、后面的人卡在加入"的诱因之一）。
     let delay = 0;
@@ -3860,7 +3912,7 @@ export class VoiceMesh {
     }
   }
 
-  private callPeer(peerId: string): void {
+  private callPeer(peerId: string, relay = false): void {
     /*
      * 没有麦克风也要发起（2026-10-25 修死锁）。
      *
@@ -3876,12 +3928,123 @@ export class VoiceMesh {
     if (!this.peer || this.calls.has(peerId)) return;
     // 已经不在名册里的人不拨（自愈/错峰定时器都可能比"他离开"晚一拍）
     if (!this.members.has(peerId)) return;
-    const call = this.peer.call(peerId, stream, {
-      // 语音参数显式化：关 DTX（静音段停发会让恢复时的起音发虚），码率 40k
-      sdpTransform: opusSdpTransform("voice"),
-    });
+    /*
+     * relay = 这条腿只收集中继候选（见 openPeer 里的 config getter）。
+     * 同一段同步代码里设标志 → 建 PC → 复位，所以不会影响别的连接。
+     */
+    this.relayNextCall = relay;
+    let call: MediaConnection | undefined;
+    try {
+      call = this.peer.call(peerId, stream, {
+        // 语音参数显式化：关 DTX（静音段停发会让恢复时的起音发虚），码率 40k
+        sdpTransform: opusSdpTransform("voice"),
+      });
+    } finally {
+      this.relayNextCall = false;
+    }
     if (!call) return;
     this.track(call, peerId);
+  }
+
+  /**
+   * 启动单向链路监看（幂等）。
+   *
+   * 走 `everyBackground` 而不是普通 interval：页面切到后台时浏览器会把
+   * setInterval 节流到 1 分钟一次，那样"单向"要等半分钟才发现——
+   * 用户听到的就是"一直没声音，重连按钮也不管用"。
+   */
+  private startVoiceWatch(): void {
+    if (this.voiceWatchTimer || this.destroyed) return;
+    // node（单测）里没有 window：看门狗只在真实浏览器里跑，测试环境直接跳过
+    if (typeof window === "undefined") return;
+    this.voiceWatchTimer = this.timers.everyBackground(5_000, () => void this.checkVoiceLinks());
+  }
+
+  /**
+   * 单向链路检查：ICE 说连着，但**一直收不到他的包** → 判定单向，改走中继重拨。
+   *
+   * 阈值与开黑圈保持一致（那边已经跑了很久，判定手感是验过的）：
+   *   - 从没收到过包：3 次（约 15 秒）
+   *   - 收到过又停了：5 次（约 25 秒）
+   *
+   * 两个必须排除的"假故障"：
+   *   1. 他闭着麦（`muted`）→ 收不到包是正常的；
+   *   2. 他本来就没麦克风（`hasMic === false`，纯收听）→ 永远不会有包。
+   * 否则会把对端行为当成线路故障，反复拆链路。
+   */
+  private async checkVoiceLinks(): Promise<void> {
+    // getStats 偶尔比 5 秒的间隔还慢：同一轮没跑完就别再叠一轮，否则同一条腿会被拆两次
+    if (this.voiceCheckBusy) return;
+    this.voiceCheckBusy = true;
+    try {
+      await this.checkVoiceLinksInner();
+    } finally {
+      this.voiceCheckBusy = false;
+    }
+  }
+
+  private async checkVoiceLinksInner(): Promise<void> {
+    for (const [peerId, call] of this.calls) {
+      const member = this.members.get(peerId);
+      if (!member || member.local) continue;
+      if (member.muted || member.hasMic === false) {
+        this.voiceWatch.delete(peerId);
+        continue;
+      }
+      const pc = (call as { peerConnection?: RTCPeerConnection }).peerConnection;
+      if (!pc) continue;
+      const ice = pc.iceConnectionState;
+      if (ice !== "connected" && ice !== "completed") {
+        this.voiceWatch.delete(peerId);
+        continue;
+      }
+      let packets = 0;
+      try {
+        const stats = await pc.getStats();
+        stats.forEach((report) => {
+          if (report.type !== "inbound-rtp") return;
+          const r = report as RTCInboundRtpStreamStats & { kind?: string; mediaType?: string };
+          if ((r.kind ?? r.mediaType) !== "audio") return;
+          packets += r.packetsReceived ?? 0;
+        });
+      } catch {
+        continue;
+      }
+      // 等 getStats 的这一拍里连接可能已经换了：只在还是同一条腿时才动它
+      if (this.calls.get(peerId) !== call) continue;
+
+      const prev = this.voiceWatch.get(peerId);
+      const step = oneWayStep(prev, packets);
+      if (step.grew) {
+        // 通了：清零，别让历史失败影响下一次判定
+        this.voiceWatch.delete(peerId);
+        this.oneWayHeals.delete(peerId);
+        continue;
+      }
+      this.voiceWatch.set(peerId, step.next);
+      if (!step.trigger) continue;
+
+      this.voiceWatch.delete(peerId);
+      const healed = (this.oneWayHeals.get(peerId) ?? 0) + 1;
+      this.oneWayHeals.set(peerId, healed);
+      const name = member.name || peerId.slice(0, 6);
+      if (healed > 3) {
+        // 三次中继重连仍然收不到：多半是他那边上行/线路的持久问题，别再拆了
+        this.pushRoomEvent("error", `与 ${name} 的语音仍然只有单向，建议让他重进房间`);
+        continue;
+      }
+      this.pushRoomEvent("error", `与 ${name} 的语音只有单向（收不到他的声音），改走中继重连`);
+      // 拆旧腿 → 用中继重拨：直连这条路已经证明是单向的，别再原地重试
+      if (this.calls.get(peerId) === call) this.calls.delete(peerId);
+      try {
+        call.close();
+      } catch {
+        /* 已经关了 */
+      }
+      this.dropAudio(peerId);
+      this.events.mediaState(peerId, "connecting");
+      this.callPeer(peerId, true);
+    }
   }
 
   private onIncomingCall(call: MediaConnection): void {
@@ -4171,9 +4334,17 @@ export class VoiceMesh {
       }
       // 旧流的播放元素主动收掉，避免 close 迟到时残留在响（或误杀新流）
       this.dropAudio(peerId);
-      this.pushRoomEvent("error", `语音链路重拨（第 ${mine.attempts} 次）· ${name}`);
+      this.pushRoomEvent(
+        "error",
+        `语音链路重拨（第 ${mine.attempts} 次${mine.attempts >= 2 ? "，改走中继" : ""}）· ${name}`,
+      );
       this.events.mediaState(peerId, "connecting");
-      this.callPeer(peerId);
+      /*
+       * 第 2 次起只收集中继候选（2026-10-27）：直连已经失败过一次，
+       * 再收集一遍同样的 host/srflx 候选没有意义 —— 对称 NAT 下它们还是打不通，
+       * 而 TURN 是我们本来就有的通路。
+       */
+      this.callPeer(peerId, mine.attempts >= 2);
       const fresh = this.calls.get(peerId);
       if (fresh && mine.attempts < VOICE_HEAL_MAX) {
         this.scheduleVoiceHeal(peerId, fresh, VOICE_HEAL_RETRY_MS);
@@ -4227,8 +4398,12 @@ export class VoiceMesh {
       }
       this.dropAudio(peerId);
     }
+    /*
+     * 手动重连**一律走中继**（2026-10-27）：用户点这个按钮时，说明直连已经失败过
+     * ——再原路重拨一次大概率还是同一条单向路（业主实测点几次都连不上）。
+     */
     this.events.mediaState(peerId, "connecting");
-    this.callPeer(peerId);
+    this.callPeer(peerId, true);
     if (this.calls.get(peerId)) this.voiceHeals.set(peerId, { attempts: 1, timer: 0 });
   }
 

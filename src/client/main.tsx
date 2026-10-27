@@ -26,6 +26,39 @@ if (!root) {
   throw new Error("Application root was not found");
 }
 
+/**
+ * 屏蔽页面右键菜单（2026-10-27，业主实拍）。
+ *
+ * 起因：浏览器/WebView 的原生右键菜单里就是「返回 / 刷新 / 另存为 / 打印」，
+ * 用户随手右键、手一滑点到**刷新**，页面一重载房主就掉线——而 P2P 房间跟着
+ * 房主存在，他这一刷新，整间房就散了（其他人集体掉线，还以为是被踢）。
+ *
+ * 两个必须保留原生的地方：
+ *   1. 输入框 / 可编辑区（复制粘贴是刚需，右键菜单里有"粘贴"）；
+ *   2. 显式标了 `data-allow-context-menu` 的元素（以后要给某个区域留自定义菜单时用）。
+ *
+ * 用捕获阶段：某些组件自己 stopPropagation 时也拦得住。
+ */
+document.addEventListener(
+  "contextmenu",
+  (event) => {
+    /*
+     * 用 `instanceof Element` 兜一下：contextmenu 的 target 理论上总是元素，
+     * 但 document / text 节点上 `closest` 不存在，会把整个监听抛异常
+     * —— 那等于右键屏蔽在自己身上失效了。
+     */
+    const target = event.target;
+    if (
+      target instanceof Element &&
+      target.closest("input, textarea, [contenteditable='true'], [data-allow-context-menu]")
+    ) {
+      return;
+    }
+    event.preventDefault();
+  },
+  { capture: true },
+);
+
 createRoot(root).render(
   <StrictMode>
     {/* 顶层兜底：任何未捕获的渲染异常都只显示一个可重载的卡片，而不是整窗白屏 */}

@@ -508,3 +508,189 @@ describe("邀请一键直达 / 改 ID 后客户端同步", () => {
     expect(cleared.data.account.previousId).toBeUndefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// 好友体验补全（2026-10-27）
+// ---------------------------------------------------------------------------
+describe("好友体验补全", () => {
+  /** 建两个账号（每个 it 都是新库，用户名可以复用）。 */
+  async function pair() {
+    const a = await register("piga");
+    const b = await register("pigb");
+    return { a, b };
+  }
+
+  /** 记录服务端推了几次、推了什么（推送是 service binding 到信令 Worker）。 */
+  function spyPushes() {
+    const pushes: { acct: string; kind: string }[] = [];
+    env.SIGNAL = {
+      fetch: async (_url: string, init: { body?: string }) => {
+        pushes.push(JSON.parse(String(init?.body ?? "{}")));
+        return new Response("{}");
+      },
+    };
+    return pushes;
+  }
+
+  async function befriend(a: any, b: any) {
+    await call("/friends", { method: "POST", body: { id: b.account.id }, token: a.token });
+    await call("/friends/accept", { method: "POST", body: { id: a.account.id }, token: b.token });
+  }
+
+  it("还没被同意时重复点「加好友」：不再重复推对方", async () => {
+    const { a, b } = await pair();
+    const pushes = spyPushes();
+
+    await call("/friends", { method: "POST", body: { id: b.account.id }, token: a.token });
+    const afterFirst = pushes.length;
+    expect(afterFirst).toBeGreaterThan(0);
+
+    await call("/friends", { method: "POST", body: { id: b.account.id }, token: a.token });
+    await call("/friends", { method: "POST", body: { id: b.account.id }, token: a.token });
+    // 后两次只是"确认已发送"，不该再敲对方
+    expect(pushes.length).toBe(afterFirst);
+  });
+
+  it("被拒绝后 24 小时内不许再申请；拒绝记录不出现在对方的已发出里", async () => {
+    const { a, b } = await pair();
+    await call("/friends", { method: "POST", body: { id: b.account.id }, token: a.token });
+    await call("/friends/reject", { method: "POST", body: { id: a.account.id }, token: b.token });
+
+    const outgoing = await json(await call("/friends", { token: a.token }));
+    expect(outgoing.data.outgoing).toHaveLength(0);
+
+    const again = await json(
+      await call("/friends", { method: "POST", body: { id: b.account.id }, token: a.token }),
+    );
+    expect(again.status).toBe(429);
+    expect(again.data.error).toBe("cooldown");
+  });
+
+  it("删好友：被删的人加不回来，删人的人可以立刻加回来", async () => {
+    const { a, b } = await pair();
+    await befriend(a, b);
+    await call(`/friends/${b.account.id}`, { method: "DELETE", token: a.token });
+
+    const blocked = await json(
+      await call("/friends", { method: "POST", body: { id: a.account.id }, token: b.token }),
+    );
+    expect(blocked.data.error).toBe("cooldown");
+
+    const back = await json(
+      await call("/friends", { method: "POST", body: { id: b.account.id }, token: a.token }),
+    );
+    expect(back.status).toBe(200);
+    expect(back.data.error).toBeUndefined();
+  });
+
+  it("备注名只自己可见", async () => {
+    const { a, b } = await pair();
+    await befriend(a, b);
+    await call(`/friends/${b.account.id}`, { method: "PATCH", body: { alias: "老王" }, token: a.token });
+
+    const mine = await json(await call("/friends", { token: a.token }));
+    expect(mine.data.friends[0].alias).toBe("老王");
+
+    const his = await json(await call("/friends", { token: b.token }));
+    expect(his.data.friends[0].alias).toBeUndefined();
+  });
+
+  it("加好友附言会带给对方，并截到 30 个字", async () => {
+    const { a, b } = await pair();
+    await call("/friends", {
+      method: "POST",
+      body: { id: b.account.id, note: "我是刚才那个" },
+      token: a.token,
+    });
+    let list = await json(await call("/friends", { token: b.token }));
+    expect(list.data.incoming[0].note).toBe("我是刚才那个");
+
+    // 换一个人发一条超长附言
+    const c = await register("pigc");
+    await call("/friends", {
+      method: "POST",
+      body: { id: b.account.id, note: "很".repeat(50) },
+      token: c.token,
+    });
+    list = await json(await call("/friends", { token: b.token }));
+    const fromC = list.data.incoming.find((item: any) => item.account.id === c.account.id);
+    expect(Array.from(fromC.note as string).length).toBe(30);
+  });
+
+  it("最近一起玩：只记真实存在的账号，过滤自己和编的号", async () => {
+    const { a, b } = await pair();
+    await call("/recent-plays", {
+      method: "POST",
+      body: { ids: [b.account.id, "99999999", a.account.id] },
+      token: a.token,
+    });
+    const plays = await json(await call("/recent-plays", { token: a.token }));
+    expect(plays.data.plays.map((item: any) => item.account.id)).toEqual([b.account.id]);
+    // 别人看不到我的记录
+    const his = await json(await call("/recent-plays", { token: b.token }));
+    expect(his.data.plays).toHaveLength(0);
+  });
+
+  it("敲门：房主同意后，申请者拿到带钥匙的邀请", async () => {
+    const { a, b } = await pair();
+    await befriend(a, b);
+
+    await call("/knocks", { method: "POST", body: { id: b.account.id }, token: a.token });
+    const knocks = await json(await call("/knocks", { token: b.token }));
+    expect(knocks.data.knocks).toHaveLength(1);
+    expect(knocks.data.knocks[0].from.id).toBe(a.account.id);
+
+    // 非好友门都敲不了
+    const c = await register("pigc2");
+    const stranger = await json(
+      await call("/knocks", { method: "POST", body: { id: c.account.id }, token: a.token }),
+    );
+    expect(stranger.status).toBe(403);
+
+    const key = "abcdefghijklmnopqrstuvwx";
+    const accept = await json(
+      await call("/knocks/accept", {
+        method: "POST",
+        body: { from: a.account.id, code: "930002", roomKey: key },
+        token: b.token,
+      }),
+    );
+    expect(accept.status).toBe(200);
+
+    const invites = await json(await call("/invites", { token: a.token }));
+    expect(invites.data.invites[0].code).toBe("930002");
+    expect(invites.data.invites[0].roomKey).toBe(key);
+
+    // 敲过就被消费掉，不会一直挂在房主的待处理里
+    const after = await json(await call("/knocks", { token: b.token }));
+    expect(after.data.knocks).toHaveLength(0);
+  });
+
+  it("邀请里带房主的在线状态（用来标出可能已失效的老邀请）", async () => {
+    const { a, b } = await pair();
+    await befriend(a, b);
+    await call("/presence", { method: "POST", body: { roomCode: "930003" }, token: a.token });
+    await call("/invites", {
+      method: "POST",
+      body: { id: b.account.id, code: "930003" },
+      token: a.token,
+    });
+    const list = await json(await call("/invites", { token: b.token }));
+    expect(list.data.invites[0].fromPresence.state).toBe("online");
+    expect(list.data.invites[0].fromPresence.roomCode).toBe("930003");
+  });
+
+  it("好友快照不泄露对方的固定房号与旧 ID（只给公开档案）", async () => {
+    const { a, b } = await pair();
+    await call("/me", { method: "PATCH", body: { roomCode: "930004" }, token: a.token });
+    await befriend(a, b);
+    const list = await json(await call("/friends", { token: b.token }));
+    const entry = list.data.friends[0];
+    expect(entry.account.roomCode).toBeUndefined();
+    expect(entry.account.roomCodeLocked).toBeUndefined();
+    expect(entry.account.previousId).toBeUndefined();
+    // 昵称/用户名/ID 仍然齐全（界面要靠它们显示与加好友）
+    expect(entry.account.id).toBe(a.account.id);
+    expect(entry.account.username).toBe("piga");
+  });
+});

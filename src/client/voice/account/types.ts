@@ -4,7 +4,8 @@
  * 设计约束（必须守住）：
  * - **登录只加功能，不加门禁**：房间进出的任何路径都不读取登录态；
  * - 数字 ID 是主键（8 位，永不变），用户名是展示名（唯一、可搜）；
- * - 好友必须双向同意；单向只能进「最近一起玩」（后续阶段）。
+ * - 好友必须双向同意；单向关系只进「最近一起玩」（同房记录，只自己可见，
+ *   7 天过期——见下方 RecentPlay，2026-10-27 落地）。
  */
 
 export interface AccountProfile {
@@ -54,11 +55,19 @@ export interface FriendEntry {
   account: AccountProfile;
   since: number;
   presence: Presence;
+  /**
+   * 备注名（仅自己可见，2026-10-27）。
+   * 好友改了昵称、或者两个人同名时，靠它还能按你熟悉的名字找到他。
+   * 空 = 没设备注，界面回落到 `account.name`。
+   */
+  alias?: string;
 }
 
 export interface FriendRequest {
   account: AccountProfile;
   at: number;
+  /** 申请附言（≤30 字）：只给 8 位 ID 加人的时候，对方至少知道"我是谁" */
+  note?: string;
 }
 
 /**
@@ -79,6 +88,36 @@ export interface RoomInvite {
    * 有它就能一键直达；没有（普通房 / 老版本发的邀请）就只带着房号。
    */
   roomKey?: string;
+  /**
+   * 房主此刻在不在线（2026-10-27）。
+   * 23 小时前的邀请如果房主早走了，点「加入」只会得到"房主不在线"——
+   * 有了这个字段就能在列表里先标出来，别让人白点。
+   */
+  fromPresence?: Presence;
+}
+
+/**
+ * 好友发来的「我想进你的房间」（2026-10-27）。
+ *
+ * 好友在某个房间里，但那是私密房、我也不知道密码时用。
+ * **房主同意后才由他的客户端发出带钥匙的邀请**——钥匙永远只由房主本机提供，
+ * 服务端不生成、不推导，安全边界和"只有房主能邀请"完全一致。
+ */
+export interface Knock {
+  from: AccountProfile;
+  at: number;
+}
+
+/**
+ * 最近一起玩过的人（2026-10-27）。
+ *
+ * 现在加好友只有两条路：知道 8 位 ID，或者在房间里点成员——后者依赖对方客户端
+ * 上报 accountId，旧客户端经常加不上。所以把"同房过"记下来给一个入口。
+ * 只自己可见，7 天过期，最多 30 条。
+ */
+export interface RecentPlay {
+  account: AccountProfile;
+  at: number;
 }
 
 export interface FriendsSnapshot {
@@ -97,6 +136,10 @@ export type AccountError =
   | "self"
   | "room-taken"
   | "room-locked"
+  /** 刚被拒绝过 / 刚被删过，24 小时内不许再申请（2026-10-27） */
+  | "cooldown"
+  /** 今日好友请求 / 邀请 / 敲门次数超上限（软限流，防脚本刷） */
+  | "rate-limited"
   | "unknown";
 
 export interface AuthResult {
@@ -114,10 +157,13 @@ export interface AccountAdapter {
     patch: Partial<Pick<AccountProfile, "name" | "avatar" | "username" | "roomCode">>,
   ): Promise<AuthResult>;
   search(query: string): Promise<AccountProfile[]>;
-  addFriend(accountId: string): Promise<AuthResult>;
+  /** 加好友。note = 可选的申请附言（≤30 字），对方在「待处理」里能看到。 */
+  addFriend(accountId: string, note?: string): Promise<AuthResult>;
   acceptFriend(accountId: string): Promise<AuthResult>;
   rejectFriend(accountId: string): Promise<AuthResult>;
   removeFriend(accountId: string): Promise<AuthResult>;
+  /** 改好友备注名（空串 = 清除），只影响自己看到的名字 */
+  setAlias(accountId: string, alias: string): Promise<AuthResult>;
   snapshot(): Promise<FriendsSnapshot>;
   /** 房间心跳：用于「在线 · 在 2354 房」这类展示，不参与进房校验 */
   heartbeat(roomCode?: string): void;
@@ -130,6 +176,23 @@ export interface AccountAdapter {
   ackIdChange(): Promise<void>;
   /** 处理掉一条邀请（加入或忽略都算），之后列表里不再出现 */
   dismissInvite(fromAccountId: string): Promise<void>;
+
+  /**
+   * 敲门：请求进入好友正在的房间（2026-10-27）。
+   * 房主同意后，他的客户端会发一条带钥匙的邀请过来。
+   */
+  knock(accountId: string): Promise<AuthResult>;
+  /** 我收到的敲门（10 分钟内有效） */
+  knocks(): Promise<Knock[]>;
+  /** 房主同意：把我房间（code + 可选钥匙）作为邀请发给申请者 */
+  acceptKnock(fromAccountId: string, roomCode: string, roomKey?: string): Promise<AuthResult>;
+  /** 忽略一次敲门 */
+  dismissKnock(fromAccountId: string): Promise<void>;
+
+  /** 最近一起玩过的人（7 天内、最多 30 条，只自己可见） */
+  recentPlays(): Promise<RecentPlay[]>;
+  /** 上报"我刚和这些人在同一个房间"（客户端负责节流与去重） */
+  reportRecentPlays(accountIds: string[]): Promise<void>;
 }
 
 /** 用户名规则：3–16 位，字母数字下划线，首字符必须是字母。 */
@@ -153,5 +216,7 @@ export const ACCOUNT_ERROR_TEXT: Record<AccountError, string> = {
   self: "不能加自己为好友",
   "room-taken": "这个房号已经被别人认领了，换一个试试",
   "room-locked": "房号已经锁定：每个账号只有一次改号机会",
+  cooldown: "对方暂时不接受好友申请，过一天再试",
+  "rate-limited": "今天操作太频繁了，明天再来",
   unknown: "出了点问题，稍后再试",
 };
