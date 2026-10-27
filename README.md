@@ -808,13 +808,13 @@ npm run feedback:admin list 20   # 终端查看最近反馈（url / list / rm �
 <!-- AUTO-LOG:START -->
 ### 近期提交（自动生成）
 
+- `2c80fc2` release: v1.9.10（10-27 19:35）
 - `2d43559` fix: 删好友时连带清掉邀请/敲门/最近一起玩，别留半条门缝（10-27 19:22）
 - `89ab884` docs: 补充 1.9.9 的排查索引与运维脚本说明（10-27 19:21）
 - `7dbfdf7` release: v1.9.9（10-27 19:00）
 - `d56ad2b` release: v1.9.8（10-27 11:17）
 - `b366fff` release: v1.9.7（10-27 10:56）
 - `431ba28` fix(rust): base_browser_args 改成 const 项，修 E0373 导致 1.9.6 打包失败（10-27 10:21）
-- `7f9101e` release: v1.9.6（10-27 10:13）
 <!-- AUTO-LOG:END -->
 
 ## 怎么用
