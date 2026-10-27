@@ -30,7 +30,7 @@
 
 > **本节专为后续维护者（含 AI）而写**：交代"共享屏幕为什么卡、改了什么、怎么验证、别踩哪些坑"。  
 > 这一轮**只动共享链路，语音一行未碰**（语音零影响是硬约束）；四批次全部落地，  
-> `npm run check` 全绿（typecheck + <!-- AUTO:TESTS -->340<!-- /AUTO:TESTS --> 单测 + 构建）。  
+> `npm run check` 全绿（typecheck + <!-- AUTO:TESTS -->346<!-- /AUTO:TESTS --> 单测 + 构建）。  
 > 完整方案与逐条推理见 [SCREENSHARE-OPT-PLAN.md](./docs/archive/SCREENSHARE-OPT-PLAN.md)（已归档）；  
 > 早期 v1~v3 草稿 [SCREENSHARE-PERF-PLAN.md](./docs/archive/SCREENSHARE-PERF-PLAN.md) 已被其取代（仅存档）。
 
@@ -246,6 +246,45 @@ TURN key 与 SFU 的 appId/secret **是两套**，分别创建：
 - 开黑圈运营：`/game-admin?staff=<主令牌>`（生成/吊销创建码、签发员工令牌、操作日志）
 - 意见反馈：`/admin?token=<主令牌>`；在线房间：`/rooms?token=<主令牌>`
 - 主令牌在 `.dev-secrets.json` 的 `feedbackToken`
+
+---
+
+## 最近更新（2026-10-27 · 1.9.8）
+
+### 🎮 开黑圈：房码扩到 6 位之后，加入链路整条是断的
+
+1.9.0 把房码从 4 位扩到 6 位，语音房改全了，**开黑圈漏了**：建房调的是同一套
+`makeRoomCode`（6 位数字），"加入"却还在按 4 位判——手输最多只能敲 4 位、「进圈」永远是灰的；
+`?g=` 邀请链接被判成非法，连 App 都不挂载开黑圈。结果是**房主建完房，谁都进不来**。
+
+现在房码格式**只认 `protocol.ts` 的 `isRoomCode`**（6 位新码 + 4 位老码都放行），
+加入弹窗、邀请链接、贴图文案全部对齐，老截图里的 4 位码照样能进。
+这条已写进红线：**房码正则只准存在一份**（历史上重复实现的 `buildInviteUrl` 也栽过一次）。
+
+### 一、同批修的（都是"语音房修过、开黑圈没跟上"的同类）
+
+| 现象 | 根因 / 修法 |
+|---|---|
+| 输错房号 / 关掉弹窗后，系统一直显示"正在使用麦克风" | 失败路径不释放采集。新增 `abort()` + `teardownAttempt()`：停采集、销毁 peer、清半截连接；重试前先停旧采集 |
+| 满房提示"房主没有响应（可能不在线）" | 房主直接 `conn.close()`。改为先发 `greject{reason}` 再断（满 15 人 / 游戏 ID 空各给一句人话） |
+| 换队被拒后界面停在"我在进攻方"，随后自己听不到队友 | 房主拒绝时什么都不回，访客的乐观更新没人纠正，还照着错的队伍重建音频拓扑（会串音）。现在**被拒也回名册**；自己点认领前先判上限并提示 |
+| 房主拖人进满队，菜单自己关掉像成功了 | `hostAssign` 静默 return；改为返回布尔值 + 明确提示「进攻方已满 5 人」 |
+| 结算小结里对面全队"在场 0 秒" | 跨队按设计没有音频连接，只在 `attachAudio` 登记。改为进圈 / 欢迎 / 每次名册广播都开始计时 |
+| 房主「解锁每队人数上限」后，客人界面还是 /5 | `groster` / `gwelcome` 没带 `unlocked`，访客永远按 5 人算（还会被本地拦着不让认领）。已随名册一起下发 |
+| 复制邀请不管成没成都是"已复制" | 改用统一的 `copyText()`（返回真实结果），失败时按钮改口「复制失败，手动记房号」 |
+| 进了房什么都听不到，得退房重进 | 自动播放被拦后只每 5 秒重试一次 `play()`，没有手势照样被拒。接入 `media-unlock`：静音播 + 首次交互自动开声 |
+| 取消弹窗后莫名弹出「开黑圈已结束」 | 残留 `error` 在 `!prompt` 时被渲染成结束卡；关窗时一并清掉 |
+
+### 二、回归测试与验收
+
+- 新增 `tests/game-room-code.test.ts`：6 位能进、老 4 位能进、5 位/7 位/字母不算码、首尾空白归一、邀请链接往返解析。
+- 新增视觉夹具 `tests/fixtures/game-join.html?code=<房号>&fill=1`：手输 6 位 / 链接带入 / 填完游戏 ID 三种状态可直接截图目检。
+- 全量用例 <!-- AUTO:TESTS -->346<!-- /AUTO:TESTS --> 项通过；`typecheck`、`build:web:pages`、`docs:check` 全绿。
+
+### 三、已知未修（单独排期，不在这版）
+
+- 语音房与开黑圈共用 `5b-h-<房号>` 这套 peer 地址：在**语音房**输入一个开黑圈的房号，会真的连到开黑圈房主并可能互相收音。
+- 开黑圈"待分队听全房"这条单向链路没有纳入单向看门狗（拓扑上它是唯一只收不发的通道）。
 
 ---
 
@@ -771,7 +810,7 @@ npm install                 # 安装依赖
 npm run dev                 # 本地开发服务器（网页）
 npm run tauri dev           # 桌面端开发模式（自动起 dev 服务器 + Tauri 窗口）
 npm run typecheck           # 类型检查
-npm test                    # 单元测试（<!-- AUTO:TESTS -->340<!-- /AUTO:TESTS --> 项，由 docs:sync 注入）
+npm test                    # 单元测试（<!-- AUTO:TESTS -->346<!-- /AUTO:TESTS --> 项，由 docs:sync 注入）
 npm run build:web:pages     # 构建静态网页到 dist-web
 npm run tauri build         # 本地出桌面安装包（更新签名需要环境变量，一般直接用 CI）
 npm run deploy:pages        # 手动部署网页到 Cloudflare Pages（复用本机 wrangler 凭据）
@@ -867,7 +906,7 @@ npm run signal:setup        # 绑定 Pages → 信令 Worker（service binding S
 - `.github/workflows/`：`release.yml`（云出包，`app-v*` 标签触发）、
   `readme-log.yml`（自动更新 README 提交列表，`[skip ci]`）
 - `tests/`：协议 / 握手 / 准入、屏幕共享（含调谐器与硬编预检）、猪圈、说话检测、定时器、
-  ICE、反馈、会话统计、音量上限、blake3 等，当前合计 <!-- AUTO:TESTS -->340<!-- /AUTO:TESTS --> 项
+  ICE、反馈、会话统计、音量上限、blake3 等，当前合计 <!-- AUTO:TESTS -->346<!-- /AUTO:TESTS --> 项
 - `scripts/`：`deploy-pages.mjs`（部署）、`publish-desktop.mjs`（桌面端更新源发布）、
   `pages-status.mjs`、`bump-version.mjs`（发版一键化）、`readme-log.mjs`（AUTO-LOG，含畸形自愈）、
   `docs-sync.mjs` / `check-docs.mjs`（文档数字注入与校验）、`lib/blake3.mjs`

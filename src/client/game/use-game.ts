@@ -370,6 +370,15 @@ export function useGame() {
     leaveRoom();
   }, [leaveRoom]);
 
+  /**
+   * 关掉建房/加入弹窗时调用：把这次没成功的尝试整个收掉。
+   *
+   * 只收"还没进房"的状态——已经进房的人点取消（正常不会发生）不能顺手把房间拆了。
+   */
+  const abortAttempt = useCallback(() => {
+    meshRef.current?.abort();
+  }, []);
+
   /** 枚举音频设备（进房后调用；此时已有麦克风权限，标签可读）。 */
   const refreshDevices = useCallback(async () => {
     const mesh = meshRef.current;
@@ -431,6 +440,7 @@ export function useGame() {
     joinRoom,
     leaveRoom,
     closeRoom,
+    abortAttempt,
     setMyTeam,
     hostAssign,
     toggleMuted,

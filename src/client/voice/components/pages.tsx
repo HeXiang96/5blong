@@ -652,7 +652,7 @@ export function LandingView({
                 待分队可以听全房（当裁判用）。
               </p>
               <p className="vx-modal-hint">
-                创建需要创建码（找管理员开通）；加入直接输入 4 位房间码。
+                创建需要创建码（找管理员开通）；加入直接输入 {ROOM_CODE_LEN} 位房间码（老的 4 位也能进）。
               </p>
               <div className="vx-modal-actions">
                 <button type="button" className="vx-btn vx-btn-primary" onClick={() => setTeaseOpen(false)}>

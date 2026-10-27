@@ -56,9 +56,20 @@ export type GuestToHost =
 
 /** 房主 → 访客。 */
 export type HostToGuest =
-  | { t: "gwelcome"; code: string; hostId: string; members: GameMember[]; scores: GameScores; you: string; title?: string; map?: string }
-  | { t: "groster"; members: GameMember[]; scores: GameScores }
-  | { t: "gkick" };
+  /**
+   * `unlocked`：房主是否放宽了每队人数上限。可缺省（老客户端不带）——
+   * 访客端要靠它算"这队还收不收人"，不带就永远按 5 人算，房主解锁了也认不出来。
+   */
+  | { t: "gwelcome"; code: string; hostId: string; members: GameMember[]; scores: GameScores; you: string; title?: string; map?: string; unlocked?: boolean }
+  | { t: "groster"; members: GameMember[]; scores: GameScores; unlocked?: boolean }
+  | { t: "gkick" }
+  /**
+   * 拒绝入圈 + 原因（房满 / 游戏 ID 空）。
+   *
+   * 以前这两种情况直接 `conn.close()`，访客那边只会读成"房主没有响应"，
+   * 于是满房看起来像"邀请链接过期了"。老客户端不认识这个类型，会当未知消息忽略。
+   */
+  | { t: "greject"; reason: string };
 
 /** 游戏 ID 合法性：1–16 字符，去掉首尾空白，不允许换行。 */
 export function normalizeGameId(raw: unknown): string {

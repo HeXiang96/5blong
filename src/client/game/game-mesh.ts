@@ -26,6 +26,8 @@ import rnnoiseSimdWasmUrl from "@sapphi-red/web-noise-suppressor/rnnoise_simd.wa
 import { SIGNAL_ROUTES } from "../voice/signal-routes";
 import { startBackgroundInterval, stopBackgroundInterval } from "../voice/background-ticker";
 import { ensureIceServers, iceServers } from "../voice/ice";
+// 自动播放被拦的兜底（与语音房同一套）：静音播起来，等用户下次交互再开声
+import { forgetAutoplayElement, onAutoplayBlocked } from "../voice/media-unlock";
 import {
   guestPeerId,
   hostPeerIdForCode,
@@ -36,6 +38,7 @@ import {
 } from "../voice/protocol";
 import {
   GAME_ENABLED_LIMIT,
+  TEAM_LABEL,
   isTeam,
   normalizeGameId,
   teamCap,
@@ -133,6 +136,8 @@ export class GameMesh {
   private hosting = false;
   private joined = false;
   private destroyed = false;
+  /** 用户已经关掉弹窗：正在飞的这次建房/加入要作废（否则麦克风会在他看不到的地方继续开着）。 */
+  private attemptCancelled = false;
   private timers = new Set<number>();
   private title = "";
   private map = "";
@@ -150,6 +155,7 @@ export class GameMesh {
   async host(opts: { gameId: string; muted: boolean; title: string; map: string }): Promise<void> {
     if (this.destroyed) return;
     this.hosting = true;
+    this.attemptCancelled = false;
     this.gameId = normalizeGameId(opts.gameId);
     this.title = opts.title.slice(0, 30);
     this.map = opts.map.slice(0, 20);
@@ -161,12 +167,22 @@ export class GameMesh {
       throw error;
     }
     await ensureIceServers();
+    // 等 ICE 配置期间弹窗可能被关掉（含麦克风权限弹窗卡住的情况）
+    if (this.destroyed || this.attemptCancelled) {
+      this.teardownAttempt();
+      return;
+    }
 
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const code = makeRoomCode(randomIndex);
       const id = hostPeerIdForCode(code);
       const outcome = await this.openPeer(id);
       if (this.destroyed) return;
+      // 等待期间用户已经关掉弹窗：这次建房作废，别把人和麦克风留在一个看不见的房里
+      if (this.attemptCancelled) {
+        this.teardownAttempt();
+        return;
+      }
       if (outcome === "open") {
         this.code = code;
         this.hostId = id;
@@ -192,17 +208,23 @@ export class GameMesh {
       this.dropPeer();
       if (outcome !== "retry") {
         this.events.status("error", outcome);
+        // 建房失败也要收采集：否则弹窗留着错误、系统却一直显示麦克风在用
+        this.teardownAttempt();
         return;
       }
     }
     this.events.status("error", "创建开黑圈失败，请重试");
+    this.teardownAttempt();
   }
 
   // ------------------------------------------------------------------ 加入
 
   async join(opts: { code: string; gameId: string; muted: boolean }): Promise<void> {
     if (this.destroyed) return;
+    // 已经在房里就不重入：连点两下会 new 第二个 Peer 覆盖 this.peer，旧实例仍挂在信令上
+    if (this.joined) return;
     this.hosting = false;
+    this.attemptCancelled = false;
     this.code = normalizeCode(opts.code);
     this.gameId = normalizeGameId(opts.gameId);
     this.hostId = hostPeerIdForCode(this.code);
@@ -214,11 +236,21 @@ export class GameMesh {
       throw error;
     }
     await ensureIceServers();
+    if (this.destroyed || this.attemptCancelled) {
+      this.teardownAttempt();
+      return;
+    }
 
     const outcome = await this.openPeer(guestPeerId(randomToken(12)));
     if (this.destroyed) return;
+    if (this.attemptCancelled) {
+      this.teardownAttempt();
+      return;
+    }
     if (outcome !== "open") {
       this.events.status("error", outcome === "retry" ? "网络不稳定，请稍后重试" : outcome);
+      // 没进成房就把麦克风还回去：原来这里直接 return，系统红点会一直亮着
+      this.teardownAttempt();
       return;
     }
     this.myId = this.peer?.id ?? "";
@@ -232,7 +264,11 @@ export class GameMesh {
         if (settled) return;
         settled = true;
         resolve();
-        if (value) this.events.status("error", value);
+        /*
+         * 用户已经关掉弹窗时不再把这次尝试的错误弹出来：
+         * 关窗后 prompt 为 null，任何残留 error 都会让「开黑圈已结束」那张卡冒出来。
+         */
+        if (value && !this.attemptCancelled) this.events.status("error", value);
       };
       const timer = window.setTimeout(() => settle("房主没有响应（可能不在线或已关房）"), WELCOME_TIMEOUT_MS);
       this.timers.add(timer);
@@ -263,8 +299,12 @@ export class GameMesh {
           this.members.clear();
           for (const member of message.members) {
             this.members.set(member.id, { ...member, local: member.id === this.myId });
+            // 同 applyWelcome：名册里出现就开始计在场，跨队的人不该是 0 秒
+            this.touchMember(member.id);
           }
           this.scores = message.scores;
+          // 上限状态跟着名册走：不带这个字段的老房主保持原值（默认 5 人）
+          if (typeof message.unlocked === "boolean") this.unlocked = message.unlocked;
           this.events.roster([...this.members.values()], this.scores, this.unlocked);
           if (me) {
             this.localMuted = me.muted;
@@ -281,6 +321,12 @@ export class GameMesh {
         } else if (message?.t === "gkick") {
           settle("你已被房主移出开黑圈");
           this.events.kicked();
+        } else if (message?.t === "greject") {
+          /*
+           * 房满 / 游戏 ID 空：房主现在会先发原因再断连。
+           * 不处理的话访客只能等 close，读成"房主没有响应"——满房看起来像链接过期。
+           */
+          settle(message.reason || "房主拒绝了这次加入");
         }
       });
       conn.on("close", () => {
@@ -288,6 +334,12 @@ export class GameMesh {
         else settle("房主没有响应（可能不在线或已关房）");
       });
     });
+    /*
+     * 没拿到 welcome（超时 / 被拒 / 房主关房）：这次加入作废，
+     * 把麦克风、半截数据连接和刚注册的 peer 一起收掉。
+     * 之前什么都不做 → 弹窗报错、系统却一直显示麦克风在用，重试还会再开一路采集。
+     */
+    if (!this.destroyed && !this.joined) this.teardownAttempt();
   }
 
   private localMuted = false;
@@ -296,8 +348,12 @@ export class GameMesh {
     this.members.clear();
     for (const member of message.members) {
       this.members.set(member.id, { ...member, local: member.id === this.myId });
+      // 名册里出现的人一律开始计在场时长：跨队没有音频连接，
+      // 只在 attachAudio 里登记会让小结的"在场"对对面全队恒为 0 秒
+      this.touchMember(member.id);
     }
     this.scores = message.scores;
+    if (typeof message.unlocked === "boolean") this.unlocked = message.unlocked;
     this.joined = true;
     if (!this.startedAt) this.startedAt = Date.now();
     this.touchMember(this.myId);
@@ -314,29 +370,50 @@ export class GameMesh {
     const me = this.members.get(this.myId);
     if (!me) return;
     if (this.hosting) {
-      if (!this.canJoinTeam(team, this.myId)) return;
+      if (!this.canJoinTeam(team, this.myId)) {
+        this.reportTeamFull(team);
+        return;
+      }
       me.team = team;
       this.broadcastRoster();
       this.emitRoster();
       this.reconcileAudio();
       return;
     }
+    /*
+     * 访客先按本地名册自己判一次上限：不然点完立刻显示"我在进攻方"，
+     * 等房主拒绝/纠正再弹回待分队，中间那一下就是"幻影队伍"。
+     */
+    if (!this.canJoinTeam(team, this.myId)) {
+      this.reportTeamFull(team);
+      return;
+    }
     this.sendToHost({ t: "gteam", team });
-    // 乐观更新，等房主名册回来再对齐（房主会广播正确结果）。
+    // 乐观更新，等房主名册回来再对齐（房主会广播正确结果，包括被拒的情况）。
     me.team = team;
     this.emitRoster();
   }
 
-  /** 房主拖人纠错：把某个成员放进某队。 */
-  hostAssign(peerId: string, team: Team): void {
-    if (!this.hosting) return;
+  /** 队伍满了：说清楚是哪队、上限多少、怎么解锁，别静默无反应。 */
+  private reportTeamFull(team: Team): void {
+    this.events.status("error", `${TEAM_LABEL[team]}已满 ${teamCap(this.unlocked)} 人，房主可「解锁每队人数上限」`);
+  }
+
+  /** 房主拖人纠错：把某个成员放进某队。返回是否真的改了（UI 据此给反馈）。 */
+  hostAssign(peerId: string, team: Team): boolean {
+    if (!this.hosting) return false;
     const member = this.members.get(peerId);
-    if (!member) return;
-    if (!this.canJoinTeam(team, peerId)) return;
+    if (!member) return false;
+    if (!this.canJoinTeam(team, peerId)) {
+      // 原来这里是静默 return，房主点了"→ 进攻方"菜单自己关掉，看着像成功了
+      this.reportTeamFull(team);
+      return false;
+    }
     member.team = team;
     this.broadcastRoster();
     this.emitRoster();
     this.reconcileAudio();
+    return true;
   }
 
   private canJoinTeam(team: Team, peerId: string): boolean {
@@ -418,6 +495,84 @@ export class GameMesh {
     this.destroy();
   }
 
+  /**
+   * 用户关掉建房/加入弹窗：让正在飞的这次尝试作废，并立刻收干净。
+   *
+   * 已经在房里时什么都不做——关弹窗不等于退房。
+   */
+  abort(): void {
+    if (this.joined) return;
+    this.attemptCancelled = true;
+    this.teardownAttempt();
+  }
+
+  /**
+   * 收掉"这次没成功"的建房/加入：停采集、断半截连接、销毁 peer。
+   *
+   * mesh 本身继续活着（重试还能用），只清这次尝试的痕迹。不这么做的话：
+   * 输错房号 → 界面报错 → 关弹窗，系统麦克风红点会一直亮着；
+   * 再试一次还会 `new Peer` 覆盖 this.peer，旧实例留在信令上没人管。
+   */
+  private teardownAttempt(): void {
+    if (this.destroyed) return;
+    this.joined = false;
+    this.hosting = false;
+    this.lastTeam = null;
+    for (const timer of this.timers) window.clearTimeout(timer);
+    this.timers.clear();
+    for (const conn of this.dataConns.values()) {
+      try {
+        conn.close();
+      } catch {
+        /* noop */
+      }
+    }
+    this.dataConns.clear();
+    for (const [peerId, call] of this.calls) {
+      try {
+        call.close();
+      } catch {
+        /* noop */
+      }
+      this.dropAudio(peerId);
+    }
+    this.calls.clear();
+    this.silentCalls.clear();
+    this.mediaWatch.clear();
+    this.callStartedAt.clear();
+    this.redialBackoff.clear();
+    this.onewayHeals.clear();
+    if (this.mediaWatchTimer) {
+      stopBackgroundInterval(this.mediaWatchTimer);
+      this.mediaWatchTimer = 0;
+    }
+    if (this.localSpeakTimer) {
+      stopBackgroundInterval(this.localSpeakTimer);
+      this.localSpeakTimer = 0;
+    }
+    this.stopLocalStream();
+    this.dropPeer();
+    // 名册/比分也别留着：下次进房不该看到上一次的残影
+    this.members.clear();
+    this.memberStats.clear();
+    this.speakingIds.clear();
+    this.events.speaking([]);
+    this.events.roster([], this.scores, this.unlocked);
+  }
+
+  /** 停掉本机采集（含发布用的合成流）——系统那个"正在使用麦克风"的红点靠它熄掉。 */
+  private stopLocalStream(): void {
+    if (this.publishedStream) {
+      for (const track of this.publishedStream.getTracks()) track.stop();
+      this.publishedStream = null;
+    }
+    if (this.localStream) {
+      for (const track of this.localStream.getTracks()) track.stop();
+      this.localStream = null;
+    }
+    this.localAnalyser = null;
+  }
+
   destroy(): void {
     this.destroyed = true;
     for (const timer of this.timers) window.clearTimeout(timer);
@@ -441,6 +596,7 @@ export class GameMesh {
     for (const entry of this.analysers.values()) window.clearInterval(entry.timer);
     this.analysers.clear();
     for (const audio of this.audios.values()) {
+      forgetAutoplayElement(audio);
       audio.srcObject = null;
       audio.remove();
     }
@@ -910,7 +1066,16 @@ export class GameMesh {
       }
     }
     void audio.play().catch(() => {
-      /* 自动播放被拦：等用户下一次交互由 UI 再调 play */
+      /*
+       * 自动播放被拦：先静音让它播起来，登记到共享的"解锁队列"，
+       * 用户下一次点/按键时自动开声。
+       *
+       * 光靠 pollInbound 每 5 秒重试 play() 是不够的——没有用户手势，
+       * 重试一样被拒，表现就是"进了房、什么都听不到，要退房重进"。
+       */
+      audio.muted = true;
+      onAutoplayBlocked(audio);
+      void audio.play().catch(() => undefined);
     });
   }
 
@@ -969,6 +1134,8 @@ export class GameMesh {
     this.setSpeaking(peerId, false);
     const audio = this.audios.get(peerId);
     if (!audio) return;
+    // 从"自动播放待解锁"名单里摘掉，避免元素已卸载了还留着引用
+    forgetAutoplayElement(audio);
     audio.srcObject = null;
     audio.remove();
     this.audios.delete(peerId);
@@ -988,17 +1155,35 @@ export class GameMesh {
     });
   }
 
+  /**
+   * 拒绝一个还没进圈的访客：**先说明原因再断**。
+   *
+   * 以前这里直接 conn.close()，访客那边只看到连接断掉，于是 UI 报
+   * "房主没有响应（可能不在线或已关房）"——满房看起来就像邀请链接过期。
+   * 留 120ms 再断是给最后一条消息留落地时间（立即 close 在部分内核会丢）。
+   */
+  private rejectGuest(conn: DataConnection, reason: string): void {
+    this.send(conn, { t: "greject", reason });
+    window.setTimeout(() => {
+      try {
+        conn.close();
+      } catch {
+        /* noop */
+      }
+    }, 120);
+  }
+
   private onGuestMessage(conn: DataConnection, message: GuestToHost): void {
     if (!message || typeof message !== "object") return;
     const guestId = conn.peer;
     if (message.t === "gjoin") {
       if (this.members.size >= GAME_ENABLED_LIMIT) {
-        conn.close();
+        this.rejectGuest(conn, `开黑圈满了（最多 ${GAME_ENABLED_LIMIT} 人），让房主清一个人再进`);
         return;
       }
       const gameId = normalizeGameId(message.gameId);
       if (!gameId) {
-        conn.close();
+        this.rejectGuest(conn, "进圈前要先填游戏 ID（和游戏里一致），让房主或自己重试");
         return;
       }
       this.dataConns.set(guestId, conn);
@@ -1011,6 +1196,8 @@ export class GameMesh {
         isHost: false,
         local: false,
       });
+      // 一进名册就开始计在场时长（否则小结里跨队的人恒为 0 秒）
+      this.touchMember(guestId);
       this.send(conn, {
         t: "gwelcome",
         code: this.code,
@@ -1020,6 +1207,7 @@ export class GameMesh {
         you: guestId,
         title: this.title,
         map: this.map,
+        unlocked: this.unlocked,
       });
       this.broadcastRoster();
       this.emitRoster();
@@ -1031,7 +1219,15 @@ export class GameMesh {
     if (message.t === "gteam") {
       if (isTeam(message.team) && this.canJoinTeam(message.team, guestId)) {
         this.hostAssign(guestId, message.team);
+        return;
       }
+      /*
+       * 被拒也要回名册：访客那边是"先乐观改本地、等名册纠正"，
+       * 拒绝时什么都不发，他的界面就会停在幻影队伍上，并照着错队伍重建音频拓扑
+       * （表现为"我听不到队友、对面却听得到我"，2026-10-22 审查的 P1）。
+       */
+      this.broadcastRoster();
+      this.emitRoster();
       return;
     }
     if (message.t === "gmute") {
@@ -1090,6 +1286,8 @@ export class GameMesh {
         t: "groster",
         members: this.serializeMembers(peerId),
         scores: this.scores,
+        // 带上"是否解锁上限"：访客要靠它判断队伍还收不收人
+        unlocked: this.unlocked,
       });
     }
   }
@@ -1266,6 +1464,8 @@ export class GameMesh {
   }
 
   private async acquireMic(muted: boolean): Promise<void> {
+    // 重试时先停掉上一次的采集：否则每失败一次就多占一路麦克风
+    if (this.localStream) this.stopLocalStream();
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: {
         echoCancellation: true,
@@ -1276,6 +1476,14 @@ export class GameMesh {
       },
       video: false,
     });
+    /*
+     * 采集回来时用户可能已经把弹窗关了（权限弹窗卡了几秒很常见）：
+     * 这时候直接把流停掉，别让麦克风在他看不见的地方开着。
+     */
+    if (this.destroyed || this.attemptCancelled) {
+      for (const track of stream.getTracks()) track.stop();
+      return;
+    }
     for (const track of stream.getAudioTracks()) track.enabled = !muted;
     this.localStream = stream;
     this.localMuted = muted;

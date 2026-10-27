@@ -13,6 +13,7 @@ import { useEffect, useState } from "react";
 import { GameCreateDialog, GameJoinDialog, GameRoomView, GameSummaryCard } from "./GameRoomView";
 import { gameCodeFromUrl, gameInviteUrl } from "./game-links";
 import { useGame } from "./use-game";
+import { copyText } from "../voice/invite-text";
 
 type Prompt = "create" | "join" | null;
 
@@ -49,6 +50,23 @@ export function GameEntry({
     if (game.room) void game.refreshDevices();
   }, [game.room, game.refreshDevices]);
 
+  /**
+   * 关掉建房/加入弹窗。
+   *
+   * 除了关窗，还要收干净这次没成功的尝试：采集已经开了（麦克风红点）、
+   * peer 也已经注册到信令上。以前只关窗，结果"输错码 → 取消 → 系统一直显示正在使用麦克风"。
+   * 顺手清掉残留错误：否则关窗后 !prompt 会让「开黑圈已结束」那张卡弹出来。
+   */
+  const cancelPrompt = () => {
+    game.abortAttempt();
+    game.clearError();
+    setJoinCode(null);
+    const url = new URL(window.location.href);
+    url.searchParams.delete("g");
+    window.history.replaceState(null, "", url.toString());
+    onPromptConsumed();
+  };
+
   if (game.summary) {
     return <GameSummaryCard summary={game.summary} onClose={game.clearSummary} />;
   }
@@ -72,8 +90,10 @@ export function GameEntry({
         onScore={game.score}
         onResetScores={game.resetScores}
         onToggleCap={game.toggleTeamCap}
-        onCopyInvite={() => {
-          if (game.room) void navigator.clipboard?.writeText(gameInviteUrl(game.room.code));
+        onCopyInvite={async () => {
+          if (!game.room) return false;
+          // 返回真实结果：复制失败时按钮要改口，不能一律显示「已复制」
+          return copyText(gameInviteUrl(game.room.code));
         }}
         onLeave={game.closeRoom}
         micBoost={game.micBoost}
@@ -132,11 +152,15 @@ export function GameEntry({
       <GameCreateDialog
         busy={busy}
         error={game.error}
-        onCancel={onPromptConsumed}
+        onCancel={cancelPrompt}
         onCreate={(opts) => {
           setBusy(true);
           // 失败时弹窗保持打开显示错误；成功（game.room 就绪）由上面的 effect 关闭
-          void game.createRoom(opts).finally(() => setBusy(false));
+          // catch 是必需的：麦克风打不开时 createRoom 会抛，否则控制台留未捕获 rejection
+          void game
+            .createRoom(opts)
+            .catch(() => undefined)
+            .finally(() => setBusy(false));
         }}
       />
     );
@@ -147,16 +171,13 @@ export function GameEntry({
       code={joinCode}
       busy={busy}
       error={game.error}
-      onCancel={() => {
-        setJoinCode(null);
-        const url = new URL(window.location.href);
-        url.searchParams.delete("g");
-        window.history.replaceState(null, "", url.toString());
-        onPromptConsumed();
-      }}
+      onCancel={cancelPrompt}
       onJoin={(opts) => {
         setBusy(true);
-        void game.joinRoom({ code: opts.code, gameId: opts.gameId, muted: opts.muted }).finally(() => setBusy(false));
+        void game
+          .joinRoom({ code: opts.code, gameId: opts.gameId, muted: opts.muted })
+          .catch(() => undefined)
+          .finally(() => setBusy(false));
       }}
     />
   );

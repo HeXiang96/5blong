@@ -20,6 +20,8 @@ import {
   teamCap,
 } from "./game-types";
 import { activateEntitlement, loadEntitlement, markTutorialSeen, tutorialSeen, type GameEntitlement } from "./use-game";
+// 房码格式只认 protocol.ts 一处（6 位新码，老的 4 位继续放行），别再自己写正则
+import { isRoomCode, normalizeCode, ROOM_CODE_LEN } from "../voice/protocol";
 
 const TEAM_ORDER: Team[] = ["attack", "unassigned", "defend"];
 
@@ -154,10 +156,11 @@ export function GameJoinDialog({
   busy: boolean;
   error: string | null;
 }) {
-  const [roomCode, setRoomCode] = useState(code ?? "");
+  const [roomCode, setRoomCode] = useState(() => (code ? normalizeCode(code) : ""));
   const [gameId, setGameId] = useState("");
   const [muted, setMuted] = useState(false);
-  const ready = /^[0-9]{4}$/.test(roomCode.trim()) && gameId.trim().length > 0;
+  // 6 位新码；老的 4 位码继续放行（老邀请链接/老截图里的码不该突然失效）
+  const ready = isRoomCode(normalizeCode(roomCode)) && gameId.trim().length > 0;
   return (
     <div className="vx-modal-backdrop">
       <div className="vx-modal vx-game-modal">
@@ -167,14 +170,14 @@ export function GameJoinDialog({
         </p>
         {!code ? (
           <label className="vx-field">
-            <span className="vx-field-label">开黑圈房间码（4 位数字）</span>
+            <span className="vx-field-label">开黑圈房间码（{ROOM_CODE_LEN} 位数字，老的 4 位也能进）</span>
             <input
               className="vx-input"
               value={roomCode}
               inputMode="numeric"
-              maxLength={4}
-              placeholder="例如：8294"
-              onChange={(event) => setRoomCode(event.target.value.replace(/[^0-9]/g, "").slice(0, 4))}
+              maxLength={ROOM_CODE_LEN}
+              placeholder="例如：829417"
+              onChange={(event) => setRoomCode(event.target.value.replace(/[^0-9]/g, "").slice(0, ROOM_CODE_LEN))}
             />
           </label>
         ) : null}
@@ -187,7 +190,7 @@ export function GameJoinDialog({
             placeholder="例如：夜里看江南#8294"
             onChange={(event) => setGameId(event.target.value)}
             onKeyDown={(event) => {
-              if (event.key === "Enter" && ready) onJoin({ code: roomCode.trim(), gameId, muted });
+              if (event.key === "Enter" && ready) onJoin({ code: normalizeCode(roomCode), gameId, muted });
             }}
           />
         </label>
@@ -200,7 +203,7 @@ export function GameJoinDialog({
           <button type="button" className="vx-btn vx-btn-ghost" onClick={onCancel}>
             取消
           </button>
-          <button type="button" className="vx-btn vx-btn-primary" disabled={busy || !ready} onClick={() => onJoin({ code: roomCode.trim(), gameId, muted })}>
+          <button type="button" className="vx-btn vx-btn-primary" disabled={busy || !ready} onClick={() => onJoin({ code: normalizeCode(roomCode), gameId, muted })}>
             {busy ? "加入中…" : "进圈"}
           </button>
         </div>
@@ -359,7 +362,7 @@ export function GameRoomView({
   onScore: (side: "attack" | "defend", delta: number) => void;
   onResetScores: () => void;
   onToggleCap: () => void;
-  onCopyInvite: () => void;
+  onCopyInvite: () => Promise<boolean> | boolean;
   onLeave: () => void;
   /** 麦克风增强（1~4）。 */
   micBoost: number;
@@ -382,7 +385,7 @@ export function GameRoomView({
   /** 点成员卡弹出的"对方音量"弹层（按成员 id）。 */
   const [volId, setVolId] = useState<string | null>(null);
   const [audioOpen, setAudioOpen] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const [copyState, setCopyState] = useState<"idle" | "done" | "fail">("idle");
   const [showTutorial, setShowTutorial] = useState(() => !tutorialSeen());
 
   const groups = useMemo(
@@ -419,13 +422,17 @@ export function GameRoomView({
         <button
           type="button"
           className="vx-btn vx-btn-small vx-btn-primary"
+          title={copyState === "fail" ? `复制失败——直接把房间码 ${room.code} 发给他们` : "复制邀请链接（对方点开就能进圈）"}
           onClick={() => {
-            onCopyInvite();
-            setCopied(true);
-            window.setTimeout(() => setCopied(false), 1600);
+            void (async () => {
+              // 必须等结果：这里曾经不管成不成都打勾，用户以为发出去了、其实没进剪贴板
+              const ok = await onCopyInvite();
+              setCopyState(ok ? "done" : "fail");
+              window.setTimeout(() => setCopyState("idle"), 1800);
+            })();
           }}
         >
-          {copied ? "已复制邀请" : "复制邀请"}
+          {copyState === "done" ? "已复制邀请" : copyState === "fail" ? "复制失败，手动记房号" : "复制邀请"}
         </button>
         <span className="vx-game-count">
           <Users size={14} /> {members.length}/{GAME_ENABLED_LIMIT}
@@ -483,7 +490,7 @@ export function GameRoomView({
                 </span>
                 <span className="vx-game-lane-count">
                   {group.members.length}
-                  {group.team !== "unassigned" ? `/${unlocked ? 8 : 5}` : ""}
+                  {group.team !== "unassigned" ? `/${teamCap(unlocked)}` : ""}
                 </span>
                 {isMine ? <span className="vx-game-lane-here">你在这里</span> : null}
               </header>
