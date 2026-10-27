@@ -603,11 +603,80 @@ export interface WireMember {  id: string;
    * 缺省（旧客户端）= 不支持，宁可用 H.264。
    */
   av1Decode?: boolean;
+  /**
+   * 设备画像：**只用于给每台机器选最优编解码 / 排障**，不参与身份、权限、准入。
+   * 旧客户端没有这个字段，缺省 = 未知（按最保守的值处理）。
+   */
+  dev?: DeviceProfile;
+}
+
+/**
+ * 观众设备画像（紧凑版，每人随名册广播一次）。
+ *
+ * 为什么要它
+ * ----------
+ * "给每台机器最优解"的前提是**知道这台机器能硬解什么**。只报一个 `av1Decode`
+ * 布尔值不够：有的机器 H.264 硬解坏了但 AV1 硬解是好的，那对它最优的选择
+ * 恰恰是 AV1（而不是退回 H.264）；反过来也有。
+ *
+ * 字段刻意压到最短（这是逐成员广播，人多时体积会累加）：
+ * - `gpu` / `os` 只用于**诊断**（"你那台是不是 40 系"）和将来的已知坏机器名单，
+ *   不参与任何决策逻辑；
+ * - `dec` / `enc` 才是决策依据，取值只允许 h264 / vp9 / av1。
+ *
+ * ⚠️ 隐私：只采 GPU 型号与系统版本，**不采**用户名、机器名、序列号。
+ */
+export interface DeviceProfile {
+  /** GPU 型号（从 WebGL 渲染器串里抠出来的，已截断，如 "NVIDIA GeForce RTX 4060 Ti"） */
+  gpu?: string;
+  /** 操作系统（如 "Windows 10.0" / "macOS 14.5"） */
+  os?: string;
+  /** 有**硬件解码**的格式 */
+  dec?: string[];
+  /** 有**硬件编码**的格式 */
+  enc?: string[];
+  /** 本机已被判定"硬件解码异常"，正在走软解（桌面客户端的兼容模式） */
+  soft?: boolean;
+}
+
+/** `dec` / `enc` 里允许出现的取值（白名单，避免旧/坏客户端塞任意字符串进名册） */
+const CODEC_TOKENS = new Set(["h264", "vp9", "av1"]);
+
+function codecTokens(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const out: string[] = [];
+  for (const item of value) {
+    if (typeof item === "string" && CODEC_TOKENS.has(item) && !out.includes(item)) out.push(item);
+  }
+  return out;
+}
+
+/**
+ * 把线上来的 `dev` 洗成可信的 {@link DeviceProfile}。
+ *
+ * 这是**外部输入**（别的客户端发什么都有可能），所以逐字段校验：
+ * 长度截断、数组只认白名单、布尔只认 true。全部为空时返回 undefined，
+ * 让调用方按"未知"处理，而不是拿到一个半残对象。
+ */
+export function sanitizeDeviceProfile(value: unknown): DeviceProfile | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const src = value as Record<string, unknown>;
+  const out: DeviceProfile = {};
+  const gpu = str(src["gpu"], 48);
+  if (gpu) out.gpu = gpu;
+  const os = str(src["os"], 24);
+  if (os) out.os = os;
+  const dec = codecTokens(src["dec"]);
+  if (dec.length > 0) out.dec = dec;
+  const enc = codecTokens(src["enc"]);
+  if (enc.length > 0) out.enc = enc;
+  if (src["soft"] === true) out.soft = true;
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 /** 访客 → 房主。 */
 export type GuestMessage =
-  | { t: "hello"; personId: string; sessionId: string; name: string; avatar: string; color: string; hasMic: boolean; muted: boolean; av1Decode?: boolean; accountId?: string; nonce: string; proof: string }
+  | { t: "hello"; personId: string; sessionId: string; name: string; avatar: string; color: string; hasMic: boolean; muted: boolean; av1Decode?: boolean; dev?: DeviceProfile; accountId?: string; nonce: string; proof: string }
   | { t: "identity"; name: string; avatar: string; color: string }
   | { t: "joined" }
   | { t: "chat"; text: string }
@@ -722,6 +791,7 @@ export function parseGuestMessage(data: unknown): GuestMessage | null {
   switch (msg["t"]) {
     case "hello": {
       if (typeof msg["nonce"] !== "string" || typeof msg["proof"] !== "string") return null;
+      const dev = sanitizeDeviceProfile(msg["dev"]);
       return {
         t: "hello",
         personId: str(msg["personId"], 16),
@@ -732,6 +802,7 @@ export function parseGuestMessage(data: unknown): GuestMessage | null {
         hasMic: msg["hasMic"] === true,
         muted: msg["muted"] === true,
         ...(msg["av1Decode"] === true ? { av1Decode: true } : {}),
+        ...(dev ? { dev } : {}),
         ...(() => {
           const accountId = str(msg["accountId"], 8);
           return /^\d{8}$/.test(accountId) ? { accountId } : {};
@@ -969,6 +1040,7 @@ function parseMember(value: unknown): WireMember | null {
   const m = value as Record<string, unknown>;
   const id = str(m["id"], 64);
   if (!id) return null;
+  const dev = sanitizeDeviceProfile(m["dev"]);
   return {
     id,
     personId: str(m["personId"], 16),
@@ -982,6 +1054,7 @@ function parseMember(value: unknown): WireMember | null {
     serverMuted: m["serverMuted"] === true,
     deafened: m["deafened"] === true,
     ...(m["av1Decode"] === true ? { av1Decode: true } : {}),
+    ...(dev ? { dev } : {}),
     ...(() => {
       const accountId = str(m["accountId"], 8);
       return /^\d{8}$/.test(accountId) ? { accountId } : {};

@@ -43,7 +43,9 @@ import {
   type ScreenShareState,
   type ScreenViewPreference,
   type WireMember,
+  type DeviceProfile,
 } from "./protocol";
+import { canHardwareDecode, collectDeviceProfile } from "./device-profile";
 import { applyAudioProfile, opusSdpTransform } from "./audio-profile";
 import { forgetAutoplayElement, onAutoplayBlocked } from "./media-unlock";
 import { backgroundTimerMode } from "./background-ticker";
@@ -226,6 +228,11 @@ export interface Member {
   deafened?: boolean;
   /** 该端是否报了 AV1 **硬件解码**（决定共享者能不能上 AV1；缺省 = 不能）。 */
   av1Decode?: boolean;
+  /**
+   * 设备画像（GPU 型号 / OS / 能硬解硬编哪些格式）。
+   * **只用来给这台机器选参数和排障**，不参与身份与准入；旧客户端没有 = 未知。
+   */
+  dev?: DeviceProfile;
   /**
    * 对方账号 ID（8 位，可选）。只用于「加好友」按钮——未登录 / 旧客户端没有，
    * **不参与任何进房或权限判断**。
@@ -540,6 +547,11 @@ export class VoiceMesh {
   private hwProbePromise: Promise<HardwareCodecProbe> | null = null;
   /** 本机是否支持 AV1 硬解（join 前探一次；没探到 = false）。 */
   private myAv1Decode = false;
+  /**
+   * 本机设备画像（GPU / OS / 硬解硬编能力）。进房时随 hello 与名册报出去，
+   * 用来让别人给**我这台**选合适的编码参数。采集失败就是 null（不影响进房）。
+   */
+  private myDev: DeviceProfile | null = null;
   /** 各观众对当前共享会话的画质偏好（key = 成员 id）。 */
   private viewerScreenPrefs = new Map<string, ScreenViewPreference>();
   /** 本机作为观众时选的画质偏好（点了"清晰优先/流畅优先"后本地留着）。 */
@@ -759,6 +771,7 @@ export class VoiceMesh {
           isHost: true,
           local: true,
           ...(this.myAv1Decode ? { av1Decode: true } : {}),
+          ...(this.myDev ? { dev: this.myDev } : {}),
           // 自己这条也要带账号 ID，否则别人看到的"房主"永远没有 ID（加不了好友）
           ...(this.accountId ? { accountId: this.accountId } : {}),
         };
@@ -849,6 +862,7 @@ export class VoiceMesh {
       isHost: false,
       local: true,
       ...(this.myAv1Decode ? { av1Decode: true } : {}),
+      ...(this.myDev ? { dev: this.myDev } : {}),
       ...(this.accountId ? { accountId: this.accountId } : {}),
     };
     this.members.set(this.myId, this.me);
@@ -877,9 +891,19 @@ export class VoiceMesh {
    * 结果进 `hwProbe` / `myAv1Decode`，用于：报到名册（双端判断 AV1）与开播选码。
    */
   private startHardwareProbe(): Promise<HardwareCodecProbe> {
-    this.hwProbePromise ??= probeHardwareEncoders("fhd1080").then((probe) => {
+    this.hwProbePromise ??= probeHardwareEncoders("fhd1080").then(async (probe) => {
       this.hwProbe = probe;
       this.myAv1Decode = probe.decAv1;
+      /*
+       * 顺手采一次设备画像。**用 await** 是因为 hello/名册要在同一轮里带上它，
+       * 否则"刚进房那一次"别人拿不到我的能力，只能等下一次名册广播。
+       * 成本很低（WebGL 读一个字符串 + 一次 invoke），而且失败只会得到 null。
+       */
+      try {
+        this.myDev = await collectDeviceProfile(probe);
+      } catch {
+        this.myDev = null;
+      }
       return probe;
     });
     return this.hwProbePromise;
@@ -1749,6 +1773,7 @@ export class VoiceMesh {
       deafened: previous?.member.deafened ?? false,
       // AV1 硬解能力：共享者据此做双端判断（缺省 = 不支持）
       ...(message.av1Decode === true ? { av1Decode: true } : {}),
+      ...(message.dev ? { dev: message.dev } : {}),
     };
     this.guests.set(peerId, {
       conn,
@@ -1980,6 +2005,7 @@ export class VoiceMesh {
       // 能力字段必须随名册广播：共享者（可能是房主、也可能是访客）要据此判断
       // "是不是所有人都能硬解 AV1"，只有全员支持才敢上 AV1。
       av1Decode: member.av1Decode === true,
+      ...(member.dev ? { dev: member.dev } : {}),
       ...(member.accountId ? { accountId: member.accountId } : {}),
     }));
   }
@@ -2646,6 +2672,7 @@ export class VoiceMesh {
       hasMic: this.me.hasMic,
       muted: this.me.muted,
       ...(this.myAv1Decode ? { av1Decode: true } : {}),
+      ...(this.myDev ? { dev: this.myDev } : {}),
       nonce,
       proof,
     });
@@ -2717,6 +2744,7 @@ export class VoiceMesh {
           serverMuted: member.serverMuted ?? false,
           deafened: member.deafened ?? false,
           ...(member.av1Decode === true ? { av1Decode: true } : {}),
+          ...(member.dev ? { dev: member.dev } : {}),
           /*
            * accountId 必须带上：成员菜单的「加好友」全靠它。
            * 2026-10-26 事故：welcome 建成员时漏了这个字段——访客看到的所有人
@@ -2812,6 +2840,7 @@ export class VoiceMesh {
             isHost: member.isHost,
             serverMuted: member.serverMuted ?? false,
             ...(member.av1Decode === true ? { av1Decode: true } : {}),
+            ...(member.dev ? { dev: member.dev } : {}),
             /*
              * accountId 同样必须带上——这里是**整体替换**成员记录，
              * 漏掉它意味着房主每次重播名册（有人进出/改名）都会把
@@ -2856,6 +2885,7 @@ export class VoiceMesh {
           serverMuted: message.member.serverMuted ?? false,
           deafened: message.member.deafened ?? false,
           ...(message.member.av1Decode === true ? { av1Decode: true } : {}),
+          ...(message.member.dev ? { dev: message.member.dev } : {}),
           ...(message.member.accountId ? { accountId: message.member.accountId } : {}),
           local: false,
         });
@@ -3582,7 +3612,16 @@ export class VoiceMesh {
       : perViewerBitrate(this.screenQuality, viewers);
     // 双端 AV1 判断（逐观众）：本机有 AV1 硬编，且**这一位观众**报了 AV1 硬解，
     // 才把 AV1 提到 H.264 之前。任何一位观众不支持，给他的流仍是 H.264。
-    const useAv1 = this.hwProbe?.av1 === true && viewer?.av1Decode === true;
+    /*
+     * 逐观众的编码选择——这就是"按每台机器给最优解"真正生效的地方。
+     *
+     * 判据从"只有一个 av1Decode 布尔"升级成 `dev.dec` 能力表，于是多认出一种情况：
+     * 观众 **H.264 硬解坏了、但 AV1 硬解是好的**（显卡驱动那类故障很常见），
+     * 这时给他 H.264 才是最差的选择，应该直接给 AV1。
+     * 老客户端没有 dev 时 `canHardwareDecode` 会退回原来的语义（只信 av1Decode），
+     * 所以行为不变。
+     */
+    const useAv1 = this.hwProbe?.av1 === true && canHardwareDecode(viewer?.dev, viewer?.av1Decode, "av1");
     // 起始码率：按这位观众分摊后的码率起步（上限的 75%），跳过编码器的开局爬坡。
     const startKbps = Math.round((targetBitrate * 0.75) / 1000);
     // 与语音同一套 PeerJS 传输；metadata 标记让对端知道这是画面呼叫（不给流、只收）。

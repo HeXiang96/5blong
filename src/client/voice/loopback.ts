@@ -234,7 +234,9 @@ async function startLoopbackOnce(
   };
 
   const info = await invoke<{
-    sampleRate: number;
+    sampleRate?: number;
+    /** 老构建返回 snake_case；一并兼容，避免字段名不一致把整条链路掐死（见下） */
+    sample_rate?: number;
     channels: number;
     mode?: string;
     target?: number;
@@ -242,10 +244,24 @@ async function startLoopbackOnce(
     onChunk: channel,
     onlyPid: onlyPid ?? null,
   });
-  if (info.sampleRate !== ctx.sampleRate) {
-    // Rust 侧固定 48k，正常不会走到；防御性处理：格式对不上直接判失败
-    await cleanup();
-    throw new Error(`采样率不匹配（采集 ${info.sampleRate}，图 ${ctx.sampleRate}）`);
+  /*
+   * ⚠️ 这里以前是 `if (info.sampleRate !== ctx.sampleRate) { await cleanup(); throw }`。
+   *
+   * Rust 侧结构体序列化出去的是 `sample_rate`（没加 rename_all），前端读 `sampleRate`
+   * 得到 undefined → `undefined !== 48000` **恒真** → 每次共享都在这一行把刚起来的
+   * 采集线程停掉，观端从头到尾没有声音，而且日志上只表现为"启动采集 → 初始化成功 →
+   * 采集线程正常结束"挤在同一秒，完全看不出是这里。
+   *
+   * 现在两道保险：
+   * ① 两种字段名都认（老客户端/新客户端都能跑）；
+   * ② 采样率真不一致也**只提示不停播**——AudioWorklet 是按 ctx 的采样率播的，
+   *    最坏后果是轻微变速，远好过整条系统声音消失。
+   */
+  const captureRate = info.sampleRate ?? info.sample_rate ?? CAPTURE_SAMPLE_RATE;
+  if (captureRate !== ctx.sampleRate) {
+    console.warn(
+      `[loopback] 采样率不一致（采集 ${captureRate}，音频图 ${ctx.sampleRate}），继续播放（可能轻微变速）`,
+    );
   }
 
   const [firstTrack] = destination.stream.getAudioTracks();

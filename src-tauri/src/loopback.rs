@@ -32,7 +32,17 @@ pub struct LoopbackState {
 }
 
 /// 启动成功后回给前端的参数（页面要按这个采样率建 AudioContext）。
+///
+/// ⚠️ **必须 camelCase 序列化**。前端读的是 `info.sampleRate`，而这个字段原来叫
+/// `sample_rate`（serde 默认按原名输出）——于是前端拿到的永远是 `undefined`，
+/// `undefined !== 48000` 恒真，`startLoopbackOnce` 里那道"采样率校验"每次都会
+/// `cleanup()`（= 调 stop_loopback_capture），采集线程刚初始化完就被掐死。
+/// 表现就是：日志里"启动采集 → 初始化成功 → 采集线程正常结束"全在同一秒，
+/// 观端从头到尾没有声音，而且没有任何一条明确报错。
+/// 项目里其它返回结构体（UpdateNotice / UpdateMeta / UpdatePhase）字段都是单个
+/// 单词，所以从来踩不到这个坑——只有这里有多词字段，千万别改回去。
 #[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LoopbackStart {
     pub sample_rate: u32,
     pub channels: u32,
@@ -377,3 +387,35 @@ mod imp {
 }
 
 pub use imp::*;
+
+#[cfg(test)]
+mod tests {
+    use super::LoopbackStart;
+
+    /*
+     * 守护测试：前端按 `info.sampleRate` 取采样率。
+     *
+     * 字段名一旦回退成 serde 默认的 snake_case，前端拿到的是 undefined，
+     * `undefined !== 48000` 恒真 → 每次共享都会立刻停掉采集，
+     * 观端从头到尾没有声音（2026-10-27 实拍事故，排查了两轮 WASAPI 才定位到）。
+     * 这个测试就是为了下次有人"顺手"删掉 rename_all 时当场炸出来。
+     */
+    #[test]
+    fn loopback_start_serializes_camel_case() {
+        let json = serde_json::to_string(&LoopbackStart {
+            sample_rate: 48_000,
+            channels: 2,
+            mode: "webview".into(),
+            target: 123,
+        })
+        .expect("序列化 LoopbackStart 失败");
+
+        assert!(json.contains("\"sampleRate\":48000"), "实际输出：{json}");
+        assert!(json.contains("\"mode\":\"webview\""), "实际输出：{json}");
+        assert!(json.contains("\"target\":123"), "实际输出：{json}");
+        assert!(
+            !json.contains("sample_rate"),
+            "字段名回退成 snake_case 了，前端会读到 undefined：{json}"
+        );
+    }
+}

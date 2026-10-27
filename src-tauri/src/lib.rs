@@ -20,6 +20,7 @@ use tauri_plugin_updater::{Update, UpdaterExt};
 /// 内置系统声音采集（Windows WASAPI 回环）：浏览器在多声道播放设备上
 /// 拿不到系统音频，客户端在 Rust 侧自己采后喂给页面随共享发布。
 mod loopback;
+mod playback_compat;
 /// 进程级系统声音采集（Win10 2004+）：共享桌面时排除本应用，避免房间语音被采两遍。
 #[cfg(windows)]
 pub mod process_loopback;
@@ -282,7 +283,7 @@ pub fn run() {
      * 网页版做不到这些（浏览器策略改不了），所以网页端的等价方案是
      * 关键循环走 Worker 计时（src/client/voice/background-ticker.ts）。
      */
-    let browser_args = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,CalculateNativeWinOcclusion,IntensiveWakeUpThrottling \
+    let base_browser_args = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,CalculateNativeWinOcclusion,IntensiveWakeUpThrottling \
          --disable-backgrounding-occluded-windows \
          --disable-background-timer-throttling \
          --disable-renderer-backgrounding \
@@ -298,7 +299,9 @@ pub fn run() {
             loopback::list_loopback_targets,
             loopback::list_share_windows,
             loopback::resolve_share_pid,
-            loopback::stop_loopback_capture
+            loopback::stop_loopback_capture,
+            playback_compat::get_playback_compat,
+            playback_compat::set_playback_compat
         ])
         // 单实例必须在其它插件 / WebView 初始化之前注册。
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
@@ -331,6 +334,16 @@ pub fn run() {
 
             // ---- 主窗口：改用 Builder 创建（窗口参数原在 tauri.conf.json），
             //      以便通过 additional_browser_args 传入防后台节流参数（见 run() 顶部说明）----
+            /*
+             * 「播放兼容模式」（关闭硬件视频解码）只能靠**启动参数**生效，
+             * 见 playback_compat.rs 顶部说明：观端检测到"有帧但全黑"会写开关，
+             * 下次启动时在这里拼进命令行。
+             * 放在 setup 里拼是因为此时才拿得到 AppHandle（要在配置目录里查标记文件）。
+             */
+            let browser_args = format!(
+                "{base_browser_args}{}",
+                playback_compat::extra_browser_args(app.handle())
+            );
             tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::default())
                 .title("5blong")
                 // 1200×800：首页公告栏的右下角布局需要 ≥1100px（窄于 1100 会回落
@@ -339,7 +352,7 @@ pub fn run() {
                 .min_inner_size(820.0, 600.0)
                 .resizable(true)
                 .center()
-                .additional_browser_args(browser_args)
+                .additional_browser_args(&browser_args)
                 .build()?;
 
             // ---- 托盘 ----

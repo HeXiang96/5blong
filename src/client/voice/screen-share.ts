@@ -87,7 +87,7 @@ export const SHARE_QUALITY_PRESETS: Record<ShareQuality, ShareQualityPreset> = {
    * 却要多花一倍码率。弱网或观众多时选这个，房主上行能省一半。
    */
   hd720p30: { label: "高清 720p", width: 1280, height: 720, fps: 30, maxBitrate: 3_000_000 },
-  fhd1080: { label: "超清 1080p", width: 1920, height: 1080, fps: 60, maxBitrate: 8_000_000 },
+  fhd1080: { label: "超清 1080p", width: 1920, height: 1080, fps: 60, maxBitrate: 12_000_000 },
   fhd1080p30: { label: "超清 1080p", width: 1920, height: 1080, fps: 30, maxBitrate: 5_000_000 },
 };
 

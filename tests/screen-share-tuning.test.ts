@@ -77,15 +77,25 @@ describe("preferH264Sdp（P2P 链路把协商拉回 H.264）", () => {
 });
 
 describe("perViewerBitrate（P2P 上行分摊）", () => {
+  /*
+   * 2026-10-27 调校：1080p60 档位上限 8 → 12 Mbps（业主："要最优画质"）。
+   *
+   * 含义变成「一对一给满 12M，多观众仍按 P2P_TOTAL_UPLINK_BUDGET=12M 总预算均分」——
+   * 注意单档上限现在**等于**总预算，所以：
+   *   - 1 人：12 Mbps（这就是提升画质的地方）；
+   *   - 2 人：各 6 Mbps（原来是各 4）；
+   *   - 人数再多，仍由"总预算 / n"和 1.2 Mbps 地板共同收口，不会顶爆上行。
+   * 改这些数字前先想清楚：它们编码的是**上行预算的取舍**，不是随手一改的魔法数。
+   */
   it("按观众数均分档位码率", () => {
-    expect(perViewerBitrate("fhd1080", 1)).toBe(8_000_000);
-    expect(perViewerBitrate("fhd1080", 2)).toBe(4_000_000);
+    expect(perViewerBitrate("fhd1080", 1)).toBe(12_000_000);
+    expect(perViewerBitrate("fhd1080", 2)).toBe(6_000_000);
     expect(perViewerBitrate("hd720", 4)).toBe(1_250_000);
   });
 
   it("保底 1.2 Mbps，但总上行不能顶爆（12 Mbps 预算）", () => {
-    // 7 位观众：8/7 ≈ 1.14 Mbps < 地板，按地板 1.2 Mbps（总 8.4 Mbps，还在预算内）
-    expect(perViewerBitrate("fhd1080", 7)).toBe(1_200_000);
+    // 7 位观众：12/7 ≈ 1.71 Mbps，高于地板 → 按均分（总 12 Mbps，正好在预算上）
+    expect(perViewerBitrate("fhd1080", 7)).toBe(1_714_286);
     // 12 位观众（房间上限）：地板会把总量顶到 14.4 Mbps，必须按预算压到 1.0 Mbps
     expect(perViewerBitrate("fhd1080", 12)).toBe(1_000_000);
     // 极端情况：预算优先，绝不放大到地板以上
@@ -93,8 +103,8 @@ describe("perViewerBitrate（P2P 上行分摊）", () => {
   });
 
   it("非法观众数按 1 处理", () => {
-    expect(perViewerBitrate("fhd1080", 0)).toBe(8_000_000);
-    expect(perViewerBitrate("fhd1080", -3)).toBe(8_000_000);
+    expect(perViewerBitrate("fhd1080", 0)).toBe(12_000_000);
+    expect(perViewerBitrate("fhd1080", -3)).toBe(12_000_000);
   });
 });
 

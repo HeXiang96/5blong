@@ -9,12 +9,16 @@ import type { ScreenShareState, ScreenViewPreference } from "../protocol";
 import { readJson, writeJson } from "../storage";
 import {
   canProbeShareAudio,
+  probeHardwareEncoders,
   SHARE_QUALITY_PRESETS,
   formatScreenLayers,
   simulcastLayerLabel,
   summarizeScreenReport,
   type RateSample,
 } from "../screen-share";
+import { isTauriRuntime } from "../loopback";
+import { watchBlackFrames } from "../video-health";
+import { collectDeviceProfile } from "../device-profile";
 
 // ---------------------------------------------------------------- 灯箱音量记忆
 
@@ -419,6 +423,76 @@ export function PenTvLightbox({
     return () => forgetAutoplayElement(video);
   }, [stream]);
 
+  /*
+   * 画面健康探针：识别「解码器在出帧、画面却全黑」的硬件解码故障。
+   *
+   * 为什么必须自动识别：这种故障下码率/帧率/编码器读数**全部正常**
+   * （实测 `1920×1088 · 32fps · 5226 kbps · H264 D3D11VideoDecoder 硬解 · 直连`），
+   * 只有人眼能看出黑，于是观众只会说"我这边黑的"，共享者以为发出去了。
+   *
+   * 确诊后能做的事按平台不同（浏览器没有运行时关硬解的 API）：
+   * - 桌面客户端：写兼容模式标记 → 下次启动给 WebView2 加
+   *   `--disable-accelerated-video-decode`，**真正走软解**（画质不变，只是多占点 CPU）；
+   * - 网页版：自动修不了，只能如实告诉用户换客户端 / 关浏览器硬件加速。
+   */
+  const [blackWarn, setBlackWarn] = useState<string | null>(null);
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !stream) {
+      setBlackWarn(null);
+      return;
+    }
+    return watchBlackFrames(video, {
+      onDiagnosed: (info) => {
+        void (async () => {
+          if (!isTauriRuntime()) {
+            setBlackWarn(
+              `画面全黑 ${info.seconds} 秒（期间解出 ${info.frames} 帧）——本机硬件解码异常。网页版无法自动修复：请改用桌面客户端，或在浏览器设置里关掉"使用硬件加速"后重试`,
+            );
+            return;
+          }
+          try {
+            const { invoke } = await import("@tauri-apps/api/core");
+            await invoke("set_playback_compat", { softDecode: true });
+            setBlackWarn(
+              `画面全黑 ${info.seconds} 秒（期间解出 ${info.frames} 帧）——本机硬件解码异常。已切到兼容模式（软件解码），**重启客户端后生效**`,
+            );
+          } catch {
+            setBlackWarn(
+              `画面全黑 ${info.seconds} 秒（期间解出 ${info.frames} 帧）——本机硬件解码异常，建议在设置里开启"关闭硬件解码"`,
+            );
+          }
+        })();
+      },
+    });
+  }, [stream]);
+
+  /*
+   * 本机设备画像（只读展示）。
+   *
+   * 为什么放在灯箱里：观众报"我这边黑的"时，最缺的信息是**人家是什么机器**——
+   * 光看码率和帧率全是正常的。把 GPU 型号和"能硬解哪些格式"摆在数据行上，
+   * 一眼就能对上"某某显卡 + D3D11 硬解"这类已知故障，不用再反复问。
+   */
+  const [devLine, setDevLine] = useState("");
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      try {
+        const probe = await probeHardwareEncoders(state.quality ?? "fhd1080");
+        const dev = await collectDeviceProfile(probe);
+        if (!alive) return;
+        const dec = dev.dec?.length ? `硬解 ${dev.dec.join("/")}` : "无硬解";
+        setDevLine([dev.gpu, dev.os, dec].filter(Boolean).join(" · "));
+      } catch {
+        if (alive) setDevLine("");
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [state.quality]);
+
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
@@ -564,6 +638,15 @@ export function PenTvLightbox({
                 {stats}
               </span>
             ) : null}
+            {/*
+              硬件解码故障提示。复用 `.vx-tv-audio-bad` 的"坏读数"配色，
+              不新增样式——数据行是定高省略的一排，多一个自定义类只会多一处要维护。
+            */}
+            {blackWarn ? (
+              <span className="vx-tv-audio vx-tv-audio-bad" title={blackWarn}>
+                ⚠ {blackWarn}
+              </span>
+            ) : null}
             {audioInfo ? (
               <span
                 className={`vx-tv-audio${audioInfo.tracks === 0 || audioInfo.level === 0 ? " vx-tv-audio-bad" : ""}`}
@@ -578,6 +661,12 @@ export function PenTvLightbox({
             {layers ? (
               <span className="vx-tv-layers" title="simulcast 各层读数（f 主层 / h 半档 / q 省流）">
                 三层：{layers}
+              </span>
+            ) : null}
+            {/* 本机 GPU / OS / 硬解能力：报障时这一行就是对方的机器信息 */}
+            {devLine ? (
+              <span className="vx-tv-layers" title="本机设备与硬件解码能力（GPU 型号来自 WebGL，硬解能力来自 mediaCapabilities）">
+                本机：{devLine}
               </span>
             ) : null}
           </div>
