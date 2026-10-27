@@ -283,7 +283,18 @@ pub fn run() {
      * 网页版做不到这些（浏览器策略改不了），所以网页端的等价方案是
      * 关键循环走 Worker 计时（src/client/voice/background-ticker.ts）。
      */
-    let base_browser_args = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,CalculateNativeWinOcclusion,IntensiveWakeUpThrottling \
+    /*
+     * ⚠️ 必须是 `const` 项，**不能写成 `let` 局部变量**。
+     *
+     * 下面 `.setup(|app| …)` 的闭包要求 `'static`，而闭包默认**按引用**捕获它用到的
+     * 局部变量——一旦这里是个 `let`，就会报
+     *   E0373: closure may outlive the current function, but it borrows
+     *         `base_browser_args`, which is owned by the current function
+     * （2026-10-27 CI 实测，第一次发 1.9.6 就是死在这）。
+     * 改成 `const` 项之后它不再是变量，闭包不捕获、直接内联字面量，问题消失。
+     * 不要改成 `let`，也不要为了绕过它给闭包加 `move`（那会改变整个闭包的捕获语义）。
+     */
+    const BASE_BROWSER_ARGS: &str = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,CalculateNativeWinOcclusion,IntensiveWakeUpThrottling \
          --disable-backgrounding-occluded-windows \
          --disable-background-timer-throttling \
          --disable-renderer-backgrounding \
@@ -341,7 +352,7 @@ pub fn run() {
              * 放在 setup 里拼是因为此时才拿得到 AppHandle（要在配置目录里查标记文件）。
              */
             let browser_args = format!(
-                "{base_browser_args}{}",
+                "{BASE_BROWSER_ARGS}{}",
                 playback_compat::extra_browser_args(app.handle())
             );
             tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::default())
