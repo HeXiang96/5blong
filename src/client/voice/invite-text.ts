@@ -4,6 +4,8 @@
  * 真正的"推送到对方"需要一条在线通道（Worker 或长连接），
  * 在那之前，复制文案是最稳的一步——微信群、QQ、私聊都能直接粘贴。
  */
+import { PUBLIC_WEB_BASE } from "./protocol";
+
 export function buildInviteText(
   code: string,
   options: { count?: number; topic?: string; pass?: string } = {},
@@ -19,7 +21,9 @@ export function buildInviteText(
    */
   const pass = options.pass?.trim();
   lines.push(pass ? `房间 ${code} · 临时密码 ${pass}` : `房间 ${code}`);
-  lines.push(`https://5blong.site/#c=${code}`);
+  // 地址只从 protocol.ts 取：这里曾经自己写死一份，改域名时漏掉，
+  // 结果"复制的邀请文案"和"复制的链接"指向两个不同的站。
+  lines.push(`${PUBLIC_WEB_BASE}/#c=${code}`);
   lines.push("点开就能进，免注册、免装客户端");
   return lines.join("\n");
 }

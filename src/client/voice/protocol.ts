@@ -270,12 +270,14 @@ export function verifyHostProof(
 // ---------------------------------------------------------------------------
 
 /*
- * 邀请链接的落地地址（2026-11-03 从 pages.dev 换成自建域名）。
+ * 邀请链接的落地地址（2026-11-03 两次调整）：
+ *   1. 从 pages.dev 换成自建域名；
+ *   2. 再拆成 web 子域——5blong.site 现在只放介绍页，应用在 web.5blong.site。
  *
- * 必须跟着信令一起换：链接落在哪个域名，就从那个域名加载前端、
- * 也就连那个域名的信令。两边不一致会出现"点链接进来的人，和房里的人互相看不见"。
+ * 必须指向**应用所在的那个域名**：链接落在哪，就从哪加载前端、也就连那个域名的
+ * 信令。指到主域的话，别人点链接只会看到一张宣传页。
  */
-export const PUBLIC_WEB_BASE = "https://5blong.site";
+export const PUBLIC_WEB_BASE = "https://web.5blong.site";
 
 export interface Invite {
   code: string;

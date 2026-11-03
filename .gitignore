@@ -23,3 +23,6 @@ server/**/*.db
 server/**/*.db-wal
 server/**/*.db-shm
 server/.env
+
+# 临时工作目录（下载包、演练产物）
+.tmp/
