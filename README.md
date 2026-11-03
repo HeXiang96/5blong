@@ -900,13 +900,14 @@ npm run feedback:admin list 20   # 终端查看最近反馈（url / list / rm �
 <!-- AUTO-LOG:START -->
 ### 近期提交（自动生成）
 
+- `e7c1760` style(landing): FAQ 恢复与三列同宽（max-width:none 是取消限制，反而撑满视口）（11-03 11:50）
+- `ae062d4` fix: 网页同步误删 app/ 目录；更新源改用 API 查 tag（11-03 11:49）
 - `b193e1c` release: v1.9.13（11-03 11:34）
 - `7d12dcd` feat: 邀请链接改指 web.5blong.site，1.9.13 强制更新（11-03 11:34）
 - `3136ee4` feat(landing): 新增宣传介绍页，版式照 piik，配色对齐客户端（11-03 11:15）
 - `8ec5c49` ci: 不再发 Cloudflare Pages，网页版与安装包改由服务器主动拉（11-03 11:05）
 - `7450175` chore: 桌面更新源自动同步 + 文档不再暴露服务器 IP（11-03 10:56）
 - `2ee0251` release: v1.9.12（11-03 10:40）
-- `0fe3bd7` release: v1.9.11（10-27 19:58）
 <!-- AUTO-LOG:END -->
 
 ## 怎么用
