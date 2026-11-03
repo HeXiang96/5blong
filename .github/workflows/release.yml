@@ -3,13 +3,13 @@ name: Release
 # 触发方式二选一：
 #   1. 推送 app-v* 标签（npm run bump 会自动做这件事）→ 出正式 Release；
 #   2. 在 GitHub Actions 页面手动 Run workflow（不出 Release，仅验证构建）。
+#
+# 2026-11-03 起不再发布 Cloudflare Pages（业主已弃用）：
+#   - 桌面更新源由 ECS 上的 5blong-desktop-sync.timer 主动来拉；
+#   - 网页版产物打进 Release 资产 dist-web.tar.gz，由 5blong-web-sync.timer 来拉。
+#   两条都是「服务器拉」，CI 里不需要存放任何服务器凭据。
 on:
   workflow_dispatch:
-    inputs:
-      publish_desktop:
-        description: '把最新 Release 的更新源发布到 Pages（不出新包）'
-        type: boolean
-        default: true
   push:
     tags:
       - 'app-v*'
@@ -61,29 +61,21 @@ jobs:
           prerelease: false
           includeUpdaterJson: true
 
-      # 出包成功后，把更新源（exe + .sig + latest.json，下载地址改写为 pages.dev）
-      # 直接从 runner 部署到 Cloudflare Pages /desktop/——runner 访问 GitHub 和
-      # Cloudflare 都不需要代理，本机零操作。需要仓库 Secrets：
-      #   CLOUDFLARE_API_TOKEN：权限 Account → Cloudflare Pages → Edit。
-      # 未配置该 Secret 时跳过（可之后在本机手动 npm run publish:desktop）。
-      - name: Publish desktop assets to Pages
-        if: ${{ startsWith(github.ref, 'refs/tags/app-v') || inputs.publish_desktop == true }}
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # 网页版产物：打成 dist-web.tar.gz 挂到同一个 Release 上。
+      # 服务器上的 5blong-web-sync.timer 会每 5 分钟来拉一次，解开覆盖静态站
+      # （保留 desktop/ 目录）。为什么不让 CI 直接 scp：那样必须把服务器私钥
+      # 放进 GitHub Secrets，泄露即等于服务器被登。让服务器"主动拉"就没这个口子。
+      - name: Build web bundle
+        if: startsWith(github.ref, 'refs/tags/app-v')
+        run: npm run build:web:pages
+
+      - name: Upload web bundle to release
+        if: startsWith(github.ref, 'refs/tags/app-v')
         shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
-            echo "未配置 CLOUDFLARE_API_TOKEN，跳过 Pages 发布（可本机手动 npm run publish:desktop）"
-            exit 0
-          fi
-          if [[ "$GITHUB_REF_NAME" == app-v* ]]; then
-            VERSION="${GITHUB_REF_NAME#app-v}"
-          else
-            # 手动触发：复用最新 Release 的版本号
-            VERSION=$(curl -sS -H "Authorization: Bearer $GITHUB_TOKEN" \
-              "https://api.github.com/repos/${{ github.repository }}/releases/latest" \
-              | grep -m1 '"tag_name"' | sed 's/.*app-v//;s/".*//')
-          fi
-          echo "发布版本: $VERSION"
-          node scripts/publish-desktop.mjs "$VERSION"
+          tar -czf dist-web.tar.gz -C dist-web .
+          ls -lh dist-web.tar.gz
+          gh release upload "$GITHUB_REF_NAME" dist-web.tar.gz --clobber
+          echo "已上传 dist-web.tar.gz → $GITHUB_REF_NAME"

@@ -1,0 +1,12 @@
+[Unit]
+Description=Sync 5blong web bundle every 5 minutes
+
+[Timer]
+# 发版后最多 5 分钟网页版跟上；开机 2 分钟后先对一次
+OnBootSec=2min
+OnUnitActiveSec=5min
+AccuracySec=30s
+Persistent=true
+
+[Install]
+WantedBy=timers.target
