@@ -387,10 +387,13 @@ Called in wrong state: stable
 | **1.9.18**（傍晚） | 凭据晚到自愈（`onIceUpgrade`，等凭据上限维持 2.5s——业主口径）、重拨留间隔（1.2s/3s）、房主信令掉线提示、`reconnect()` 重复挂监听修复、跨线路重试（routeAt 从任意线路起步） |
 | **1.9.19**（21:59） | **自建媒体协商**（房主↔访客走数据通道）+ ICE 探针（`pairs`/`gathering`）+ 上报改走信令/心跳驱动/上报器自愈 + 抢答护栏（`shouldCall`）+ 版本号修正（`currentVersion`）+ **删公共云兜底** |
 | **1.9.20**（22:52） | 自建协商四补丁：僵尸吞 offer / 迟到的 failed 覆盖已连接 / 异常静默→`onEvent` 上报 / 单通不再拆腿（3 秒低频复查）+ 防递归护栏 |
-| **1.9.21**（23:31） | **answer 消失的终极根因**：localDescription 设两次，answer 方第二次非法（`wrong state: stable`）每次必失败——整形提前、只设一次。自建协商首次真正可用 |
+| **1.9.21**（23:31） | **answer 消失的终极根因**：localDescription 设两次，answer 方第二次非法（`wrong state: stable`）每次必失败——整形提前、只设一次。自建协商首次真正可用。**并补写了 1.9.17~1.9.20 的更新公告**（此前按"纯修 bug 不上公告"惯例留空，业主指出后补齐） |
 | （服务器侧，随改随生效） | 自建信令 `signal.mjs`（9001，nginx 已切）、`alive_timeout` 60→180s、`user-quota` 12→**256**、后台面板整套移植（卡片/成员明细在线落库/每日汇总/自动刷新/生成时间）、信令消息追踪（临时） |
 
 （事件日志首战立功：1.9.20 加的 `events` 上线当晚就抓到上面的铁证。）
+
+**更新公告栏**：1.9.17~1.9.21 五个版本的公告已全部补写（`changelog.ts` 的 lines，
+面向用户的一句话文案）；此后发版不再留空——纯技术修复也要写用户看得懂的一句话。
 
 测试基建：本日把 `engine-join-handshake.test.ts` 的固定 `sleep` 全部改为 `waitFor(条件)`
 轮询（慢机器/并行不再假失败）；新增 `tests/signal-routes.test.ts`、`tests/media-link.test.ts`
