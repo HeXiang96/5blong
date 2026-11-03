@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>5blong — 开个语音房，把链接丢给朋友</title>
+<meta name="description" content="免注册、免安装的低延迟语音房。开个房，复制邀请链接，朋友点开就在房间里。语音、听歌、看视频、共享屏幕。">
+<link rel="icon" href="/favicon.png">
+<meta property="og:title" content="5blong — 开个语音房，把链接丢给朋友">
+<meta property="og:description" content="免注册、免安装。开个房，复制邀请链接，朋友点开就在房间里。">
+<meta property="og:type" content="website">
+<script>
+  /* 老邀请链接（5blong.site/#c=…）不再做跳转：业主 2026-11-03 决定统一通知用户，
+     现在没有存量用户在用旧链接。等客户端地址改到 web 子域后，新链接自然是对的。 */
+</script>
+
+<style>
+  :root {
+    --bg: #faf6ee;
+    --bg-soft: #f4ead9;
+    --card: #fffdf8;
+    --ink: #2b2419;
+    --ink-2: #6d6154;
+    --ink-3: #96897a;
+    --line: #e6d9c6;
+    --brand: #b07a34;
+    --brand-deep: #965f1f;
+    --accent: #c2410c;
+    --pink: #ffb4a2;
+    --radius: 16px;
+    --maxw: 1120px;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+      "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: inherit; text-decoration: none; }
+  .wrap { max-width: var(--maxw); margin: 0 auto; padding: 0 24px; }
+
+  /* ---------------------------------------------------------------- 导航 */
+  header {
+    position: sticky; top: 0; z-index: 20;
+    background: rgba(250, 246, 238, .88);
+    backdrop-filter: saturate(180%) blur(12px);
+    border-bottom: 1px solid var(--line);
+  }
+  .nav { display: flex; align-items: center; gap: 28px; height: 64px; }
+  .brand { display: flex; align-items: center; gap: 9px; font-weight: 800; letter-spacing: -.02em; font-size: 19px; }
+  .brand i {
+    width: 22px; height: 22px; border-radius: 7px;
+    background: linear-gradient(135deg, var(--brand), #d9a86a);
+    display: inline-block;
+  }
+  .nav-links { display: flex; gap: 22px; margin-left: auto; align-items: center; }
+  .nav-links a { color: var(--ink-2); }
+  .nav-links a:not(.btn) { font-size: 14px; }
+  .nav-links a:hover { color: var(--ink); }
+  @media (max-width: 760px) { .nav-links a.hide-sm { display: none; } }
+
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    height: 42px; padding: 0 20px; border-radius: 999px;
+    font-size: 14.5px; font-weight: 600; white-space: nowrap;
+    border: 1px solid transparent; transition: transform .15s ease, box-shadow .15s ease, background .15s ease;
+  }
+  .btn:active { transform: translateY(1px); }
+  .btn-primary { background: var(--brand-deep); color: #fffdf8; box-shadow: 0 8px 20px rgba(150, 95, 31, .26); }
+  .btn-primary:hover { background: #7d4c11; }
+  .btn-ghost { background: #fff; color: var(--ink); border-color: var(--line); }
+  .btn-ghost:hover { border-color: #d9c6a6; }
+  .btn-sm { height: 34px; padding: 0 16px; font-size: 13.5px; }
+
+  /* ---------------------------------------------------------------- Hero */
+  /* 注意：这里是 .wrap + .hero 同一个元素，只能用 padding-block，
+     写成 `padding: 76px 0` 会把 .wrap 的左右 24px 内边距抹掉（手机上文字会贴边）。 */
+  .hero { padding-block: 76px 56px; }
+  .hero-grid { display: grid; grid-template-columns: 1.05fr .95fr; gap: 48px; align-items: center; }
+  @media (max-width: 900px) {
+    .hero-grid { grid-template-columns: 1fr; gap: 24px; }
+    .hero { padding-block: 44px 28px; }
+    .mascot .pig { max-width: 300px; }
+  }
+
+  .eyebrow {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-size: 13px; color: var(--ink-2); font-weight: 600;
+    background: #fff; border: 1px solid var(--line); border-radius: 999px;
+    padding: 6px 14px; margin-bottom: 22px;
+  }
+  .eyebrow b { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); display: inline-block; }
+
+  h1 {
+    font-size: clamp(38px, 5.6vw, 66px);
+    line-height: 1.1; letter-spacing: -.035em;
+    font-weight: 800; margin: 0 0 20px;
+  }
+  h1 em { font-style: normal; position: relative; display: inline-block; white-space: nowrap; }
+  h1 em::after {
+    content: ""; position: absolute; left: -2px; right: -2px; bottom: -.26em; height: .1em;
+    background: var(--accent); border-radius: 999px;
+  }
+  .lede { font-size: clamp(15.5px, 1.6vw, 18px); color: var(--ink-2); max-width: 30em; margin: 0 0 30px; }
+  .cta-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+  .hint { font-size: 13px; color: var(--ink-3); margin-top: 16px; }
+
+  /* ---------------------------------------------------------------- 小猪 */
+  .mascot { position: relative; display: flex; justify-content: center; align-items: center; }
+  .mascot .halo {
+    position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+    width: 92%; aspect-ratio: 1; border-radius: 50%;
+    background: radial-gradient(circle at 50% 44%, #ffe9c9, rgba(238, 242, 248, 0) 70%);
+  }
+  .mascot .pig {
+    position: relative; width: 100%; max-width: 390px; height: auto;
+    filter: drop-shadow(0 18px 26px rgba(113, 80, 41, .14));
+  }
+
+  /* ---------------------------------------------------------------- 区块 */
+  section { padding: 64px 0; }
+  .sec-head { text-align: center; margin-bottom: 44px; }
+  .sec-head h2 { font-size: clamp(26px, 3.2vw, 38px); letter-spacing: -.03em; font-weight: 800; margin: 0 0 10px; }
+  .sec-head p { color: var(--ink-3); margin: 0; font-size: 15px; }
+
+  .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+  @media (max-width: 860px) { .steps { grid-template-columns: 1fr; } }
+  .step {
+    background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 28px 26px 30px; position: relative; overflow: hidden;
+  }
+  .step-n {
+    font-size: 13px; font-weight: 700; color: var(--brand); letter-spacing: .06em;
+    background: #f7eddd; border-radius: 8px; padding: 3px 9px; display: inline-block; margin-bottom: 16px;
+  }
+  .step h3 { font-size: 19px; margin: 0 0 8px; letter-spacing: -.01em; }
+  .step p { margin: 0; color: var(--ink-2); font-size: 14.5px; }
+  .step .deco {
+    position: absolute; right: -30px; bottom: -30px; width: 130px; height: 130px;
+    border-radius: 50%; background: var(--bg-soft); z-index: 0;
+  }
+  .step > * { position: relative; z-index: 1; }
+
+  /* ---------------------------------------------------------------- 平台 */
+  .platforms { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+  @media (max-width: 860px) { .platforms { grid-template-columns: 1fr; } }
+  .plat {
+    background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 26px; display: flex; flex-direction: column; gap: 10px;
+  }
+  .plat h3 { margin: 0; font-size: 17px; display: flex; align-items: center; gap: 9px; }
+  .plat .tag {
+    font-size: 11.5px; font-weight: 700; padding: 2px 8px; border-radius: 6px;
+    background: #f7eddd; color: var(--brand); letter-spacing: .02em;
+  }
+  .plat .tag.soon { background: #efe7d9; color: var(--ink-3); }
+  .plat p { margin: 0; color: var(--ink-2); font-size: 14px; flex: 1; }
+  .plat .act { margin-top: 6px; }
+  .plat.off { opacity: .72; }
+
+  /* ---------------------------------------------------------------- FAQ */
+  .faq { max-width: 780px; margin: 0 auto; }
+  details {
+    background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+    padding: 18px 22px; margin-bottom: 10px;
+  }
+  details[open] { border-color: #dcc8a6; }
+  summary {
+    cursor: pointer; font-weight: 650; font-size: 15.5px; list-style: none;
+    display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  }
+  summary::-webkit-details-marker { display: none; }
+  summary::after { content: "+"; color: var(--ink-3); font-weight: 400; font-size: 20px; line-height: 1; }
+  details[open] summary::after { content: "–"; }
+  details p { margin: 12px 0 0; color: var(--ink-2); font-size: 14.5px; }
+
+  /* ---------------------------------------------------------------- 页脚 */
+  footer { border-top: 1px solid var(--line); padding: 36px 0 52px; margin-top: 40px; }
+  .foot { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; justify-content: space-between; color: var(--ink-3); font-size: 13px; }
+  .foot a:hover { color: var(--ink); }
+
+  .cta-band {
+    background: #14110d; color: #fff7ea; border-radius: 22px;
+    padding: 44px 40px; display: flex; flex-wrap: wrap; gap: 20px;
+    align-items: center; justify-content: space-between;
+  }
+  .cta-band h2 { margin: 0; font-size: clamp(22px, 2.6vw, 30px); letter-spacing: -.02em; }
+  .cta-band p { margin: 6px 0 0; color: #b7a68d; font-size: 14.5px; }
+  .cta-band .btn-primary { box-shadow: none; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap nav">
+    <a class="brand" href="/"><i></i>5blong</a>
+    <nav class="nav-links">
+      <a class="hide-sm" href="#how">怎么用</a>
+      <a class="hide-sm" href="#platforms">下载</a>
+      <a class="hide-sm" href="#faq">常见问题</a>
+      <a class="btn btn-primary btn-sm" href="https://web.5blong.site/">使用网页版</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <div class="wrap hero">
+    <div class="hero-grid">
+      <div>
+        <span class="eyebrow"><b></b>免注册 · 免安装</span>
+        <h1>开个房，<br>把链接丢给<em>朋友</em>。</h1>
+        <p class="lede">
+          语音、听歌、看视频、共享屏幕。声音在你们之间直连，服务器不经手。
+          对方点开链接就在房间里，什么都不用装。
+        </p>
+        <div class="cta-row">
+          <a class="btn btn-primary" href="https://web.5blong.site/">使用网页版 →</a>
+          <a class="btn btn-ghost" href="#platforms">下载 Windows 客户端</a>
+        </div>
+        <p class="hint">单房建议 2–6 人，最多 13 人 · 手机浏览器也能进房听</p>
+      </div>
+      <div class="mascot">
+        <span class="halo"></span>
+        <img class="pig" src="/pig.webp" alt="5blong 的小猪" width="512" height="512">
+      </div>
+    </div>
+  </div>
+
+  <section id="how">
+    <div class="wrap">
+      <div class="sec-head">
+        <h2>怎么用</h2>
+        <p>三步，全程不超过一分钟。</p>
+      </div>
+      <div class="steps">
+        <article class="step">
+          <span class="step-n">01</span>
+          <h3>开个房</h3>
+          <p>点一下「创建语音房」，六位房号自动生成。不登录也能开。</p>
+          <span class="deco"></span>
+        </article>
+        <article class="step">
+          <span class="step-n">02</span>
+          <h3>发个链接</h3>
+          <p>复制邀请链接丢到群里。对方点开，直接进房间，不用装、不用注册。</p>
+          <span class="deco"></span>
+        </article>
+        <article class="step">
+          <span class="step-n">03</span>
+          <h3>一起待着</h3>
+          <p>开麦聊天、一起听歌、共享屏幕看电影。谁说话头像会亮。</p>
+          <span class="deco"></span>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section id="platforms" style="padding-top: 8px;">
+    <div class="wrap">
+      <div class="sec-head">
+        <h2>在哪用</h2>
+        <p>网页版打开就能用；客户端在托盘常驻，系统音采集更完整。</p>
+      </div>
+      <div class="platforms">
+        <article class="plat">
+          <h3>Windows <span class="tag">推荐</span></h3>
+          <p>免管理员安装，托盘常驻，一键把电脑里的声音也分享出来。</p>
+          <div class="act"><a class="btn btn-ghost btn-sm" href="/desktop/5blong_latest_x64-setup.exe" data-latest>下载安装包</a></div>
+        </article>
+        <article class="plat">
+          <h3>网页版 <span class="tag">无需安装</span></h3>
+          <p>浏览器直接开房、进房。手机浏览器也能听、能说。</p>
+          <div class="act"><a class="btn btn-primary btn-sm" href="https://web.5blong.site/">进入网页版</a></div>
+        </article>
+        <article class="plat off">
+          <h3>Android <span class="tag soon">即将上线</span></h3>
+          <p>正在做。上线之前，安卓手机用浏览器打开网页版即可加入。</p>
+          <div class="act"><span class="btn btn-ghost btn-sm" style="opacity:.55;cursor:default;">暂未开放</span></div>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section id="faq" style="padding-top: 8px;">
+    <div class="wrap faq">
+      <div class="sec-head">
+        <h2>你可能还想知道</h2>
+      </div>
+      <details open>
+        <summary>需要注册吗？</summary>
+        <p>不需要。不登录也能开房、进房。登录只是为了固定房号、加好友、换设备还在。</p>
+      </details>
+      <details>
+        <summary>一个房间最多几个人？</summary>
+        <p>建议 2–6 人，上限 13 人（12 位访客 + 房主）。人多了会自动切到转发模式，延迟会略高一点。</p>
+      </details>
+      <details>
+        <summary>我的声音会经过你们的服务器吗？</summary>
+        <p>不会。音频在你们设备之间点对点直连并加密。只有直连打不通时才会走中继，而中继只转发加密后的数据包，解不开内容。</p>
+      </details>
+      <details>
+        <summary>手机能用吗？</summary>
+        <p>现在用手机浏览器打开网页版就能进房听和说。Android 客户端正在做，做好会在这里放下载。</p>
+      </details>
+    </div>
+  </section>
+
+  <section style="padding-top: 0;">
+    <div class="wrap">
+      <div class="cta-band">
+        <div>
+          <h2>现在就开一间。</h2>
+          <p>不用注册，不用安装。复制链接就能叫人。</p>
+        </div>
+        <a class="btn btn-primary" href="https://web.5blong.site/">使用网页版 →</a>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap foot">
+    <div>© 2026 5blong · 低延迟语音房</div>
+    <div>
+      <a href="https://github.com/HeXiang96/5blong" target="_blank" rel="noopener">开源仓库</a>
+      <span style="opacity:.4;margin:0 10px;">/</span>
+      <a href="/desktop/latest.json" target="_blank" rel="noopener">更新日志</a>
+    </div>
+  </div>
+</footer>
+
+<script>
+  /*
+   * 下载按钮指向"当前版本的安装包"。
+   * 不写死版本号：发版后 latest.json 会变，这里读一次再拼出文件名，
+   * 免得每次发版都要改这张静态页（改了还得记得重新部署）。
+   * 读不到就退回 latest.json 本身——至少不会 404 到一个不存在的 exe。
+   */
+  (function () {
+    var link = document.querySelector("[data-latest]");
+    if (!link) return;
+    fetch("/desktop/latest.json", { cache: "no-store" })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (m) {
+        var p = m && m.platforms && (m.platforms["windows-x86_64-nsis"] || m.platforms["windows-x86_64"]);
+        if (p && p.url) link.href = p.url;
+      })
+      .catch(function () {});
+  })();
+</script>
+
+</body>
+</html>
