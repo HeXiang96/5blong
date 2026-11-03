@@ -76,12 +76,29 @@ async fn run_check(app: &tauri::AppHandle, state: &UpdaterState, manual: bool) -
             UpdatePhase { phase: "checking", message: None },
         );
     }
-    let Ok(updater) = app.updater() else {
-        let _ = app.emit(
-            "update:notice",
-            UpdateNotice { kind: "error", text: "更新器初始化失败（配置缺失）。".into() },
-        );
-        return Ok(());
+    /*
+     * 自己构造 updater 而不是 `app.updater()`，只为一件事：带一个能力标记头。
+     *
+     * 服务端按 `X-Update-Caps` 决定给哪份清单：
+     *   带这个头 → 下载地址可以指向 dl.5blong.site（阿里云 GA 加速，快 3~5 倍）
+     *   不带      → 一律主域直连（老版本连不上 GA，见 2026-11-03 那次全员更新失败）
+     *
+     * 之所以要按版本分流而不是一刀切：加速域名对某些客户端 TLS 栈不可达，
+     * 而 latest.json 只有一份，老客户端读到的必须是它能用的地址。
+     */
+    let updater = match app
+        .updater_builder()
+        .header("X-Update-Caps", "rustls")
+        .and_then(|builder| builder.build())
+    {
+        Ok(updater) => updater,
+        Err(_) => {
+            let _ = app.emit(
+                "update:notice",
+                UpdateNotice { kind: "error", text: "更新器初始化失败（配置缺失）。".into() },
+            );
+            return Ok(());
+        }
     };
     match updater.check().await {
         Ok(Some(update)) => {

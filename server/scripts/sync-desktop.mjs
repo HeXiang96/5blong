@@ -240,12 +240,24 @@ function probeSelfReady() {
   });
 }
 
-async function resolveDownloadBase() {
-  if (!DL_SITE || DL_SITE === SITE) return { base: SITE, from: "未启用加速（默认）" };
+/**
+ * 两份清单各自的下载域名（2026-11-03 起按客户端能力分流）。
+ *
+ *   latest.json     → 主域直连，**所有客户端**都读这份（老版本只认它）
+ *   latest-ga.json  → 加速域名，只有带 `X-Update-Caps: rustls` 的 1.9.16+ 才读
+ *
+ * 为什么不是一刀切：加速域名对部分客户端的 TLS 栈不可达，而清单只有一份时，
+ * 老客户端读到的地址必须是它能用的。分流之后两边各拿各的，谁也不影响谁，
+ * 也不需要为了开加速去强制更新。
+ *
+ * 加速没配（DL_BASE 为空）或本机没备好时，两份写一样的内容——等于关闭加速。
+ */
+async function resolveBases() {
+  if (!DL_SITE || DL_SITE === SITE) return { direct: SITE, ga: SITE, from: "未启用加速（默认）" };
   const r = await probeSelfReady();
-  if (r.ok) return { base: DL_SITE, from: "本机已就绪（证书 + nginx）" };
-  log("warn", `加速域名未就绪（${r.detail}），本次退回主域直连`);
-  return { base: SITE, from: `加速域名未就绪：${r.detail}` };
+  if (r.ok) return { direct: SITE, ga: DL_SITE, from: "加速已启用（本机就绪）" };
+  log("warn", `加速域名未就绪（${r.detail}），两份清单都写直连`);
+  return { direct: SITE, ga: SITE, from: `加速未就绪：${r.detail}` };
 }
 
 /** 读本地版本（上次写下的 latest.json），没有就当 0.0.0。 */
@@ -254,49 +266,57 @@ function localVersion() {
 }
 
 /**
- * 版本没变时，把 latest.json 里的下载域名修正成当前可用的那个。
+ * 版本没变时，把两份清单里的下载域名修正成当前该用的那个。
  *
- * 场景：1.9.14 已经写成了 `dl.5blong.site`，某天 GA 欠费/证书过期/线路挂掉。
- * 因为版本没变，常规流程会直接 skip——**所有人都还指着那个坏地址**，
- * 而且没有任何东西会去修它，只能等人发现。这条分支就是那个"人"。
+ * 场景：`latest-ga.json` 已经指向 `dl.5blong.site`，某天 GA 欠费/证书过期/线路挂掉。
+ * 因为版本没变，常规流程会直接 skip——**带 header 的客户端还指着那个坏地址**，
+ * 没有任何东西会去修它，只能等人发现。这条分支就是那个"人"。
+ * 修完之后加速那份自动降级成直连，等于临时关掉加速。
  *
  * 只动我们自己那两个域名（SITE / DL_SITE）的 url，GitHub 兜底地址不碰。
  * 返回是否真的改了文件。
  */
-function repairDownloadBase(base) {
-  const f = path.join(DEST, "latest.json");
-  if (!existsSync(f)) return false;
-  let j;
-  try {
-    j = JSON.parse(readFileSync(f, "utf8"));
-  } catch {
-    return false;
-  }
-  if (!j?.platforms) return false;
-
+function repairDownloadBase(bases) {
   let changed = false;
-  const platforms = Object.fromEntries(
-    Object.entries(j.platforms).map(([key, value]) => {
-      if (!value || typeof value.url !== "string") return [key, value];
-      let u;
-      try {
-        u = new URL(value.url);
-      } catch {
-        return [key, value];
-      }
-      const currentBase = `${u.protocol}//${u.host}`;
-      if (currentBase !== SITE && currentBase !== DL_SITE) return [key, value];
-      if (currentBase === base) return [key, value];
-      changed = true;
-      return [key, { ...value, url: `${base}${u.pathname}` }];
-    }),
-  );
-  if (!changed) return false;
+  for (const [name, base] of [
+    ["latest.json", bases.direct],
+    ["latest-ga.json", bases.ga],
+  ]) {
+    const f = path.join(DEST, name);
+    if (!existsSync(f)) continue;
+    let j;
+    try {
+      j = JSON.parse(readFileSync(f, "utf8"));
+    } catch {
+      continue;
+    }
+    if (!j?.platforms) continue;
 
-  const tmp = path.join(DEST, "latest.json.part");
-  writeFileSync(tmp, `${JSON.stringify({ ...j, platforms }, null, 2)}\n`);
-  renameSync(tmp, f);
-  return true;
+    let touched = false;
+    const platforms = Object.fromEntries(
+      Object.entries(j.platforms).map(([key, value]) => {
+        if (!value || typeof value.url !== "string") return [key, value];
+        let u;
+        try {
+          u = new URL(value.url);
+        } catch {
+          return [key, value];
+        }
+        const currentBase = `${u.protocol}//${u.host}`;
+        if (currentBase !== SITE && currentBase !== DL_SITE) return [key, value];
+        if (currentBase === base) return [key, value];
+        touched = true;
+        return [key, { ...value, url: `${base}${u.pathname}` }];
+      }),
+    );
+    if (!touched) continue;
+
+    const tmp = `${f}.part`;
+    writeFileSync(tmp, `${JSON.stringify({ ...j, platforms }, null, 2)}\n`);
+    renameSync(tmp, f);
+    changed = true;
+  }
+  return changed;
 }
 
 async function download(url, dest) {
@@ -352,11 +372,11 @@ async function main() {
       log("skip", `远端 v${remote} 不比本地 v${current} 新，什么都不做`);
       return;
     }
-    const dl0 = await resolveDownloadBase();
-    if (repairDownloadBase(dl0.base)) {
-      log("repair", `版本没变，但下载地址已修正为 ${dl0.base}/desktop/（${dl0.from}）`);
+    const bases0 = await resolveBases();
+    if (repairDownloadBase(bases0)) {
+      log("repair", `版本没变，但下载地址已修正（直连 ${bases0.direct} / 加速 ${bases0.ga}）`);
     } else {
-      log("skip", `远端 v${remote} 不比本地 v${current} 新，什么都不做（下载域名 ${dl0.base} 正常）`);
+      log("skip", `远端 v${remote} 不比本地 v${current} 新，什么都不做（${bases0.from}）`);
     }
     return;
   }
@@ -373,13 +393,13 @@ async function main() {
   const gate = await resolveMinimum(manifest, localField("minimum", ""));
   log("gate", `minimum=${gate.value || "空"}（来源：${gate.from}）`);
 
-  // 下载地址用哪个域名，由探测决定（见 resolveDownloadBase 的注释）。
-  const dl = await resolveDownloadBase();
-  log("base", `下载域名 ${dl.base}（${dl.from}）`);
+  // 两份清单各自的下载域名（见 resolveBases 的注释）
+  const bases = await resolveBases();
+  log("base", `直连 ${bases.direct} ／ 加速 ${bases.ga}（${bases.from}）`);
 
   if (DRY) {
     log("dry-run", `会下载 ${plat.url}`);
-    log("dry-run", `会写 latest.json（url 改成 ${dl.base}/desktop/${exeName}，minimum=${gate.value || "未设置"}）`);
+    log("dry-run", `会写 latest.json（${bases.direct}/desktop/…）和 latest-ga.json（${bases.ga}/desktop/…），minimum=${gate.value || "未设置"}`);
     return;
   }
 
@@ -393,7 +413,7 @@ async function main() {
   // minimum 单独由 resolveMinimum 决定（GitHub 那份里没有这个字段）。
   // 注意 platforms 里有两个 key（`windows-x86_64` 与 `windows-x86_64-nsis`），
   // 指向同一个安装包——只改一个的话，读另一个 key 的客户端还是会回原地址下。
-  const out = {
+  const build = (base) => ({
     ...manifest,
     ...(gate.value ? { minimum: gate.value } : {}),
     platforms: Object.fromEntries(
@@ -401,14 +421,21 @@ async function main() {
         const pointsToSameExe =
           value && typeof value === "object" && typeof value.url === "string" &&
           path.basename(new URL(value.url, "https://placeholder.invalid").pathname) === exeName;
-        return [key, pointsToSameExe ? { ...value, url: `${dl.base}/desktop/${exeName}` } : value];
+        return [key, pointsToSameExe ? { ...value, url: `${base}/desktop/${exeName}` } : value];
       }),
     ),
-  };
-  const tmp = path.join(DEST, "latest.json.part");
-  writeFileSync(tmp, `${JSON.stringify(out, null, 2)}\n`);
-  renameSync(tmp, path.join(DEST, "latest.json"));
-  log("write", `latest.json → v${remote}（minimum=${out.minimum || "未设置"}，url=${out.platforms[TARGET].url}）`);
+  });
+  for (const [name, base] of [
+    ["latest.json", bases.direct],
+    ["latest-ga.json", bases.ga],
+  ]) {
+    const out = build(base);
+    const file = path.join(DEST, name);
+    const tmp = `${file}.part`;
+    writeFileSync(tmp, `${JSON.stringify(out, null, 2)}\n`);
+    renameSync(tmp, file);
+    log("write", `${name} → v${remote}（minimum=${out.minimum || "未设置"}，url=${out.platforms[TARGET].url}）`);
+  }
 
   // 保留：本版 + 上一版（上一版可能是有人正在下的那个）。
   const prev = readdirSync(DEST)
