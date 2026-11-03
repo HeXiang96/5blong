@@ -91,7 +91,7 @@ export function WhatsNewDialog({ open, onClose }: { open: boolean; onClose: () =
       >
         <div className="vx-feedback-body">
           <h2 className="vx-whatsnew-title">{WHATS_NEW.title}</h2>
-          <p className="vx-whatsnew-lead">{WHATS_NEW.lead}</p>
+          {WHATS_NEW.lead ? <p className="vx-whatsnew-lead">{WHATS_NEW.lead}</p> : null}
           <ul className="vx-whatsnew-list">
             {WHATS_NEW.items.map((item) => {
               const Icon = ICONS[item.icon];

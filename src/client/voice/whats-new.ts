@@ -78,13 +78,13 @@ export interface WhatsNewItem {
  * 以前这里是七条功能罗列，弹窗快占满一屏——功能该在介绍页讲，不在这里。
  */
 export const WHATS_NEW: { title: string; lead: string; items: WhatsNewItem[] } = {
-  title: "换地方了，三句话说清",
-  lead: "这次改动会影响到你手上的东西：",
+  title: "换地方了，四件事先说清",
+  lead: "",
   items: [
     {
       icon: "globe",
       title: "网页版搬到了新地址",
-      body: "现在是 web.5blong.site。旧书签打开会停在介绍页，点「使用网页版」就能进。",
+      body: "现在是 web.5blong.site。旧书签打开会停在介绍页，点「开始使用」就能进。",
     },
     {
       icon: "refresh",

@@ -2033,7 +2033,7 @@ select {
   margin-top: -5px;
   border-radius: 50%;
   background: #ffffff;
-  border: none;
+  border: 1px solid rgba(43, 36, 25, 0.09);
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
 }
 
@@ -3402,29 +3402,53 @@ button.vx-topic {
 
 /* --------------------------------------------------- 大更新公告（WhatsNew） */
 .vx-whatsnew {
-  width: min(560px, 100%);
-  /* 六条内容在小屏/矮窗口会超出视口：整块限高并内部滚动，别让"知道了"被挤出去 */
+  /* 520 而不是 560：一行 40+ 汉字太长，眼睛回行会串行 */
+  width: min(520px, 100%);
+  /* 内容多了在小屏/矮窗口会超出视口：整块限高并内部滚动，别让"知道了"被挤出去 */
   max-height: min(86dvh, 700px);
   overflow-y: auto;
+  /* 比通用弹窗更圆、更轻的描边：公告是"一张纸"，不是"一个面板" */
+  border-radius: 20px;
+  border: none;
+  box-shadow:
+    0 24px 60px rgba(43, 36, 25, 0.2),
+    0 2px 8px rgba(43, 36, 25, 0.06);
 }
 
+/* 标题左侧一道品牌色竖条：像贴了张告示，比纯文字更有"这是一件事"的存在感 */
 .vx-whatsnew-title {
+  position: relative;
   margin: 0 0 6px;
-  font-size: 20px;
+  padding-left: 13px;
+  font-size: 19px;
   font-weight: 800;
+  line-height: 1.35;
+  letter-spacing: -0.01em;
+}
+.vx-whatsnew-title::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0.16em;
+  bottom: 0.16em;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--vx-accent);
 }
 
 .vx-whatsnew-lead {
-  margin: 0 0 14px;
-  color: var(--vx-muted-fg, var(--vx-fg));
-  font-size: 13px;
-  opacity: 0.78;
+  margin: 0 0 18px;
+  padding-left: 13px;
+  color: var(--vx-text-dim);
+  font-size: 12.5px;
+  line-height: 1.5;
 }
 
+/* 条目之间留够呼吸，条目内部收紧——反过来的话四条会显得又长又散 */
 .vx-whatsnew-list {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 15px;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -3432,39 +3456,47 @@ button.vx-topic {
 
 .vx-whatsnew-item {
   display: flex;
-  gap: 10px;
+  gap: 11px;
   align-items: flex-start;
 }
 
+/*
+ * 图标：**实心品牌色圆 + 白图标**。
+ * 原来是"淡底 + 深色线条"，在米白底上灰扑扑一片，看着像占位符；
+ * 实心圆有重量，深色主题下也不会糊进背景（三套主题都取 --vx-accent，自动跟随）。
+ */
 .vx-whatsnew-emoji {
   flex: none;
-  width: 28px;
-  height: 28px;
+  width: 30px;
+  height: 30px;
   display: grid;
   place-items: center;
-  border-radius: 9px;
-  background: var(--vx-accent-soft);
-  font-size: 15px;
+  border-radius: 50%;
+  color: #fff8ec;
+  background: var(--vx-accent);
+  box-shadow: 0 2px 6px rgba(43, 36, 25, 0.18);
   line-height: 1;
 }
 
 .vx-whatsnew-item strong {
   display: block;
-  margin-bottom: 3px;
+  margin-bottom: 4px;
   font-size: 14px;
+  font-weight: 650;
+  line-height: 1.45;
 }
 
 .vx-whatsnew-item p {
   margin: 0;
-  font-size: 13px;
-  line-height: 1.6;
-  opacity: 0.82;
+  font-size: 12.5px;
+  line-height: 1.62;
+  color: var(--vx-text-dim);
 }
 
 .vx-whatsnew-actions {
   display: flex;
   justify-content: flex-end;
-  margin-top: 18px;
+  margin-top: 22px;
 }
 
 /* 反馈弹窗：附带连接信息 */

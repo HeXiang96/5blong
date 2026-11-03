@@ -810,3 +810,43 @@ html[data-scene="halloween"] .vx-pig-watching .vx-pig-cape {
   top: 26%;
   left: 34%;
 }
+
+/* ---------------------------------------------------------------------------
+ * 场景主题下的「面板配色」（2026-11-03）
+ *
+ * 之前场景主题只改天空与地面装饰，**面板色一律暖棕**——切到雪原之后，
+ * 房间是冷蓝的，弹窗/卡片还是奶油色，像贴错了皮。业主的原话是"不适配主题"。
+ *
+ * 这里只给公告弹窗补一套，不动其它面板：变量在元素上覆盖，影响面可控。
+ * 深色模式（data-theme="dark"）不覆盖——那套底色是深棕，和场景的夜空混在一起
+ * 反而不需要区分。
+ * --------------------------------------------------------------------------- */
+html[data-scene="snow"]:not([data-theme="dark"]) .vx-whatsnew {
+  --vx-surface: #f3f7fc;
+  --vx-line: #d6e2ef;
+  --vx-accent: #4b7fa8;
+  --vx-accent-strong: #3d6b90;
+  --vx-text: #1f2f3d;
+  --vx-text-dim: #5b6b7a;
+  box-shadow:
+    0 24px 60px rgba(31, 47, 61, 0.2),
+    0 2px 8px rgba(31, 47, 61, 0.06);
+}
+
+html[data-scene="halloween"]:not([data-theme="dark"]) .vx-whatsnew {
+  --vx-surface: #fff7ec;
+  --vx-line: #ecdcc4;
+  --vx-accent: #c2611a;
+  --vx-accent-strong: #a04f12;
+  --vx-text: #2a1a0e;
+  --vx-text-dim: #6b5747;
+}
+
+html[data-scene="spring"]:not([data-theme="dark"]) .vx-whatsnew {
+  --vx-surface: #fff6f2;
+  --vx-line: #f0d9cf;
+  --vx-accent: #c0392b;
+  --vx-accent-strong: #a12e22;
+  --vx-text: #2d1a15;
+  --vx-text-dim: #6d544c;
+}
