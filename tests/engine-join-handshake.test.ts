@@ -283,6 +283,26 @@ const identity: Identity = {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/**
+ * 轮询等待条件成立，替代"睡固定毫秒再断言"。
+ *
+ * 并行跑 / CI 机器慢的时候，`await sleep(30)` 可能还没走到目标状态，
+ * 断言就假失败了（本文件曾偶发 1 例，复跑又绿）。等待条件而不是等待时间，
+ * 既快又稳：条件一成立立刻继续。
+ */
+const waitFor = async (
+  predicate: () => boolean,
+  timeout = 3000,
+  step = 10,
+): Promise<void> => {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await new Promise((r) => setTimeout(r, step));
+  }
+  throw new Error("waitFor 超时：条件始终没有成立");
+};
+
 function makeEvents() {
   const statuses: Array<{ status: string; detail?: string }> = [];
   const membersSnapshots: any[][] = [];
@@ -366,7 +386,12 @@ describe("VoiceMesh 加入握手", () => {
       roomKey: invite.roomKey,
     });
 
-    await sleep(30);
+    await waitFor(
+      () =>
+        lastStatus(guestHolder) === "connected" &&
+        lastMembers(hostHolder)?.length === 2 &&
+        lastMembers(guestHolder)?.length === 2,
+    );
     expect(lastStatus(guestHolder)).toBe("connected");
     expect(lastMembers(hostHolder)).toHaveLength(2);
     expect(lastMembers(guestHolder)).toHaveLength(2);
@@ -381,7 +406,9 @@ describe("VoiceMesh 加入握手", () => {
       roomKey: "",
     });
 
-    await sleep(30);
+    await waitFor(
+      () => lastStatus(guestHolder) === "connected" && lastMembers(guestHolder)?.length === 2,
+    );
     expect(lastStatus(guestHolder)).toBe("connected");
     expect(lastMembers(guestHolder)).toHaveLength(2);
   });
@@ -488,7 +515,7 @@ describe("VoiceMesh 加入握手", () => {
       defaultSettings(),
       false,
     );
-    await sleep(60);
+    await waitFor(() => lastStatus(holder) === "error");
 
     // 这条断言是本次修复的核心：以前 peer-unavailable 被 openPeer 的 settled
     // 守卫吞掉，只能等 12s×3 才知道"房主不在线"（表现为长时间无任何提示）。
@@ -663,7 +690,14 @@ describe("登录账号在房间名册中的流转（加好友依赖它）", () =
     // 场景一：进房前已登录（hello 应带 accountId）
     guest.setAccountId("22222222");
 
-    await sleep(60);
+    await waitFor(() => {
+      const hostMembers = lastMembers(hostHolder) as any[] | undefined;
+      const guestMembers = lastMembers(guestHolder) as any[] | undefined;
+      return (
+        hostMembers?.some((m) => !m.local && m.accountId === "22222222") === true &&
+        guestMembers?.some((m) => !m.local && m.accountId === "11111111") === true
+      );
+    });
     const hostMembers = lastMembers(hostHolder) as any[];
     const guestMembers = lastMembers(guestHolder) as any[];
 
@@ -678,14 +712,83 @@ describe("登录账号在房间名册中的流转（加好友依赖它）", () =
       hostId: invite.hostId,
       roomKey: invite.roomKey,
     });
-    await sleep(40);
+    await waitFor(() => (lastMembers(lateHolder) as any[])?.length === 3);
     late.setAccountId("33333344"); // 进房之后才登录
-    await sleep(60);
+    await waitFor(
+      () =>
+        ((lastMembers(hostHolder) as any[]) ?? []).some((m) => m.accountId === "33333344"),
+    );
 
     const lateMembers = lastMembers(lateHolder) as any[];
     const lateSeenHost = lateMembers.find((m) => !m.local);
     const hostSeenLate = (lastMembers(hostHolder) as any[]).find((m) => m.accountId === "33333344");
     expect(lateSeenHost?.accountId).toBe("11111111");
     expect(hostSeenLate?.accountId).toBe("33333344");
+  });
+});
+
+describe("断线重连后的语音自愈（2026-11-03 业主实测故障）", () => {
+  /** 建一间"房主 + 1 访客"的房，返回房主侧看到的访客 peerId。 */
+  const setupPair = async () => {
+    const { host, invite } = await startHost();
+    const { guest } = await startGuest({
+      code: invite.code,
+      hostId: invite.hostId,
+      roomKey: invite.roomKey,
+    });
+    const guestId = (guest as any).myId as string;
+    await waitFor(() => (host as any).members.has(guestId));
+    return { host, invite, guest, guestId };
+  };
+
+  it("同 ID 重连回到房间时，这条腿的重拨次数被清零", async () => {
+    const { host, guestId } = await setupPair();
+    expect((host as any).members.has(guestId)).toBe(true);
+
+    // 模拟"断网那十几秒"：3 次机会全烧完，节流时间戳也还新鲜
+    (host as any).voiceHeals.set(guestId, { attempts: 3, timer: 0 });
+    (host as any).lastDialAt.set(guestId, Date.now());
+
+    // 同一个人重连回来：同 peerId、新数据通道（走完整的 hello 握手）
+    const conn = new mocks.FakeConn(guestId);
+    (host as any).peer.emit("connection", conn);
+    conn.open = true;
+    conn.emit("open");
+    conn.emit("data", {
+      t: "hello",
+      personId: "1234567890",
+      sessionId: "s1",
+      name: "测试小猪",
+      avatar: "",
+      color: "#88aaff",
+      hasMic: true,
+      muted: false,
+      nonce: "n1",
+      proof: "",
+    });
+    await waitFor(() => !(host as any).voiceHeals.has(guestId));
+
+    /*
+     * 不清零的话，ensureCalls 第一行就 `attempts >= 3 → continue`，
+     * 两边从此都不再自动拨号，界面永久停在"重新连接"。
+     */
+    expect((host as any).voiceHeals.get(guestId)).toBeUndefined();
+    expect((host as any).lastDialAt.get(guestId)).toBeUndefined();
+  });
+
+  it("底层 pc 已关闭的僵尸腿会被拆掉（不受 lastMediaAt 缺失短路）", async () => {
+    const { host, guestId } = await setupPair();
+
+    const closed = () => ({
+      peerConnection: { connectionState: "closed", iceConnectionState: "closed" },
+      close: () => {},
+    });
+    // dropAudio 会清掉 lastMediaAt，而 calls 里还留着这条已经关闭的呼叫
+    (host as any).calls.set(guestId, closed());
+    (host as any).lastMediaAt.delete(guestId);
+
+    (host as any).ensureCalls();
+
+    expect((host as any).calls.has(guestId)).toBe(false);
   });
 });

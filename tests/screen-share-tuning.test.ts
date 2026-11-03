@@ -41,6 +41,8 @@ import {
   simulcastLayerLabel,
   summarizeScreenStats,
   tuneLadder,
+  tuneMemoryPoint,
+  TUNE_MEMORY_TTL_MS,
   type StatsEntry,
 } from "../src/client/voice/screen-share";
 import { loadSettings } from "../src/client/voice/settings";
@@ -882,5 +884,43 @@ describe("降档地板（不许降到 380p）", () => {
   it("地板允许的最差分辨率仍然可读（≥ 900px 宽）", () => {
     const worstScale = RESOLUTION_LADDER[MAX_DEGRADE_STEP]!;
     expect(1920 / worstScale).toBeGreaterThanOrEqual(900);
+  });
+});
+
+describe("档位记忆的有效期（2026-11-03 帧率被固化在 30）", () => {
+  const now = 1_700_000_000_000;
+  const raw = (at: number | undefined, fps = 30) =>
+    JSON.stringify({
+      quality: "fhd1080",
+      preference: "detail",
+      point: { step: 0, fps },
+      ...(at === undefined ? {} : { at }),
+    });
+
+  it("有效期内的记忆照用（同一次共享里重连不用重新爬）", () => {
+    expect(tuneMemoryPoint(raw(now - 60_000), "fhd1080", "detail", now)).toEqual({
+      step: 0,
+      fps: 30,
+    });
+  });
+
+  it("超过有效期就作废 —— 下次开播从满档起步", () => {
+    expect(
+      tuneMemoryPoint(raw(now - TUNE_MEMORY_TTL_MS - 1), "fhd1080", "detail", now),
+    ).toBeNull();
+  });
+
+  it("老数据没有时间戳：一律作废（那正是被固化住的 30fps）", () => {
+    expect(tuneMemoryPoint(raw(undefined), "fhd1080", "detail", now)).toBeNull();
+  });
+
+  it("换档位/换偏好不继承另一套的记忆", () => {
+    expect(tuneMemoryPoint(raw(now), "hd720", "detail", now)).toBeNull();
+    expect(tuneMemoryPoint(raw(now), "fhd1080", "motion", now)).toBeNull();
+  });
+
+  it("坏数据不抛异常，按没有记忆处理", () => {
+    expect(tuneMemoryPoint("{not json", "fhd1080", "detail", now)).toBeNull();
+    expect(tuneMemoryPoint(null, "fhd1080", "detail", now)).toBeNull();
   });
 });

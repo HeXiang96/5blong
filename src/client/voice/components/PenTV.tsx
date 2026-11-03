@@ -394,6 +394,40 @@ export function PenTvLightbox({
    */
   const [layers, setLayers] = useState("");
 
+  /*
+   * 共享者本机的**采集侧**读数（2026-11-03 业主："发送端我看不到数据"）。
+   *
+   * 为什么需要兜底：没有观众点开幕布时，发送连接根本不存在，数据条一片空白——
+   * 而"我到底采到多少帧"恰恰是排障第一步。这里直接读轨道的 settings（采集端的
+   * 实际分辨率/帧率），不依赖任何 RTP；有人点开后自动换成发送链路实时数据。
+   */
+  const [capture, setCapture] = useState("");
+  useEffect(() => {
+    if (!isSharer || !stream) {
+      setCapture("");
+      return;
+    }
+    const track = stream.getVideoTracks()[0];
+    if (!track) {
+      setCapture("");
+      return;
+    }
+    const read = () => {
+      const settings = track.getSettings();
+      const width = Math.round(settings.width ?? 0);
+      const height = Math.round(settings.height ?? 0);
+      const fps = Math.round(settings.frameRate ?? 0);
+      if (!width || !height) {
+        setCapture("");
+        return;
+      }
+      setCapture(`采集 ${width}×${height} · ${fps || "?"} fps`);
+    };
+    read();
+    const timer = window.setInterval(read, 2000);
+    return () => window.clearInterval(timer);
+  }, [isSharer, stream]);
+
   useEffect(() => {
     if (!pc) {
       setStats("");
@@ -679,6 +713,17 @@ export function PenTvLightbox({
               >
                 {statsRole === "send" ? "[发送端] " : statsRole === "recv" ? "[接收端] " : ""}
                 {stats}
+              </span>
+            ) : isSharer && capture ? (
+              /*
+               * 共享者还没人在看（或发送连接刚建）：先给采集侧读数。
+               * 空白会让人以为"没有数据"，而其实只是还没有人点开幕布。
+               */
+              <span
+                className="vx-tv-stats"
+                title="采集端读数：本地采集到的实际分辨率/帧率。有人点开幕布后，这里会换成发送链路的实时数据（码率、受限原因、编码器）"
+              >
+                [采集] {capture} · 还没人在看，暂无发送数据
               </span>
             ) : null}
             {/*

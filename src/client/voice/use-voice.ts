@@ -566,13 +566,18 @@ export function useVoice() {
     if (screenShare.transport === "sfu") return; // SFU 发布连接开播时已就位
     const selfId = members.find((member) => member.local)?.id;
     if (!selfId || screenShare.sharerId !== selfId) return;
-    let tries = 0;
+    /*
+     * 不在 12 秒后放弃（2026-11-03 业主："发送端我看不到数据"）。
+     *
+     * 原实现 24 次 × 500ms 就停手：如果开播那一刻**还没人在看**（没有人点开幕布，
+     * 就没有画面呼叫，也就没有发送端 PC），这个轮询会空转着耗尽额度；等观众
+     * 后来点开、发送连接真正建好时，已经没人去取了 —— 灯箱数据条从此一直空着。
+     * 现在共享期间一直以 2 秒一次的节奏等，取到就停。
+     */
     const timer = window.setInterval(() => {
-      tries += 1;
       const pc = engineRef.current?.screenSenderPeerConnection() ?? null;
       if (pc) setSharePc(pc);
-      if (pc || tries >= 24) window.clearInterval(timer);
-    }, 500);
+    }, 2000);
     return () => window.clearInterval(timer);
   }, [screenShare, sharePc, members.length]);
 

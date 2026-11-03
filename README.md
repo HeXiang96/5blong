@@ -102,7 +102,7 @@
 
 > **本节专为后续维护者（含 AI）而写**：交代"共享屏幕为什么卡、改了什么、怎么验证、别踩哪些坑"。  
 > 这一轮**只动共享链路，语音一行未碰**（语音零影响是硬约束）；四批次全部落地，  
-> `npm run check` 全绿（typecheck + <!-- AUTO:TESTS -->366<!-- /AUTO:TESTS --> 单测 + 构建）。  
+> `npm run check` 全绿（typecheck + <!-- AUTO:TESTS -->376<!-- /AUTO:TESTS --> 单测 + 构建）。  
 > 完整方案与逐条推理见 [SCREENSHARE-OPT-PLAN.md](./docs/archive/SCREENSHARE-OPT-PLAN.md)（已归档）；  
 > 早期 v1~v3 草稿 [SCREENSHARE-PERF-PLAN.md](./docs/archive/SCREENSHARE-PERF-PLAN.md) 已被其取代（仅存档）。
 
@@ -320,6 +320,42 @@ TURN key 与 SFU 的 appId/secret **是两套**，分别创建：
 - 主令牌在 `.dev-secrets.json` 的 `feedbackToken`
 
 ---
+
+## 最近更新（2026-11-03 · 待发下一个 patch）：两个"看起来像网络问题"的代码 bug
+
+### 🐞 断线重连回来后，两个人互相听不到，界面永久"重新连接"
+
+**现象**：A 是房主，B 看到 A"重连中"；A 恢复连接后，两人互相没声音，
+两边打开对方菜单都显示"与 TA 的语音链路已断开 / 重新连接"，点按钮也不一定好。
+
+**根因（三条，叠在一起）**：
+
+```
+① 自愈只有 3 次（VOICE_HEAL_MAX）。断网十几秒 ≈ 20 秒就把 3 次烧完。
+② 重连成功后，对方"从来没离开过名册"，走不到"成员离开→清计数"那条路
+   → attempts 永远停在 3 → ensureCalls 第一行就 continue，从此两边都不再自动拨。
+③ 手动"重新连接"固定只走中继（callPeer(peerId, true)），
+   中继不通（公司网封 UDP 段 / 没拿到凭据）时，点多少次都连不上。
+```
+
+**修法**：同 ID 重连与断线重连成功时复位这一对的重试预算（`resetLinkRetries`）；
+补拨巡检里"底层 pc 已 closed/failed"的死链一律拆掉（不再被 `lastMediaAt` 缺失短路）；
+手动重连改为"先中继，6 秒不通自动回落直连"。
+
+### 🐞 看共享屏幕：过几秒黑一下、又有画面、再黑一下，帧率读数永远偏低
+
+**根因**：共享受端每 3 秒跑一次补拨巡检，其中"僵尸呼叫"的判据只看了**发出多久**、
+没看**有没有连上**——于是**一条正在正常播放的画面呼叫，满 12 秒就被拆掉重建**，
+每 12 秒循环一次。观众看到的就是黑闪；数据条上的 fps / 码率也永远读偏低，
+因为每次重建接收端统计都归零。
+
+**修法**：判据改成"**没连上**且超过 12 秒"才重拨（`isZombieScreenCall`），连上了就一直用。
+另外两处配套：档位记忆加 10 分钟有效期（老数据没有时间戳一律作废，新开播从满档起步）、
+共享者灯箱在没有观众点开时显示**采集侧读数**（`[采集] 1920×1080 · 60 fps · 还没人在看`），
+取发送连接的轮询也不再 12 秒后放弃。
+
+**新增守卫**：`tests/engine-join-handshake.test.ts`（重连后计数归零、僵尸腿会被拆）、
+`tests/screen-share.test.ts`（已连上的呼叫永不判僵尸）
 
 ## 最近更新（2026-10-27 · 1.9.11）
 
@@ -552,7 +588,7 @@ SFU 多档（simulcast）也有；但房主有硬编时只发**一档**，SFU �
 
 - 新增 `tests/game-room-code.test.ts`：6 位能进、老 4 位能进、5 位/7 位/字母不算码、首尾空白归一、邀请链接往返解析。
 - 新增视觉夹具 `tests/fixtures/game-join.html?code=<房号>&fill=1`：手输 6 位 / 链接带入 / 填完游戏 ID 三种状态可直接截图目检。
-- 全量用例 <!-- AUTO:TESTS -->366<!-- /AUTO:TESTS --> 项通过；`typecheck`、`build:web:pages`、`docs:check` 全绿。
+- 全量用例 <!-- AUTO:TESTS -->376<!-- /AUTO:TESTS --> 项通过；`typecheck`、`build:web:pages`、`docs:check` 全绿。
 
 ### 三、已知未修（单独排期，不在这版）
 
@@ -1085,7 +1121,7 @@ npm install                 # 安装依赖
 npm run dev                 # 本地开发服务器（网页）
 npm run tauri dev           # 桌面端开发模式（自动起 dev 服务器 + Tauri 窗口）
 npm run typecheck           # 类型检查
-npm test                    # 单元测试（<!-- AUTO:TESTS -->366<!-- /AUTO:TESTS --> 项，由 docs:sync 注入）
+npm test                    # 单元测试（<!-- AUTO:TESTS -->376<!-- /AUTO:TESTS --> 项，由 docs:sync 注入）
 npm run build:web:pages     # 构建静态网页到 dist-web
 npm run tauri build         # 本地出桌面安装包（更新签名需要环境变量，一般直接用 CI）
 npm run deploy:pages        # 手动部署网页到 Cloudflare Pages（复用本机 wrangler 凭据）
@@ -1181,7 +1217,7 @@ npm run signal:setup        # 绑定 Pages → 信令 Worker（service binding S
 - `.github/workflows/`：`release.yml`（云出包，`app-v*` 标签触发）、
   `readme-log.yml`（自动更新 README 提交列表，`[skip ci]`）
 - `tests/`：协议 / 握手 / 准入、屏幕共享（含调谐器与硬编预检）、猪圈、说话检测、定时器、
-  ICE、反馈、会话统计、音量上限、blake3 等，当前合计 <!-- AUTO:TESTS -->366<!-- /AUTO:TESTS --> 项
+  ICE、反馈、会话统计、音量上限、blake3 等，当前合计 <!-- AUTO:TESTS -->376<!-- /AUTO:TESTS --> 项
 - `scripts/`：`deploy-pages.mjs`（部署）、`publish-desktop.mjs`（桌面端更新源发布）、
   `pages-status.mjs`、`bump-version.mjs`（发版一键化）、`readme-log.mjs`（AUTO-LOG，含畸形自愈）、
   `docs-sync.mjs` / `check-docs.mjs`（文档数字注入与校验）、`lib/blake3.mjs`

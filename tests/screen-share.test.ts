@@ -8,6 +8,7 @@ import {
   parseScreenShareState,
   type ScreenShareState,
 } from "../src/client/voice/protocol";
+import { isZombieScreenCall } from "../src/client/voice/screen-share";
 
 describe("parseScreenShareState", () => {
   const valid: ScreenShareState = {
@@ -128,5 +129,28 @@ describe("tvSlotFor 围观位", () => {
       expect(delay).toBeLessThan(200 + 6 * 160 + 260);
     }
     expect(TV_APPROACH_MS).toBeGreaterThan(2000);
+  });
+});
+
+describe("画面呼叫的僵尸判定（2026-11-03 黑闪故障）", () => {
+  /*
+   * 故障现象：观众端"过几秒黑一下、又有画面、再黑一下"，帧率读数永远偏低。
+   * 根因：共享者每 3 秒补拨一次，旧实现只判"发出超过 12 秒"就算僵尸，
+   * 于是**健康在播的呼叫每 12 秒被拆掉重建**。
+   */
+  it("已连上的呼叫永远不会被判成僵尸（跑多久都不拆）", () => {
+    const started = 1_700_000_000_000;
+    expect(isZombieScreenCall(started, started + 60_000, true)).toBe(false);
+    expect(isZombieScreenCall(started, started + 10 * 60_000, true)).toBe(false);
+  });
+
+  it("没连上且超过 12 秒才算僵尸；没超时先给机会", () => {
+    const started = 1_700_000_000_000;
+    expect(isZombieScreenCall(started, started + 5_000, false)).toBe(false);
+    expect(isZombieScreenCall(started, started + 13_000, false)).toBe(true);
+  });
+
+  it("没有发起时间戳（历史遗留/脏数据）按僵尸处理，重拨一次兜底", () => {
+    expect(isZombieScreenCall(0, 1_700_000_000_000, false)).toBe(true);
   });
 });

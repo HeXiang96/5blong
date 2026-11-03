@@ -290,6 +290,28 @@ export const RESOLUTION_LADDER = [1, 1.5, 2, 2.85] as const;
  */
 export const MAX_DEGRADE_STEP = 2;
 
+/**
+ * 画面呼叫"僵尸"判定：**还没连上**、且发出已超过这么久，才值得丢掉重拨。
+ *
+ * 2026-11-03 定位的线上故障：原实现只判"发出超过 12 秒"，**不判有没有连上**，
+ * 于是共享者每 3 秒跑一次的补拨巡检会把一条健康在播的画面呼叫拆掉重建——
+ * 观众的观感正是"过几秒黑一下、又有画面、再黑一下"，数据条上的 fps 与码率
+ * 也永远读偏低（每次重建，接收端统计都从零开始）。
+ *
+ * 判据必须是"没连上"和"超时"同时成立；连上了就一直用，别动。
+ */
+export const SCREEN_CALL_ZOMBIE_MS = 12_000;
+
+export function isZombieScreenCall(
+  startedAt: number,
+  now: number,
+  connected: boolean,
+): boolean {
+  if (!startedAt) return true;
+  if (connected) return false;
+  return now - startedAt > SCREEN_CALL_ZOMBIE_MS;
+}
+
 /** 把降档序列裁到地板之上（下标不超过 {@link MAX_DEGRADE_STEP}），至少保留一档。 */
 export function capDegradeSteps<T extends { step: number }>(ladder: T[]): T[] {
   const kept = ladder.filter((point) => point.step <= MAX_DEGRADE_STEP);
@@ -1048,21 +1070,52 @@ export interface ScreenSenderTuner {
 /** 档位记忆的存储键（与 settings/theme 同一命名空间）。 */
 const TUNE_MEMORY_KEY = "5blong:v1:screen-tune";
 
+/**
+ * 档位记忆的有效期：超过这么久就作废，下一次开播从**满档**起步。
+ *
+ * 为什么必须有有效期（2026-11-03）：记忆原本是永久的，只要历史上因 CPU 抖一下
+ * 降过一档，之后每次开播都从 30fps 起步，而爬回满帧要 18 秒。叠加"画面呼叫每
+ * 12 秒被误判成僵尸重建"那个 bug，记忆里的 30fps 被反复固化，用户看到的就是
+ * "我 1080p60 开播，观众永远只有 30fps"。
+ */
+export const TUNE_MEMORY_TTL_MS = 10 * 60_000;
+
 interface TuneMemory {
   quality: ShareQuality;
   preference: ScreenViewPreference;
   point: TunePoint;
+  /** 写入时间（ms）。老数据没有这个字段 → 一律按过期处理，避免继承旧的降档。 */
+  at?: number;
 }
 
-function readTuneMemory(quality: ShareQuality, preference: ScreenViewPreference): TunePoint | null {
+/**
+ * 解析档位记忆（纯函数，便于把"过期/换档位/换偏好"三种失效条件钉进单测）。
+ *
+ * `now - at > TTL` 即作废；缺 `at` 的老数据同样作废——那正是被固化住的 30fps。
+ */
+export function tuneMemoryPoint(
+  raw: string | null,
+  quality: ShareQuality,
+  preference: ScreenViewPreference,
+  now: number,
+): TunePoint | null {
+  if (!raw) return null;
   try {
-    const raw = localStorage.getItem(TUNE_MEMORY_KEY);
-    if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<TuneMemory>;
     if (parsed.quality !== quality || parsed.preference !== preference) return null;
     const point = parsed.point;
     if (!point || typeof point.step !== "number" || typeof point.fps !== "number") return null;
+    const at = typeof parsed.at === "number" ? parsed.at : 0;
+    if (!at || now - at > TUNE_MEMORY_TTL_MS) return null;
     return { step: point.step, fps: point.fps };
+  } catch {
+    return null;
+  }
+}
+
+function readTuneMemory(quality: ShareQuality, preference: ScreenViewPreference): TunePoint | null {
+  try {
+    return tuneMemoryPoint(localStorage.getItem(TUNE_MEMORY_KEY), quality, preference, Date.now());
   } catch {
     return null;
   }
@@ -1072,7 +1125,7 @@ function writeTuneMemory(quality: ShareQuality, preference: ScreenViewPreference
   try {
     localStorage.setItem(
       TUNE_MEMORY_KEY,
-      JSON.stringify({ quality, preference, point } satisfies TuneMemory),
+      JSON.stringify({ quality, preference, point, at: Date.now() } satisfies TuneMemory),
     );
   } catch {
     /* 存不下也不影响本次生效 */
@@ -1212,7 +1265,10 @@ export function createScreenSenderTuner(
   };
 
   apply();
-  remember();
+  /*
+   * 这里**故意不写记忆**：新建连接时把当前档位写回去，等于每 12 秒给旧降档续一次命，
+   * 记忆永远等不到过期（2026-11-03 修）。记忆只在"真的降档 / 真的回升"时更新。
+   */
   const timer = window.setInterval(() => void tick(), TUNE_INTERVAL_MS);
   return {
     stop: () => {

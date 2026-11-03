@@ -57,6 +57,7 @@ import {
   createScreenSenderTuner,
   applyScreenSenderParams,
   healScreenConnection,
+  isZombieScreenCall,
   jitterTargetFor,
   perViewerBitrate,
   probeHardwareEncoders,
@@ -1801,6 +1802,17 @@ export class VoiceMesh {
       } catch {
         /* noop */
       }
+      /*
+       * 这个人**重新进圈了**：把这条语音腿的自愈计数复位。
+       *
+       * 为什么必须在这里清（2026-11-03 业主实测：房主重连后两边互相听不到、
+       * 界面永久显示"重新连接"）：
+       * 断网那十几秒里，两边各自把 VOICE_HEAL_MAX(3) 次重拨机会烧完；
+       * 而重连成功后，对方**从来没离开过名册**，走不到 evictGuest / applyRoster
+       * 的"成员离开→清计数"那条路。于是 attempts 永远停在 3，
+       * ensureCalls 第一行就 `continue`，从此刻起两边都不再自动拨号。
+       */
+      this.resetLinkRetries(peerId);
     }
 
     const member: Member = {
@@ -2768,6 +2780,8 @@ export class VoiceMesh {
       if (conn !== this.hostConn || this.destroyed) return;
 
       this.hostLastSeen = Date.now();
+      // 这次 welcome 是不是"断线之后重新握手"：是的话全房的重试预算要复位
+      const rejoiningRoom = this.reconnecting || this.reconnectAttempt > 0;
       this.reconnectAttempt = 0;
       this.reconnecting = false;
       this.awaitingWelcome = false;
@@ -2835,6 +2849,12 @@ export class VoiceMesh {
         this.screenShareState = message.screenShare;
         this.events.screenShare?.(message.screenShare);
       }
+      /*
+       * 断线重连成功：全房的重试预算复位，再补拨。
+       * 不做这一步的话，断网那十几秒里烧完的 3 次机会会一直记着，
+       * 而这个房间里的人从没离开过名册，永远等不到清零的时机。
+       */
+      if (rejoiningRoom) this.resetLinkRetries();
       this.callPeers();
       this.startHeartbeat();
       return;
@@ -3144,6 +3164,17 @@ export class VoiceMesh {
       if (member.local) continue;
       const call = this.calls.get(member.id);
       if (call) {
+        /*
+         * 底层 pc 已经 closed/failed：这条腿不可能再响，**不管有没有收到过音频都要拆**。
+         *
+         * 原来整段判定套在 `if (mediaAt)` 里，而 `lastMediaAt` 在重拨收尾时会被
+         * dropAudio 清掉——于是这条僵尸腿既不算死、也不会被补拨，`calls` 里
+         * 永远占着位置，ensureCalls 每次都跳到下一轮（2026-11-03 定位）。
+         */
+        if (this.isCallDead(call)) {
+          this.dropMedia(member.id);
+          continue;
+        }
         // 有连接：若长时间没有任何音频进来，说明这条腿已经僵死，清掉让下一轮补拨
         const mediaAt = this.lastMediaAt.get(member.id) ?? 0;
         if (mediaAt) {
@@ -3705,8 +3736,23 @@ export class VoiceMesh {
        * 现在：呼叫已死，或超过 12 秒还没连上，就丢掉重拨。
        */
       const startedAt = this.screenCallAt.get(peerId) ?? 0;
-      const zombie = !startedAt || Date.now() - startedAt > 12_000;
-      if (!this.isCallDead(existing) && !zombie) return;
+      /*
+       * ⚠️ 判僵尸必须同时看"有没有连上"。
+       *
+       * 只判时间会造成：一条**正在正常播放**的画面呼叫，发出满 12 秒就被当成僵尸
+       * 拆掉重建，而 ensureCalls 每 3 秒就来巡检一次 —— 于是每 12 秒重来一遍，
+       * 观众端表现为"过几秒黑一下、又有画面、再黑一下"，数据条上的 fps 和码率
+       * 也永远读偏低（重建后统计归零）。2026-11-03 业主实测即此。
+       */
+      const zombiePc = (existing as unknown as { peerConnection?: RTCPeerConnection })
+        .peerConnection;
+      const zombieConnected = zombiePc
+        ? zombiePc.connectionState === "connected" ||
+          zombiePc.iceConnectionState === "connected" ||
+          zombiePc.iceConnectionState === "completed"
+        : false;
+      if (!this.isCallDead(existing) && !isZombieScreenCall(startedAt, Date.now(), zombieConnected))
+        return;
       try {
         existing.close();
       } catch {
@@ -4489,6 +4535,27 @@ export class VoiceMesh {
   }
 
   /**
+   * 复位"重试预算"：自愈次数与补拨节流。
+   *
+   * 自愈总共只有 {@link VOICE_HEAL_MAX} 次，用尽就停在 failed 等用户手动点。
+   * 正常路径靠"成员离开"或"链路恢复"清零，但**断线重连回来的人两者都不满足**
+   * （他从没离开名册，链路也没恢复成功）——于是两边计数卡在 3，
+   * ensureCalls 从此不再补拨，界面永久"重新连接"（2026-11-03 业主实测）。
+   *
+   * 只清计数，**不动 roomLinkState / 不拆活着的链路**：断的只是数据通道时，
+   * 语音腿可能还好好的，盲目拆掉会把"还能通话"变成"两边都在重连"。
+   * 已死的链路交给 ensureCalls 的 isCallDead 分支收尾。
+   */
+  private resetLinkRetries(peerId?: string): void {
+    for (const member of this.members.values()) {
+      if (member.local) continue;
+      if (peerId && member.id !== peerId) continue;
+      this.clearVoiceHeal(member.id);
+      this.lastDialAt.delete(member.id);
+    }
+  }
+
+  /**
    * 手动重试（界面上的"重新连接"）：清掉计数后立刻重拨。
    * 自动自愈到顶（VOICE_HEAL_MAX）仍不通时，用户还有这一条路。
    */
@@ -4506,12 +4573,45 @@ export class VoiceMesh {
       this.dropAudio(peerId);
     }
     /*
-     * 手动重连**一律走中继**（2026-10-27）：用户点这个按钮时，说明直连已经失败过
+     * 手动重连**先走中继**（2026-10-27）：用户点这个按钮时，说明直连已经失败过
      * ——再原路重拨一次大概率还是同一条单向路（业主实测点几次都连不上）。
+     *
+     * 但中继不是永远可用（公司网封 50000–50999/UDP、进房时 /ice 没拿到凭据），
+     * 只走中继的话这个按钮会「点多少次都不通」——所以给一次回落直连的机会。
      */
     this.events.mediaState(peerId, "connecting");
     this.callPeer(peerId, true);
-    if (this.calls.get(peerId)) this.voiceHeals.set(peerId, { attempts: 1, timer: 0 });
+    const relayCall = this.calls.get(peerId);
+    if (relayCall) {
+      this.voiceHeals.set(peerId, { attempts: 1, timer: 0 });
+      this.scheduleDirectFallback(peerId, relayCall);
+    }
+  }
+
+  /**
+   * 手动重连的中继兜底：`VOICE_HEAL_RETRY_MS` 内没连上就回落直连再拨一次。
+   *
+   * 只在"这条中继呼叫还在、且仍未连上"时动手，避免和自愈/对侧重拨抢同一条腿。
+   */
+  private scheduleDirectFallback(peerId: string, call: MediaConnection): void {
+    this.timers.after(VOICE_HEAL_RETRY_MS, () => {
+      if (this.destroyed || !this.members.has(peerId)) return;
+      const link = this.roomLinkState.get(peerId);
+      if (link === "direct" || link === "relay") return;
+      if (this.calls.get(peerId) !== call) return; // 已被别的路径接管
+      const name = this.members.get(peerId)?.name ?? peerId.slice(0, 6);
+      this.clearVoiceHeal(peerId);
+      this.calls.delete(peerId);
+      try {
+        call.close();
+      } catch {
+        /* noop */
+      }
+      this.dropAudio(peerId);
+      this.events.mediaState(peerId, "connecting");
+      this.callPeer(peerId);
+      this.pushRoomEvent("error", `中继重连未通，已回落直连重拨 · ${name}`);
+    });
   }
 
   /**
