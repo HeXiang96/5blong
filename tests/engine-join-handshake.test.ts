@@ -820,3 +820,56 @@ describe("房间名册上报不依赖信令（2026-11-03 面板永远「暂无�
     expect(posts.some((u) => u.includes("/api/rooms/snapshot"))).toBe(true);
   });
 });
+
+describe("房间快照上报的看门狗（2026-11-03 上报静默停了 25 分钟）", () => {
+  /*
+   * 故障：房主的信令还活着、界面正常，但后台 25 分钟没收到一条快照。
+   * 根因：上报只有一条 everyBackground 定时器，它停掉之后没有任何东西会发现。
+   * 修法：心跳（每 2 秒）里检查 lastSnapshotAt，超过 12 秒就补发。
+   */
+  it("专用定时器停掉后，心跳仍会把快照补上", async () => {
+    const { host } = await startHost();
+    const posts: string[] = [];
+    vi.stubGlobal("fetch", (url: unknown) => {
+      posts.push(String(url));
+      return Promise.resolve({ ok: true } as unknown as Response);
+    });
+    try {
+      const telemetry = (host as any).roomTelemetry;
+      expect(telemetry).toBeTruthy();
+
+      // 模拟"专用定时器已经死了"：直接摘掉它
+      (host as any).timers.cancel(telemetry.timer);
+      // 上次上报已经过去 20 秒（超过 12 秒阈值）
+      (host as any).lastSnapshotAt = Date.now() - 20_000;
+
+      (host as any).tickLiveness();
+      await sleep(20);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+
+    expect(posts.some((u) => u.includes("/api/rooms/snapshot"))).toBe(true);
+  });
+
+  it("刚发过就不会重复发（看门狗不跟正常节奏打架）", async () => {
+    const { host } = await startHost();
+    const posts: string[] = [];
+    vi.stubGlobal("fetch", (url: unknown) => {
+      posts.push(String(url));
+      return Promise.resolve({ ok: true } as unknown as Response);
+    });
+    try {
+      const telemetry = (host as any).roomTelemetry;
+      (host as any).timers.cancel(telemetry.timer);
+      (host as any).lastSnapshotAt = Date.now(); // 刚刚发过
+
+      (host as any).tickLiveness();
+      await sleep(20);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+
+    expect(posts.filter((u) => u.includes("/api/rooms/snapshot"))).toHaveLength(0);
+  });
+});

@@ -102,7 +102,7 @@
 
 > **本节专为后续维护者（含 AI）而写**：交代"共享屏幕为什么卡、改了什么、怎么验证、别踩哪些坑"。  
 > 这一轮**只动共享链路，语音一行未碰**（语音零影响是硬约束）；四批次全部落地，  
-> `npm run check` 全绿（typecheck + <!-- AUTO:TESTS -->383<!-- /AUTO:TESTS --> 单测 + 构建）。  
+> `npm run check` 全绿（typecheck + <!-- AUTO:TESTS -->385<!-- /AUTO:TESTS --> 单测 + 构建）。  
 > 完整方案与逐条推理见 [SCREENSHARE-OPT-PLAN.md](./docs/archive/SCREENSHARE-OPT-PLAN.md)（已归档）；  
 > 早期 v1~v3 草稿 [SCREENSHARE-PERF-PLAN.md](./docs/archive/SCREENSHARE-PERF-PLAN.md) 已被其取代（仅存档）。
 
@@ -340,6 +340,22 @@ TURN key 与 SFU 的 appId/secret **是两套**，分别创建：
 
 **顺带说明**：信令侧观测（`server/src/peer.mjs` 统计 `5b-h-*` 连接）不受影响，
 所以这类房主在面板上仍会以「信令在线」出现，只是那句"等房主客户端上报"以前永远等不到。
+
+### 🐞 第三个坑：上报定时器死了没人知道（静默停了 25 分钟）
+
+房主的信令一直在线、界面一切正常，后台却 25 分钟收不到一条快照。
+
+**根因**：上报只有一条 `everyBackground` 定时器，**它停掉之后没有任何东西会发现**
+——没有自检、没有兜底、没有第二个人在数"上次上报是什么时候"。
+
+**修法**：把上报挂到**已经在跑、且被证明不会停**的心跳上（每 2 秒 tick）：
+
+```
+心跳 tick → 距上次上报超过 12 秒？→ 立刻补发
+```
+
+专用定时器还留着当主节奏，心跳只是看门狗。这样只要人还在房里，上报就不会静默停摆。
+新增 2 个单测：定时器被摘掉后心跳仍会补发；刚发过则不重复发。
 
 ### 🐞 第二个坑：卡片显示"2 人"，点开却"还没有成员明细"
 
@@ -655,7 +671,7 @@ SFU 多档（simulcast）也有；但房主有硬编时只发**一档**，SFU �
 
 - 新增 `tests/game-room-code.test.ts`：6 位能进、老 4 位能进、5 位/7 位/字母不算码、首尾空白归一、邀请链接往返解析。
 - 新增视觉夹具 `tests/fixtures/game-join.html?code=<房号>&fill=1`：手输 6 位 / 链接带入 / 填完游戏 ID 三种状态可直接截图目检。
-- 全量用例 <!-- AUTO:TESTS -->383<!-- /AUTO:TESTS --> 项通过；`typecheck`、`build:web:pages`、`docs:check` 全绿。
+- 全量用例 <!-- AUTO:TESTS -->385<!-- /AUTO:TESTS --> 项通过；`typecheck`、`build:web:pages`、`docs:check` 全绿。
 
 ### 三、已知未修（单独排期，不在这版）
 
@@ -1189,7 +1205,7 @@ npm install                 # 安装依赖
 npm run dev                 # 本地开发服务器（网页）
 npm run tauri dev           # 桌面端开发模式（自动起 dev 服务器 + Tauri 窗口）
 npm run typecheck           # 类型检查
-npm test                    # 单元测试（<!-- AUTO:TESTS -->383<!-- /AUTO:TESTS --> 项，由 docs:sync 注入）
+npm test                    # 单元测试（<!-- AUTO:TESTS -->385<!-- /AUTO:TESTS --> 项，由 docs:sync 注入）
 npm run build:web:pages     # 构建静态网页到 dist-web
 npm run tauri build         # 本地出桌面安装包（更新签名需要环境变量，一般直接用 CI）
 npm run deploy:pages        # 手动部署网页到 Cloudflare Pages（复用本机 wrangler 凭据）
@@ -1285,7 +1301,7 @@ npm run signal:setup        # 绑定 Pages → 信令 Worker（service binding S
 - `.github/workflows/`：`release.yml`（云出包，`app-v*` 标签触发）、
   `readme-log.yml`（自动更新 README 提交列表，`[skip ci]`）
 - `tests/`：协议 / 握手 / 准入、屏幕共享（含调谐器与硬编预检）、猪圈、说话检测、定时器、
-  ICE、反馈、会话统计、音量上限、blake3 等，当前合计 <!-- AUTO:TESTS -->383<!-- /AUTO:TESTS --> 项
+  ICE、反馈、会话统计、音量上限、blake3 等，当前合计 <!-- AUTO:TESTS -->385<!-- /AUTO:TESTS --> 项
 - `scripts/`：`deploy-pages.mjs`（部署）、`publish-desktop.mjs`（桌面端更新源发布）、
   `pages-status.mjs`、`bump-version.mjs`（发版一键化）、`readme-log.mjs`（AUTO-LOG，含畸形自愈）、
   `docs-sync.mjs` / `check-docs.mjs`（文档数字注入与校验）、`lib/blake3.mjs`

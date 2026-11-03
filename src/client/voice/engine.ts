@@ -1026,6 +1026,18 @@ export class VoiceMesh {
   // ------------------------------------------------------------ 房间遥测（仅房主）
 
   /** 房主进房后启动：每 ~10 秒把房间快照经信令 WebSocket 顺路上报。 */
+  /**
+   * 上报看门狗：挂在心跳 tick（每 2 秒）上，和专用定时器**互相独立**。
+   *
+   * 只要人还在房里（心跳在跑），上报就不会静默停掉——专用定时器死了也能被拉回来。
+   * 阈值 12 秒（正常 10 秒一轮），留 2 秒余量，不会和正常节奏打架。
+   */
+  private maybeSnapshot(): void {
+    if (!this.roomTelemetry || this.destroyed) return;
+    if (Date.now() - this.lastSnapshotAt < 12_000) return;
+    void this.sendRoomSnapshot();
+  }
+
   private startRoomTelemetry(): void {
     if (this.roomTelemetry || this.destroyed || !this.code) return;
     this.roomTelemetry = {
@@ -1150,6 +1162,8 @@ export class VoiceMesh {
      * 但 /api/rooms/snapshot 一条都没有。
      */
     if (!t || this.destroyed) return;
+    // 先记时间再干活：看门狗按这个判断"多久没发过"
+    this.lastSnapshotAt = Date.now();
     const nowIso = new Date().toISOString();
 
     const seen = new Set<string>();
@@ -3623,6 +3637,8 @@ export class VoiceMesh {
   private tickLiveness(): void {
     if (this.destroyed) return;
     const now = Date.now();
+    // 上报看门狗：独立于专用定时器，定时器死了这里也能把上报拉回来
+    this.maybeSnapshot();
 
     if (this.hosting) {
       for (const guest of Array.from(this.guests.values())) {
@@ -3798,6 +3814,16 @@ export class VoiceMesh {
    * 经信令 WebSocket 顺路上报（ROOM-SNAPSHOT，每 ~10 秒），由自建信令服务落历史档案。
    * 口径：成员 = 匿名编号（sessionScopedId）+ 昵称（业主确认收集）；只有技术指标，无任何内容。
    */
+  /**
+   * 上次发出房间快照的时间（看门狗用）。
+   *
+   * 为什么需要：上报原来只有一条 everyBackground 定时器，它一旦停掉（Worker 被回收、
+   * 页面被冻结过、stopRoomTelemetry 被误调），没有任何人去发现——房主的信令还活着、
+   * 界面一切正常，后台却再也没有数据（2026-11-03 实测：663332 停了 25 分钟）。
+   * 现在心跳每 2 秒 tick 一次，顺手检查这个时间戳，超时就补发。
+   */
+  private lastSnapshotAt = 0;
+
   private roomTelemetry: {
     sessionId: string;
     code: string;
