@@ -825,9 +825,9 @@ describe("房间快照上报的看门狗（2026-11-03 上报静默停了 25 分�
   /*
    * 故障：房主的信令还活着、界面正常，但后台 25 分钟没收到一条快照。
    * 根因：上报只有一条 everyBackground 定时器，它停掉之后没有任何东西会发现。
-   * 修法：心跳（每 2 秒）里检查 lastSnapshotAt，超过 12 秒就补发。
+   * 修法：改成挂在心跳上（每 2 秒 tick，超过 10 秒没发就补发），并把发送优先走信令。
    */
-  it("专用定时器停掉后，心跳仍会把快照补上", async () => {
+  it("心跳会按节奏补发快照（不再依赖独立定时器）", async () => {
     const { host } = await startHost();
     const posts: string[] = [];
     vi.stubGlobal("fetch", (url: unknown) => {
@@ -939,5 +939,46 @@ describe("上报器自愈（2026-11-03 房主建房后一条快照都没有）",
     (host as any).tickLiveness();
 
     expect((host as any).roomTelemetry).toBeTruthy();
+  });
+});
+
+describe("上报通道优先级（2026-11-03 改回 CF 时代的信令上报）", () => {
+  it("有信令 socket 时优先走信令，不再发 HTTP", async () => {
+    const { host } = await startHost();
+    const sent: { type?: string; payload?: unknown }[] = [];
+    // 造一个"信令在线"的 peer（真机里就是 peerjs 的 Socket）
+    (host as any).peer = { socket: { send: (m: unknown) => sent.push(m as { type?: string }) } };
+
+    const posts: string[] = [];
+    vi.stubGlobal("fetch", (url: unknown) => {
+      posts.push(String(url));
+      return Promise.resolve({ ok: true } as unknown as Response);
+    });
+    try {
+      await (host as any).sendRoomSnapshot();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+
+    expect(sent.some((m) => m.type === "ROOM-SNAPSHOT")).toBe(true);
+    expect(posts.filter((u) => u.includes("/api/rooms/snapshot"))).toHaveLength(0);
+  });
+
+  it("没有信令时回落 HTTP（两条路都在）", async () => {
+    const { host } = await startHost();
+    (host as any).peer = null;
+
+    const posts: string[] = [];
+    vi.stubGlobal("fetch", (url: unknown) => {
+      posts.push(String(url));
+      return Promise.resolve({ ok: true } as unknown as Response);
+    });
+    try {
+      await (host as any).sendRoomSnapshot();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+
+    expect(posts.some((u) => u.includes("/api/rooms/snapshot"))).toBe(true);
   });
 });

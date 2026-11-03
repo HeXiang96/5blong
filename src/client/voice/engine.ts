@@ -1055,12 +1055,12 @@ export class VoiceMesh {
   /**
    * 上报看门狗：挂在心跳 tick（每 2 秒）上，和专用定时器**互相独立**。
    *
-   * 只要人还在房里（心跳在跑），上报就不会静默停掉——专用定时器死了也能被拉回来。
-   * 阈值 12 秒（正常 10 秒一轮），留 2 秒余量，不会和正常节奏打架。
+   * 只要人还在房里（心跳在跑），上报就不会静默停掉。
+   * 阈值 10 秒，对齐后台的刷新节奏；不会和"刚建好房立刻发一次"打架。
    */
   private maybeSnapshot(): void {
     if (!this.roomTelemetry || this.destroyed) return;
-    if (Date.now() - this.lastSnapshotAt < 12_000) return;
+    if (Date.now() - this.lastSnapshotAt < 10_000) return;
     void this.sendRoomSnapshot();
   }
 
@@ -1075,17 +1075,20 @@ export class VoiceMesh {
       share: { active: false, totalS: 0, transport: "", last: "" },
       timer: 0,
     };
-    // 用 everyBackground：网页版切到后台时普通 setInterval 会被压到 1 分钟一次，
-    // 房间挂着不动时面板就一直停在旧快照（桌面端有 --disable-background-timer-throttling，不受影响）。
-    this.roomTelemetry.timer = this.timers.everyBackground(10_000, () => {
-      void this.sendRoomSnapshot();
-    });
+    /*
+     * 不再单独开一条 10 秒定时器（2026-11-03）。
+     *
+     * 原来上报只有这一条命：定时器一死，后台就静默空白，而且没人发现。
+     * 现在改成**挂在心跳上**：心跳每 2 秒 tick 一次，距上次上报超过 10 秒就补发
+     * （见 maybeSnapshot）。心跳本来就必须活着（否则人会被判掉线），所以这条更可靠。
+     * timer 字段保留为 0，兼容原有的停止逻辑。
+     */
     void this.sendRoomSnapshot();
   }
 
   private stopRoomTelemetry(): void {
     if (!this.roomTelemetry) return;
-    this.timers.cancel(this.roomTelemetry.timer);
+    if (this.roomTelemetry.timer) this.timers.cancel(this.roomTelemetry.timer);
     this.roomTelemetry = null;
   }
 
@@ -1304,6 +1307,26 @@ export class VoiceMesh {
       share: { active: t.share.active, totalS: t.share.totalS, transport: t.share.transport, last: t.share.last },
     };
     t.events = [];
+    /*
+     * 优先走**信令**（2026-11-03 改回 CF 时代的做法）。
+     *
+     * CF 时代房主就是 `socket.send({ type: "ROOM-SNAPSHOT", payload })`，
+     * 由自建信令服务落库；1.9.12 换成 npm `peer` 包后那条路断了才改成 HTTP。
+     * 现在信令又是我们自己的（server/src/signal.mjs），收到会转交 API 入库。
+     *
+     * 好处：少一个 HTTP 通道、少一层超时/CORS，也不依赖独立的 10 秒定时器
+     * （由心跳每 2 秒检查一次，见 maybeSnapshot）。
+     * 信令断开时自动回落 HTTP —— 两条路都在，谁也不耽误谁。
+     */
+    const socket = (this.peer as unknown as { socket?: { send?: (m: unknown) => void } } | null)?.socket;
+    if (socket && typeof socket.send === "function") {
+      try {
+        socket.send({ type: "ROOM-SNAPSHOT", payload });
+        return;
+      } catch {
+        /* 发不出去就走下面的 HTTP */
+      }
+    }
     /*
      * 只发不看结果：下一轮（约 10 秒后）快照会覆盖式重发全部状态，
      * 所以这里失败不需要重试，也不能弹任何提示。
