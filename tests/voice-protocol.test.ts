@@ -6,6 +6,7 @@ import {
   HOST_ID_PREFIX,
   MAX_MEMBERS,
   ROOM_CODE_LEN,
+  PUBLIC_WEB_BASE,
   buildInviteUrl,
   decideAdmission,
   guestPeerId,
@@ -132,7 +133,7 @@ describe("invite link", () => {
 
   it("round-trips through the url fragment", () => {
     const url = buildInviteUrl(invite);
-    expect(url.startsWith("https://5blong.site/#")).toBe(true);
+    expect(url.startsWith(`${PUBLIC_WEB_BASE}/#`)).toBe(true);
     // The secret must live after '#' so it never reaches a server.
     expect(url.indexOf("#")).toBeLessThan(url.indexOf(KEY));
 
@@ -157,7 +158,7 @@ describe("invite link", () => {
    */
   it("永远指向公开网址，不受当前页面地址影响", () => {
     const url = buildInviteUrl(invite);
-    expect(url.startsWith("https://5blong.site/#")).toBe(true);
+    expect(url.startsWith(`${PUBLIC_WEB_BASE}/#`)).toBe(true);
     // 绝不能出现桌面壳的内部协议或本地路径
     expect(url).not.toContain("app://");
     expect(url).not.toContain("bundle");

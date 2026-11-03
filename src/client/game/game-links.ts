@@ -17,7 +17,7 @@ import { isRoomCode, normalizeCode } from "../voice/protocol";
 export function gameInviteUrl(code: string): string {
   const host = window.location.hostname;
   const desktop = host === "tauri.localhost" || host.endsWith(".tauri.localhost");
-  const url = new URL(desktop ? "https://5blong.site/" : window.location.href);
+  const url = new URL(desktop ? "https://web.5blong.site/" : window.location.href);
   url.search = "";
   url.hash = "";
   url.searchParams.set("g", normalizeCode(code));
