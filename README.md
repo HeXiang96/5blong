@@ -1046,6 +1046,8 @@ npm run feedback:admin list 20   # 终端查看最近反馈（url / list / rm �
 <!-- AUTO-LOG:START -->
 ### 近期提交（自动生成）
 
+- `95ee84f` release: v1.9.20（11-03 22:52）
+- `236bca4` fix(voice): 自建协商四补丁（僵尸吞 offer/状态覆盖/异常无声/单通拆腿）（11-03 22:52）
 - `b74a2ae` feat(signal): 给新信令服务加消息追踪（临时诊断）（11-03 22:07）
 - `01db1fd` docs: 新增语音链路故障交接记录（2026-11-03 晚）（11-03 22:01）
 - `2ef6540` release: v1.9.19（11-03 21:59）
@@ -1053,9 +1055,6 @@ npm run feedback:admin list 20   # 终端查看最近反馈（url / list / rm �
 - `536bd7e` docs: 修正上报看门狗那段（定时器已整条去掉，改由心跳驱动）（11-03 21:43）
 - `1cbb9ba` feat(telemetry): 上报改回走信令（CF 时代做法），HTTP 作回落（11-03 21:43）
 - `ab9c49b` fix(telemetry): 房主没有上报器时由心跳自愈补上（11-03 21:40）
-- `486879b` feat(signal): 信令支持 ROOM-SNAPSHOT（转交现有 API 落库）（11-03 21:36）
-- `ea28b60` feat(signal): 自建信令服务移植到 Node（PeerJS 协议兼容），跑在 9001 影子端口（11-03 21:34）
-- `a7edf34` feat(voice): 自建媒体协商（SDP/ICE 走数据通道）+ ICE 探针（11-03 21:29）
 <!-- AUTO-LOG:END -->
 
 ## 怎么用
