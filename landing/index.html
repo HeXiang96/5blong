@@ -2,16 +2,6 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<script>
-  /* 临时兜底（2026-11-03）：1.9.13 之前的客户端仍生成 5blong.site/#c=… 的链接。
-     介绍页上线后这些链接会落到这里，所以先把带房间参数的访问送到 web 子域。
-     等用户都升到 1.9.13（或确认没人用旧链接），删掉这一段即可。 */
-  (function () {
-    if (/[#&?](c|g)=/.test(location.hash) || /[?&](c|g)=/.test(location.search)) {
-      location.replace("https://web.5blong.site/" + location.search + location.hash);
-    }
-  })();
-</script>
 
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>5blong — 开个语音房，把链接丢给朋友</title>
