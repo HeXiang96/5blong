@@ -28,12 +28,30 @@
  */
 
 import { createWriteStream, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import https from "node:https";
 import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
 import path from "node:path";
 
 const DEST = process.env.DESKTOP_DIR || "/var/www/5blong/desktop";
 const SITE = (process.env.SITE_BASE || "https://5blong.site").replace(/\/+$/, "");
+
+/**
+ * 安装包下载地址（2026-11-03 接阿里云 GA 全球加速）。
+ *
+ * 为什么清单和包分开两个域名：
+ *   `latest.json` 只有几百字节，走直连 170~260ms 已经够了；
+ *   安装包 7.5MB，走公网国际出口实测 0.45~9.9 MB/s **剧烈波动**
+ *   （同一个文件、同一分钟，速度差 20 倍），晚高峰能拖到 25 秒。
+ *   把 url 换成 dl 子域（解析到 GA 加速 IP，走阿里云骨干回源香港）
+ *   实测稳定 17~19 MB/s，0.4 秒下完。
+ *
+ * ⚠️ 必须是域名不能是 IP：证书是签给 `*.5blong.site` 的，
+ * 用 IP 访问会证书不匹配，Tauri 的 updater 直接拒绝下载。
+ * ⚠️ 只改下载 url，`latest.json` 本身仍在 SITE 下——客户端的 updater
+ * endpoints 写死了 5blong.site，改那个要发版。
+ */
+const DL_SITE = (process.env.DL_BASE || "https://dl.5blong.site").replace(/\/+$/, "");
 const TARGET = "windows-x86_64";
 const DRY = process.argv.includes("--dry-run");
 const FORCE = process.argv.includes("--force");
@@ -174,9 +192,107 @@ function localField(name, fallback) {
   }
 }
 
+/**
+ * 决定 this run 用哪个域名写进 url：加速域名还是直连主域。
+ *
+ * 为什么要有这一步（不是写完就完事）：
+ *   加速域名一旦写进 latest.json，**所有客户端都会去那里下**。
+ *   只要它有一项不对——证书过期、nginx 少个 server 块——
+ *   表现就是"所有人都更新不了"，而且报错发生在客户端，服务器这边毫无动静。
+ *
+ * 为什么探测的是**本机 127.0.0.1 而不是走 DNS 去连 GA**（2026-11-03 实测）：
+ *   这台机器在香港，GA 的加速区域是「中国内地」。从香港去打国内接入点
+ *   拿不到完整握手（TCP 通、TLS 000），而国内用户实测 17~38 MB/s。
+ *   所以"服务器能不能连 GA"这个问题本身就问错了——它测的是服务器的位置，
+ *   不是用户的体验。真正要确认的是**本机已经把 dl 服务准备好了**：
+ *   SNI 是 dl、证书覆盖 dl、nginx 认得这个 Host。
+ *
+ *   至于 GA 那一段（就近接入 → 骨干 → 回源），由阿里云侧保证；
+ *   真挂了，`repairDownloadBase` 也没法救（它只能改地址，改不了 GA 的命），
+ *   那种情况需要人工把 DL_BASE 置空重新同步，见文末注释。
+ */
+function probeSelfReady() {
+  return new Promise((resolve) => {
+    const host = new URL(DL_SITE).hostname;
+    const req = https.request(
+      {
+        host: "127.0.0.1",
+        port: 443,
+        path: "/desktop/latest.json",
+        method: "HEAD",
+        servername: host,          // SNI 决定 nginx 用哪个 server 块
+        headers: { host },         // TLS 证书按这个校验，必须是 dl 域名
+        timeout: 8000,
+      },
+      (res) => {
+        res.resume();
+        if (res.statusCode === 200) resolve({ ok: true, detail: "200" });
+        else resolve({ ok: false, detail: `HTTP ${res.statusCode}` });
+      },
+    );
+    req.on("timeout", () => req.destroy(new Error("超时 8s")));
+    req.on("error", (e) => resolve({ ok: false, detail: e.message }));
+    req.end();
+  });
+}
+
+async function resolveDownloadBase() {
+  if (DL_SITE === SITE) return { base: SITE, from: "未配置加速域名" };
+  const r = await probeSelfReady();
+  if (r.ok) return { base: DL_SITE, from: "本机已就绪（证书 + nginx）" };
+  log("warn", `加速域名未就绪（${r.detail}），本次退回主域直连`);
+  return { base: SITE, from: `加速域名未就绪：${r.detail}` };
+}
+
 /** 读本地版本（上次写下的 latest.json），没有就当 0.0.0。 */
 function localVersion() {
   return localField("version", "0.0.0");
+}
+
+/**
+ * 版本没变时，把 latest.json 里的下载域名修正成当前可用的那个。
+ *
+ * 场景：1.9.14 已经写成了 `dl.5blong.site`，某天 GA 欠费/证书过期/线路挂掉。
+ * 因为版本没变，常规流程会直接 skip——**所有人都还指着那个坏地址**，
+ * 而且没有任何东西会去修它，只能等人发现。这条分支就是那个"人"。
+ *
+ * 只动我们自己那两个域名（SITE / DL_SITE）的 url，GitHub 兜底地址不碰。
+ * 返回是否真的改了文件。
+ */
+function repairDownloadBase(base) {
+  const f = path.join(DEST, "latest.json");
+  if (!existsSync(f)) return false;
+  let j;
+  try {
+    j = JSON.parse(readFileSync(f, "utf8"));
+  } catch {
+    return false;
+  }
+  if (!j?.platforms) return false;
+
+  let changed = false;
+  const platforms = Object.fromEntries(
+    Object.entries(j.platforms).map(([key, value]) => {
+      if (!value || typeof value.url !== "string") return [key, value];
+      let u;
+      try {
+        u = new URL(value.url);
+      } catch {
+        return [key, value];
+      }
+      const currentBase = `${u.protocol}//${u.host}`;
+      if (currentBase !== SITE && currentBase !== DL_SITE) return [key, value];
+      if (currentBase === base) return [key, value];
+      changed = true;
+      return [key, { ...value, url: `${base}${u.pathname}` }];
+    }),
+  );
+  if (!changed) return false;
+
+  const tmp = path.join(DEST, "latest.json.part");
+  writeFileSync(tmp, `${JSON.stringify({ ...j, platforms }, null, 2)}\n`);
+  renameSync(tmp, f);
+  return true;
 }
 
 async function download(url, dest) {
@@ -227,7 +343,17 @@ async function main() {
   const remote = manifest.version;
 
   if (!FORCE && compareVersion(remote, current) <= 0) {
-    log("skip", `远端 v${remote} 不比本地 v${current} 新，什么都不做`);
+    // 版本没变也要确认一次下载地址还活着（GA 停机/证书过期时自动退回直连）。
+    if (DRY) {
+      log("skip", `远端 v${remote} 不比本地 v${current} 新，什么都不做`);
+      return;
+    }
+    const dl0 = await resolveDownloadBase();
+    if (repairDownloadBase(dl0.base)) {
+      log("repair", `版本没变，但下载地址已修正为 ${dl0.base}/desktop/（${dl0.from}）`);
+    } else {
+      log("skip", `远端 v${remote} 不比本地 v${current} 新，什么都不做（下载域名 ${dl0.base} 正常）`);
+    }
     return;
   }
 
@@ -243,9 +369,13 @@ async function main() {
   const gate = await resolveMinimum(manifest, localField("minimum", ""));
   log("gate", `minimum=${gate.value || "空"}（来源：${gate.from}）`);
 
+  // 下载地址用哪个域名，由探测决定（见 resolveDownloadBase 的注释）。
+  const dl = await resolveDownloadBase();
+  log("base", `下载域名 ${dl.base}（${dl.from}）`);
+
   if (DRY) {
     log("dry-run", `会下载 ${plat.url}`);
-    log("dry-run", `会写 latest.json（url 改成 ${SITE}/desktop/${exeName}，minimum=${gate.value || "未设置"}）`);
+    log("dry-run", `会写 latest.json（url 改成 ${dl.base}/desktop/${exeName}，minimum=${gate.value || "未设置"}）`);
     return;
   }
 
@@ -267,7 +397,7 @@ async function main() {
         const pointsToSameExe =
           value && typeof value === "object" && typeof value.url === "string" &&
           path.basename(new URL(value.url, "https://placeholder.invalid").pathname) === exeName;
-        return [key, pointsToSameExe ? { ...value, url: `${SITE}/desktop/${exeName}` } : value];
+        return [key, pointsToSameExe ? { ...value, url: `${dl.base}/desktop/${exeName}` } : value];
       }),
     ),
   };
