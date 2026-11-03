@@ -766,7 +766,8 @@ export class VoiceMesh {
     await this.buildOutgoing(settings);
     this.loadPeerAudioSettings(settings);
     // PeerJS 只在构造 Peer 那一刻读 config，所以 TURN 凭据必须在这之前就绪。
-    // 超时上限 2.5s，拿不到就先用纯 STUN 开始打洞——不为了中继把建房卡住。
+    // 超时上限 2.5s，拿不到就先用纯 STUN 开始打洞——不为了中继把建房卡住
+    // （凭据晚到由 onIceUpgrade 自愈重拨兜底）。
     await ensureIceServers();
     // 硬件编解码预检（不碰权限、只问 WebCodecs）：名册里要带上"本机能否 AV1 硬解"
     await this.startHardwareProbe();
@@ -867,8 +868,10 @@ export class VoiceMesh {
     /*
      * 进房握手本身也是一条 RTCPeerConnection（PeerJS 数据通道），同样要过 ICE。
      * 跨网打洞失败时如果没有可用 TURN，这里就会一直建不起连接、超时 ×3 —— 
-     * 这正是"跨网进不去"的现场。故与建房一样，先把凭据备好。
+     * 这正是"跨网进不去"的现场。故与建房一样，先把凭据备好——
+     * （2.5s 拿不到就纯 STUN 开局；凭据晚到由 onIceUpgrade 自愈重拨兜底）。
      */
+    this.events.status("connecting", "正在准备通话线路…");
     await ensureIceServers();
     // 握手包里要报"本机能否 AV1 硬解"，共享者据此判断能不能上 AV1
     await this.startHardwareProbe();
@@ -2739,7 +2742,7 @@ export class VoiceMesh {
 
     this.dropPeer();
     /*
-     * 重拨前再拉一次 ICE 凭据：上一次 /ice 可能因 2.5 秒超时退回了纯 STUN，
+     * 重拨前再拉一次 ICE 凭据：上一次 /ice 可能超时退回了纯 STUN，
      * ice.ts 的注释承诺"下一次重拨就用上中继"——那就必须真的在这里补拉，
      * 否则跨网（对称 NAT）用户一次抖动就整场打不洞。
      */

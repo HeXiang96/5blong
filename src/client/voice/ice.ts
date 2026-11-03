@@ -190,9 +190,9 @@ export function refreshIceServers(): Promise<void> {
 }
 
 /**
- * 进房/建房前调用：确保 ICE 配置可用，但**最多等 timeoutMs**。
+ * 进房/建房前调用：确保 ICE 配置可用，但**最多等 timeoutMs**（维持 2.5s）。
  * 缓存命中时同步返回；未命中时与拉取赛跑，超时就先用纯 STUN 开始，
- * 后台那次拉取继续跑，下一次重拨就能用上。
+ * 后台那次拉取继续跑。凭据晚到由 onIceUpgrade 自愈重拨兜底。
  */
 export async function ensureIceServers(timeoutMs = FETCH_TIMEOUT_MS): Promise<void> {
   if (expiresAt > Date.now()) return;
