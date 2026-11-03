@@ -92,6 +92,16 @@ export function startPeerServer() {
     flushTimer = setTimeout(flush, 200);
   };
 
+  /*
+   * 周期性重写快照（2026-11-03 业主实测："房间明明在，面板显示 0"）。
+   *
+   * 只在连接/断开时写的话，房间稳定挂着时文件时间戳不再更新，
+   * 后台的"超过 60 秒视为过期"会把它整份丢掉 —— 看起来就是"房号消失了"。
+   * 这里每 20 秒重写一次，时间戳保持新鲜；unref 保证不影响进程退出。
+   */
+  const keepFresh = setInterval(flush, 20_000);
+  keepFresh.unref?.();
+
   server.on("connection", (client) => {
     try {
       const id = String(client.getId?.() ?? "");

@@ -1037,7 +1037,9 @@ export class VoiceMesh {
       share: { active: false, totalS: 0, transport: "", last: "" },
       timer: 0,
     };
-    this.roomTelemetry.timer = this.timers.every(10_000, () => {
+    // 用 everyBackground：网页版切到后台时普通 setInterval 会被压到 1 分钟一次，
+    // 房间挂着不动时面板就一直停在旧快照（桌面端有 --disable-background-timer-throttling，不受影响）。
+    this.roomTelemetry.timer = this.timers.everyBackground(10_000, () => {
       void this.sendRoomSnapshot();
     });
     void this.sendRoomSnapshot();
@@ -1139,8 +1141,15 @@ export class VoiceMesh {
    */
   private async sendRoomSnapshot(): Promise<void> {
     const t = this.roomTelemetry;
-    const socket = (this.peer as unknown as { socket?: { send?: (m: unknown) => void } } | null)?.socket;
-    if (!t || !socket || typeof socket.send !== "function" || this.destroyed) return;
+    /*
+     * 不再要求"信令 socket 存在"（2026-11-03 业主实测：房间明明在，面板永远"暂无成员明细"）。
+     *
+     * 这个守卫是遥测还走信令 WebSocket 的时代留下的；改成 HTTP POST 之后它只是误伤：
+     * 房主信令一断（校园网换出口/抖动）就整段跳过上报，而他的 HTTP 其实是通的
+     * —— 实测 702621 的房主今晚对我们的 API 发了 1175 个请求、每 30 秒成功续号，
+     * 但 /api/rooms/snapshot 一条都没有。
+     */
+    if (!t || this.destroyed) return;
     const nowIso = new Date().toISOString();
 
     const seen = new Set<string>();

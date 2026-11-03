@@ -102,7 +102,7 @@
 
 > **本节专为后续维护者（含 AI）而写**：交代"共享屏幕为什么卡、改了什么、怎么验证、别踩哪些坑"。  
 > 这一轮**只动共享链路，语音一行未碰**（语音零影响是硬约束）；四批次全部落地，  
-> `npm run check` 全绿（typecheck + <!-- AUTO:TESTS -->382<!-- /AUTO:TESTS --> 单测 + 构建）。  
+> `npm run check` 全绿（typecheck + <!-- AUTO:TESTS -->383<!-- /AUTO:TESTS --> 单测 + 构建）。  
 > 完整方案与逐条推理见 [SCREENSHARE-OPT-PLAN.md](./docs/archive/SCREENSHARE-OPT-PLAN.md)（已归档）；  
 > 早期 v1~v3 草稿 [SCREENSHARE-PERF-PLAN.md](./docs/archive/SCREENSHARE-PERF-PLAN.md) 已被其取代（仅存档）。
 
@@ -320,6 +320,26 @@ TURN key 与 SFU 的 appId/secret **是两套**，分别创建：
 - 主令牌在 `.dev-secrets.json` 的 `feedbackToken`
 
 ---
+
+## 最近更新（2026-11-03 · 待发下一个 patch）：面板显示「信令在线」却永远没有成员明细
+
+### 🐞 房间明明在，`/rooms` 后台一直写"暂无成员明细"
+
+后台的成员明细只能由**房主客户端**每 10 秒 POST 一次 `/api/rooms/snapshot` 得来。
+实测发现房主那台机器当晚调了 **1175 次** API（每 30 秒成功续号），
+但快照一条都没到 —— 不是网络，是我们自己的上报被拦住了。
+
+**根因**：`sendRoomSnapshot()` 开头有个守卫，要求 `peer.socket` 存在才发。
+那是遥测还走信令 WebSocket 时代留下的；改成 HTTP POST 之后它只是误伤：
+房主信令一抖（校园网换出口/重连），上报整段跳过，而 HTTP 明明是通的。
+
+**修法**：
+- 去掉 `peer.socket` 守卫，只看"房间里有没有在跑上报"；
+- 上报循环 `setInterval` → `everyBackground`（网页版切后台时普通定时器被压到 1 分钟一次，
+  桌面端有 `--disable-background-timer-throttling` 不受影响）。
+
+**顺带说明**：信令侧观测（`server/src/peer.mjs` 统计 `5b-h-*` 连接）不受影响，
+所以这类房主在面板上仍会以「信令在线」出现，只是那句"等房主客户端上报"以前永远等不到。
 
 ## 最近更新（2026-11-03 · 待发下一个 patch）：进不了别人的房，提示"房主不在线"
 
@@ -625,7 +645,7 @@ SFU 多档（simulcast）也有；但房主有硬编时只发**一档**，SFU �
 
 - 新增 `tests/game-room-code.test.ts`：6 位能进、老 4 位能进、5 位/7 位/字母不算码、首尾空白归一、邀请链接往返解析。
 - 新增视觉夹具 `tests/fixtures/game-join.html?code=<房号>&fill=1`：手输 6 位 / 链接带入 / 填完游戏 ID 三种状态可直接截图目检。
-- 全量用例 <!-- AUTO:TESTS -->382<!-- /AUTO:TESTS --> 项通过；`typecheck`、`build:web:pages`、`docs:check` 全绿。
+- 全量用例 <!-- AUTO:TESTS -->383<!-- /AUTO:TESTS --> 项通过；`typecheck`、`build:web:pages`、`docs:check` 全绿。
 
 ### 三、已知未修（单独排期，不在这版）
 
@@ -1158,7 +1178,7 @@ npm install                 # 安装依赖
 npm run dev                 # 本地开发服务器（网页）
 npm run tauri dev           # 桌面端开发模式（自动起 dev 服务器 + Tauri 窗口）
 npm run typecheck           # 类型检查
-npm test                    # 单元测试（<!-- AUTO:TESTS -->382<!-- /AUTO:TESTS --> 项，由 docs:sync 注入）
+npm test                    # 单元测试（<!-- AUTO:TESTS -->383<!-- /AUTO:TESTS --> 项，由 docs:sync 注入）
 npm run build:web:pages     # 构建静态网页到 dist-web
 npm run tauri build         # 本地出桌面安装包（更新签名需要环境变量，一般直接用 CI）
 npm run deploy:pages        # 手动部署网页到 Cloudflare Pages（复用本机 wrangler 凭据）
@@ -1254,7 +1274,7 @@ npm run signal:setup        # 绑定 Pages → 信令 Worker（service binding S
 - `.github/workflows/`：`release.yml`（云出包，`app-v*` 标签触发）、
   `readme-log.yml`（自动更新 README 提交列表，`[skip ci]`）
 - `tests/`：协议 / 握手 / 准入、屏幕共享（含调谐器与硬编预检）、猪圈、说话检测、定时器、
-  ICE、反馈、会话统计、音量上限、blake3 等，当前合计 <!-- AUTO:TESTS -->382<!-- /AUTO:TESTS --> 项
+  ICE、反馈、会话统计、音量上限、blake3 等，当前合计 <!-- AUTO:TESTS -->383<!-- /AUTO:TESTS --> 项
 - `scripts/`：`deploy-pages.mjs`（部署）、`publish-desktop.mjs`（桌面端更新源发布）、
   `pages-status.mjs`、`bump-version.mjs`（发版一键化）、`readme-log.mjs`（AUTO-LOG，含畸形自愈）、
   `docs-sync.mjs` / `check-docs.mjs`（文档数字注入与校验）、`lib/blake3.mjs`

@@ -794,3 +794,29 @@ describe("断线重连后的语音自愈（2026-11-03 业主实测故障）", ()
     expect((host as any).calls.has(guestId)).toBe(false);
   });
 });
+
+describe("房间名册上报不依赖信令（2026-11-03 面板永远「暂无成员明细」）", () => {
+  /*
+   * 故障：房主的房间明明在线（信令侧能数到 5b-h-<房号>），面板却一直是"信令在线 + 暂无成员明细"。
+   * 根因：sendRoomSnapshot 开头有个从"遥测走信令 WebSocket"时代留下的守卫——
+   *      peer.socket 不存在就直接 return。改成 HTTP POST 之后它只是误伤：
+   *      房主信令一抖，上报整段跳过，而他的 HTTP 明明是通的
+   *      （实测那台机器当晚调了 1175 次 API、每 30 秒成功续号，快照 0 条）。
+   */
+  it("信令 socket 没了也照样 POST 快照", async () => {
+    const { host } = await startHost();
+    const posts: string[] = [];
+    vi.stubGlobal("fetch", (url: unknown) => {
+      posts.push(String(url));
+      return Promise.resolve({ ok: true } as unknown as Response);
+    });
+    try {
+      // 模拟"房主信令断了"：peer 置空。旧实现第一行就 return，永远不发。
+      (host as any).peer = null;
+      await (host as any).sendRoomSnapshot();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(posts.some((u) => u.includes("/api/rooms/snapshot"))).toBe(true);
+  });
+});
