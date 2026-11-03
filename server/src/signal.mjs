@@ -18,6 +18,7 @@
  *      服务端收到后转给现有 API（/api/rooms/snapshot）落库 —— 后台逻辑一行不用改，
  *      客户端也不必再依赖 HTTP；HTTP 那条路仍然保留（老客户端继续用）。
  */
+import { appendFileSync, statSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
 import { WebSocketServer } from "ws";
@@ -32,6 +33,41 @@ const PENDING_OFFER_MS = 2_500;
 const PENDING_MAX = 200;
 
 /**
+ * 信令消息追踪（临时诊断，2026-11-03）。
+ *
+ * 排查"进房握手不上 / 某两个人的语音永远 ice=new"时需要知道：
+ * OFFER 到底有没有到、ANSWER 有没有回、候选里有没有 relay。
+ * 这些在服务端就能看到，不必等客户端加日志、也不用发版。
+ *
+ * 只记 type / src / dst 和三个技术字段（kind、候选类型、协议），
+ * **不记 SDP、不记 IP、不记候选内容**。超过 5MB 自动清空。
+ * 定性完成后这段代码连同文件一起撤掉。
+ */
+const TRACE_FILE = "/data/5blong/signal-trace.log";
+const TRACE_MAX_BYTES = 5_000_000;
+
+function makeTracer() {
+  let bytes = 0;
+  try {
+    bytes = statSync(TRACE_FILE).size;
+  } catch {
+    bytes = 0;
+  }
+  return (line) => {
+    try {
+      if (bytes > TRACE_MAX_BYTES) {
+        writeFileSync(TRACE_FILE, "");
+        bytes = 0;
+      }
+      appendFileSync(TRACE_FILE, line + "\n");
+      bytes += line.length + 1;
+    } catch {
+      /* 写不进绝不影响信令本身 */
+    }
+  };
+}
+
+/**
  * @param {{ port: number, host: string, path?: string }} options
  */
 export function startSignalServer(options) {
@@ -41,6 +77,7 @@ export function startSignalServer(options) {
 
   /** id → { ws, since, lastSeen } */
   const clients = new Map();
+  const trace = makeTracer();
   /** dst → [{ msg, timer }]，只用于 OFFER */
   const pending = new Map();
   let pendingCount = 0;
@@ -163,6 +200,23 @@ export function startSignalServer(options) {
       if (!msg || typeof msg.type !== "string") return;
       // src 一律以服务端认定的 id 为准，防止伪造
       msg.src = id;
+
+      /*
+       * 临时追踪（见 TRACE_FILE 的说明）。放在 switch 之前，
+       * 保证"即使后面直接 return（转发成功/暂存/EXPIRE）"也一定留痕。
+       */
+      if (msg.type === "OFFER" || msg.type === "ANSWER" || msg.type === "CANDIDATE") {
+        let extra = "";
+        const kind = msg.payload?.type;
+        if (kind === "data" || kind === "media") extra += ` kind=${kind}`;
+        if (msg.type === "CANDIDATE") {
+          const raw = String(msg.payload?.candidate?.candidate ?? "");
+          const proto = /(udp|tcp)/i.exec(raw);
+          const typ = /typ\s+(\w+)/i.exec(raw);
+          extra += ` typ=${typ ? typ[1] : "?"} proto=${proto ? proto[1].toLowerCase() : "?"}`;
+        }
+        trace(`${new Date().toISOString()} ${msg.type} ${id} -> ${msg.dst || "-"}${extra}`);
+      }
 
       switch (msg.type) {
         case "HEARTBEAT":
