@@ -900,6 +900,7 @@ npm run feedback:admin list 20   # 终端查看最近反馈（url / list / rm �
 <!-- AUTO-LOG:START -->
 ### 近期提交（自动生成）
 
+- `497e7c5` release: v1.9.14（11-03 11:59）
 - `a22bfca` feat: 引导瘦身、更新公告换成 1.9.13、介绍页补功能一览（11-03 11:57）
 - `5c23e33` chore(landing): 删除临时跳转兜底（业主决定不等，旧链接直接失效）（11-03 11:52）
 - `e7c1760` style(landing): FAQ 恢复与三列同宽（max-width:none 是取消限制，反而撑满视口）（11-03 11:50）
@@ -907,7 +908,6 @@ npm run feedback:admin list 20   # 终端查看最近反馈（url / list / rm �
 - `b193e1c` release: v1.9.13（11-03 11:34）
 - `7d12dcd` feat: 邀请链接改指 web.5blong.site，1.9.13 强制更新（11-03 11:34）
 - `3136ee4` feat(landing): 新增宣传介绍页，版式照 piik，配色对齐客户端（11-03 11:15）
-- `8ec5c49` ci: 不再发 Cloudflare Pages，网页版与安装包改由服务器主动拉（11-03 11:05）
 <!-- AUTO-LOG:END -->
 
 ## 怎么用
