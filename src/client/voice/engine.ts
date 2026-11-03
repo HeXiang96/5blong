@@ -83,6 +83,7 @@ import type { AudioProcessing, VoiceSettings } from "./settings";
 import { MIC_VOLUME_MAX, PEER_VOLUME_MAX } from "./settings";
 import { bindSpeaker, openMic, resumeAudio } from "./devices";
 import { ensureIceServers, iceHasTurn, iceServers, onIceUpgrade } from "./ice";
+import { MediaLink, type RtcSignal } from "./media-link";
 import { SIGNAL_ROUTES, routeAt } from "./signal-routes";
 import { oneWayStep } from "./one-way";
 import { currentVersion } from "./changelog";
@@ -199,6 +200,27 @@ const VOICE_HEAL_PEER_DELAY_MS = 2500;
  * 超过这个时间还没连上，就当作失败，直接进入重拨。
  */
 const VOICE_CONNECT_TIMEOUT_MS = 9000;
+
+/**
+ * 媒体协商是否改走数据通道（自建协商，2026-11-03）。
+ *
+ * 为什么：PeerJS 的 call/answer 把 SDP 交给信令转发**一次**，丢了就没了 ——
+ * 实测每一条 OFFER 都能在 100ms 内拿到 ANSWER，但连接仍然停在 new / 反复重拨，
+ * 说明"协商消息只有一条命"这条路本身不可靠。
+ *
+ * 范围：只有「房主 ↔ 访客」之间有数据通道，所以只改这一种；访客之间仍走 PeerJS。
+ * 兼容：对端是老版本时会失败，失败后自动回落 PeerJS 的老路径（见 onState 分支）。
+ * 应急开关：localStorage 里把 `5blong:dc-media` 设成 `off` 即可整体关掉。
+ */
+function dcMediaEnabled(): boolean {
+  // node 单测里没有 WebRTC，直接走老路径（否则会造出一个永远建不起来的 PC）
+  if (typeof RTCPeerConnection === "undefined") return false;
+  try {
+    return localStorage.getItem("5blong:dc-media") !== "off";
+  } catch {
+    return true;
+  }
+}
 /**
  * 语音流停滞判定（兜底用，不是主力）。
  *
@@ -451,6 +473,10 @@ export class VoiceMesh {
   private hostConn: DataConnection | null = null;
 
   private calls = new Map<string, MediaConnection>();
+  /** 自建协商建立的链路（peerId → MediaLink）。与 calls 互斥：同一条腿只用一种。 */
+  private dcLinks = new Map<string, MediaLink>();
+  /** 已经回落到 PeerJS 老路径的对端，避免在两条路之间来回折腾。 */
+  private dcFallback = new Set<string>();
   /**
    * 每条语音腿的自愈状态（按 peerId）。
    * timer=0 表示没有在等待；attempts 到顶后不再自动重拨，交给用户手动重试。
@@ -1326,6 +1352,15 @@ export class VoiceMesh {
     stopPoseTickerFn();
     this.stopHeartbeat();
 
+    for (const link of this.dcLinks.values()) {
+      try {
+        link.close();
+      } catch {
+        /* noop */
+      }
+    }
+    this.dcLinks.clear();
+
     this.timers.clear();
     this.welcomeDeadline = 0;
 
@@ -1666,6 +1701,8 @@ export class VoiceMesh {
   }
 
   private async onGuestData(conn: DataConnection, data: unknown): Promise<void> {
+    // 自建协商的消息（rtc-*）走这里，不进名册那套解析
+    if (this.handleDcSignal(conn.peer, data)) return;
     const message = parseGuestMessage(data);
     if (!message) return;
 
@@ -2870,6 +2907,8 @@ export class VoiceMesh {
 
   private async onHostData(conn: DataConnection, data: unknown): Promise<void> {
     if (conn !== this.hostConn) return;
+    // 自建协商的消息（rtc-*）走这里
+    if (this.handleDcSignal(conn.peer, data)) return;
     const message = parseHostMessage(data);
     if (!message) return;
 
@@ -3442,6 +3481,9 @@ export class VoiceMesh {
           entry["inbound"] = inbound;
           entry["localCandidateType"] = localType;
           entry["relay"] = relay;
+          // ICE 探针：候选对到底有没有形成、有没有一条成功过
+          entry["gathering"] = pc.iceGatheringState;
+          entry["pairs"] = VoiceMesh.pairSummary(report);
           entry["rttMs"] = pairRtt === null ? null : Math.round(pairRtt * 1000);
         } catch (error) {
           entry["statsError"] = String(error).slice(0, 120);
@@ -3456,8 +3498,31 @@ export class VoiceMesh {
      * 从 calls 里删掉了——只遍历 calls 会恰好漏掉要排查的那个人，
      * 诊断包里 memberCount 比 peers 多，却看不出缺的是谁、为什么缺。
      */
+    // 自建协商的腿不在 calls 里，单独列出来（同样带候选对统计）
+    for (const [peerId, link] of this.dcLinks) {
+      const pc = link.peerConnection;
+      const entry: Record<string, unknown> = {
+        index: peers.length,
+        name: this.members.get(peerId)?.name ?? "?",
+        hasMic: this.members.get(peerId)?.hasMic !== false,
+        via: "datachannel",
+        link: this.roomLinkState.get(peerId) ?? "unknown",
+      };
+      if (pc) {
+        entry["iceConnectionState"] = pc.iceConnectionState;
+        entry["connectionState"] = pc.connectionState;
+        entry["gathering"] = pc.iceGatheringState;
+        try {
+          entry["pairs"] = VoiceMesh.pairSummary(await pc.getStats());
+        } catch (error) {
+          entry["statsError"] = String(error).slice(0, 120);
+        }
+      }
+      peers.push(entry);
+    }
+
     for (const [peerId, member] of this.members) {
-      if (member.local || this.calls.has(peerId)) continue;
+      if (member.local || this.calls.has(peerId) || this.dcLinks.has(peerId)) continue;
       peers.push({
         index: peers.length,
         name: member.name,
@@ -3778,6 +3843,33 @@ export class VoiceMesh {
    * 正确口径是 ICE 最终**选中**的那条（`selected`），老实现没有该字段时
    * 才退回 nominated + succeeded。
    */
+  /**
+   * ICE 探针：统计候选对的分布。
+   *
+   * 用来区分两种完全不同的失败：
+   *   有对、但全 failed  → 路径确实不通（只能靠 relay / 443）
+   *   一个对都没有        → 候选没交换成功（我们的 bug，不是网络）
+   */
+  private static pairSummary(report: RTCStatsReport): Record<string, number> {
+    const summary: Record<string, number> = {
+      total: 0, succeeded: 0, failed: 0, inProgress: 0, waiting: 0, frozen: 0, relayPairs: 0,
+    };
+    report.forEach((r) => {
+      if (r.type !== "candidate-pair") return;
+      const pair = r as RTCIceCandidatePairStats;
+      summary.total += 1;
+      const state = String(pair.state ?? "");
+      if (state === "succeeded") summary.succeeded += 1;
+      else if (state === "failed") summary.failed += 1;
+      else if (state === "in-progress") summary.inProgress += 1;
+      else if (state === "waiting") summary.waiting += 1;
+      else if (state === "frozen") summary.frozen += 1;
+      const remote = report.get(pair.remoteCandidateId ?? "") as { candidateType?: string } | undefined;
+      if (remote?.candidateType === "relay") summary.relayPairs += 1;
+    });
+    return summary;
+  }
+
   private static chosenPair(stats: RTCStatsReport): RTCIceCandidatePairStats | null {
     let selected: RTCIceCandidatePairStats | null = null;
     let nominated: RTCIceCandidatePairStats | null = null;
@@ -4203,6 +4295,92 @@ export class VoiceMesh {
     }
   }
 
+  // ------------------------------------------------------- 自建媒体协商（数据通道）
+
+  /** 数据通道里来的 rtc-* 消息。返回 true 表示已经消费掉（不再走名册那套解析）。 */
+  private handleDcSignal(peerId: string, data: unknown): boolean {
+    if (!dcMediaEnabled() || !peerId) return false;
+    if (typeof data !== "object" || data === null) return false;
+    const t = (data as { t?: unknown }).t;
+    if (t !== "rtc-offer" && t !== "rtc-answer" && t !== "rtc-ice" && t !== "rtc-bye") return false;
+    const msg = data as RtcSignal;
+    // 收到 offer 说明对方在发起 → 我们当应答方；其余消息沿用已有链路的角色
+    const link = this.ensureDcLink(peerId, msg.t === "rtc-offer" ? "answer" : "offer");
+    if (!link) return true;
+    void link.handle(msg);
+    return true;
+  }
+
+  /** 找到（或创建）这台对端的自建链路；拿不到可用的数据通道时返回 null。 */
+  private ensureDcLink(peerId: string, role: "offer" | "answer"): MediaLink | null {
+    const existing = this.dcLinks.get(peerId);
+    if (existing) return existing;
+    const pipe = this.dcPipeFor(peerId);
+    if (!pipe) return null;
+
+    const link = new MediaLink({
+      role,
+      pipe,
+      stream: this.outgoingStream ?? this.localStream ?? null,
+      iceServers,
+      sdpTransform: opusSdpTransform("voice"),
+      onStream: (stream) => this.playStream(peerId, stream),
+      onState: (state) => {
+        if (state === "connected") {
+          this.roomLinkState.set(peerId, "connected");
+          this.events.mediaState(peerId, "connected");
+          this.lastMediaAt.set(peerId, Date.now());
+          return;
+        }
+        if (state !== "failed") return;
+        this.roomLinkState.set(peerId, "failed");
+        this.events.mediaState(peerId, "failed");
+        this.closeDcLink(peerId);
+        /*
+         * 自建协商失败 → 回落 PeerJS 老路径。
+         * 这条主要救"对端还是老版本"（他根本不会看 rtc-* 消息），
+         * 只回落一次，避免两条路来回折腾。
+         */
+        if (this.dcFallback.has(peerId)) return;
+        this.dcFallback.add(peerId);
+        this.callPeer(peerId);
+      },
+    });
+    this.dcLinks.set(peerId, link);
+    return link;
+  }
+
+  /** 把消息发出去的那条管道：房主发到该访客的连接，访客发到房主连接。 */
+  private dcPipeFor(peerId: string): { send: (msg: RtcSignal) => void } | null {
+    if (this.hosting) {
+      const guest = this.guests.get(peerId);
+      if (!guest || !guest.conn.open) return null;
+      return { send: (msg) => this.send(guest.conn, msg) };
+    }
+    const conn = this.hostConn;
+    if (!conn || !conn.open) return null;
+    return { send: (msg) => this.send(conn, msg) };
+  }
+
+  /** 访客主动向房主发起自建协商（房主不主动发起，保持"id 小的一侧拨"的约定）。 */
+  private startDcOffer(peerId: string): void {
+    const link = this.ensureDcLink(peerId, "offer");
+    if (!link) {
+      this.callPeer(peerId);
+      return;
+    }
+    this.roomLinkState.set(peerId, "connecting");
+    this.events.mediaState(peerId, "connecting");
+    void link.start();
+  }
+
+  private closeDcLink(peerId: string): void {
+    const link = this.dcLinks.get(peerId);
+    if (!link) return;
+    this.dcLinks.delete(peerId);
+    link.close();
+  }
+
   private callPeer(peerId: string, relay = false): void {
     /*
      * 没有麦克风也要发起（2026-10-25 修死锁）。
@@ -4215,6 +4393,14 @@ export class VoiceMesh {
      * 现在没麦时用一条**空流**发起呼叫：协商成 recvonly，我照样能听见对方，
      * 只是不发送音频（本来也没有可发的）。
      */
+    /*
+     * 房主 ↔ 访客这条腿改走数据通道上的自建协商（2026-11-03）。
+     * 访客之间没有数据通道，仍走下面的 PeerJS 老路径。
+     */
+    if (dcMediaEnabled() && !this.hosting && peerId === this.hostId && !this.dcFallback.has(peerId)) {
+      this.startDcOffer(peerId);
+      return;
+    }
     const stream = this.outgoingStream ?? this.localStream ?? new MediaStream();
     if (!this.peer || this.calls.has(peerId)) return;
     // 已经不在名册里的人不拨（自愈/错峰定时器都可能比"他离开"晚一拍）
@@ -4939,6 +5125,7 @@ export class VoiceMesh {
   }
 
   private dropMedia(peerId: string): void {
+    this.closeDcLink(peerId);
     const call = this.calls.get(peerId);
     if (call) {
       this.calls.delete(peerId);

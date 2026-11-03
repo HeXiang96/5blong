@@ -102,7 +102,7 @@
 
 > **本节专为后续维护者（含 AI）而写**：交代"共享屏幕为什么卡、改了什么、怎么验证、别踩哪些坑"。  
 > 这一轮**只动共享链路，语音一行未碰**（语音零影响是硬约束）；四批次全部落地，  
-> `npm run check` 全绿（typecheck + <!-- AUTO:TESTS -->387<!-- /AUTO:TESTS --> 单测 + 构建）。  
+> `npm run check` 全绿（typecheck + <!-- AUTO:TESTS -->394<!-- /AUTO:TESTS --> 单测 + 构建）。  
 > 完整方案与逐条推理见 [SCREENSHARE-OPT-PLAN.md](./docs/archive/SCREENSHARE-OPT-PLAN.md)（已归档）；  
 > 早期 v1~v3 草稿 [SCREENSHARE-PERF-PLAN.md](./docs/archive/SCREENSHARE-PERF-PLAN.md) 已被其取代（仅存档）。
 
@@ -320,6 +320,34 @@ TURN key 与 SFU 的 appId/secret **是两套**，分别创建：
 - 主令牌在 `.dev-secrets.json` 的 `feedbackToken`
 
 ---
+
+## 最近更新（2026-11-03 · 待发下一个 patch）：媒体协商改走数据通道 + ICE 探针
+
+### 🐞 为什么改协商：一条 OFFER 只有一条命
+
+实测（信令侧日志，逐条可查）：每一条 OFFER 都在 **100~120ms** 内拿到 ANSWER，
+候选也齐全（host / srflx / **relay** 都有），但连接仍然反复停在 `new` 或 9 秒后被拆。
+根因是 PeerJS 的 `call/answer` 把 SDP 交给信令**转发一次**——丢一条，这条腿就永远起不来。
+
+**改法**：新增 `src/client/voice/media-link.ts`，把 SDP/ICE 改走**两人之间已有的数据通道**
+（有序、有重传、人在房里就说明它通），answer 超时会重发 offer（最多 2 次）。
+
+- 只改「房主 ↔ 访客」这条腿（只有他们有数据通道）；访客之间仍用 PeerJS；
+- 对端是老版本时协商会失败，**自动回落** PeerJS 老路径（只回落一次）；
+- 应急开关：`localStorage["5blong:dc-media"] = "off"`。
+
+### 🔍 ICE 探针：区分"路径不通"和"候选没形成"
+
+诊断包里每条链路新增 `gathering` 与 `pairs`：
+
+```
+pairs: { total, succeeded, failed, inProgress, waiting, frozen, relayPairs }
+```
+
+- 有候选对但全 `failed` → 路径确实不通（只能靠 relay / 443）；
+- `total = 0` → 候选没交换成功，是我们的 bug。
+
+新增 7 个单测（模块级：offer/answer/超时重发/候选缓存/bye/无麦/连通状态），共 394。
 
 ## 最近更新（2026-11-03 · 待发下一个 patch）：面板显示「信令在线」却永远没有成员明细
 
@@ -687,7 +715,7 @@ SFU 多档（simulcast）也有；但房主有硬编时只发**一档**，SFU �
 
 - 新增 `tests/game-room-code.test.ts`：6 位能进、老 4 位能进、5 位/7 位/字母不算码、首尾空白归一、邀请链接往返解析。
 - 新增视觉夹具 `tests/fixtures/game-join.html?code=<房号>&fill=1`：手输 6 位 / 链接带入 / 填完游戏 ID 三种状态可直接截图目检。
-- 全量用例 <!-- AUTO:TESTS -->387<!-- /AUTO:TESTS --> 项通过；`typecheck`、`build:web:pages`、`docs:check` 全绿。
+- 全量用例 <!-- AUTO:TESTS -->394<!-- /AUTO:TESTS --> 项通过；`typecheck`、`build:web:pages`、`docs:check` 全绿。
 
 ### 三、已知未修（单独排期，不在这版）
 
@@ -1221,7 +1249,7 @@ npm install                 # 安装依赖
 npm run dev                 # 本地开发服务器（网页）
 npm run tauri dev           # 桌面端开发模式（自动起 dev 服务器 + Tauri 窗口）
 npm run typecheck           # 类型检查
-npm test                    # 单元测试（<!-- AUTO:TESTS -->387<!-- /AUTO:TESTS --> 项，由 docs:sync 注入）
+npm test                    # 单元测试（<!-- AUTO:TESTS -->394<!-- /AUTO:TESTS --> 项，由 docs:sync 注入）
 npm run build:web:pages     # 构建静态网页到 dist-web
 npm run tauri build         # 本地出桌面安装包（更新签名需要环境变量，一般直接用 CI）
 npm run deploy:pages        # 手动部署网页到 Cloudflare Pages（复用本机 wrangler 凭据）
@@ -1317,7 +1345,7 @@ npm run signal:setup        # 绑定 Pages → 信令 Worker（service binding S
 - `.github/workflows/`：`release.yml`（云出包，`app-v*` 标签触发）、
   `readme-log.yml`（自动更新 README 提交列表，`[skip ci]`）
 - `tests/`：协议 / 握手 / 准入、屏幕共享（含调谐器与硬编预检）、猪圈、说话检测、定时器、
-  ICE、反馈、会话统计、音量上限、blake3 等，当前合计 <!-- AUTO:TESTS -->387<!-- /AUTO:TESTS --> 项
+  ICE、反馈、会话统计、音量上限、blake3 等，当前合计 <!-- AUTO:TESTS -->394<!-- /AUTO:TESTS --> 项
 - `scripts/`：`deploy-pages.mjs`（部署）、`publish-desktop.mjs`（桌面端更新源发布）、
   `pages-status.mjs`、`bump-version.mjs`（发版一键化）、`readme-log.mjs`（AUTO-LOG，含畸形自愈）、
   `docs-sync.mjs` / `check-docs.mjs`（文档数字注入与校验）、`lib/blake3.mjs`

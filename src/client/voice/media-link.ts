@@ -17,7 +17,7 @@
  * 和引擎现有约定一致，两边不会同时开火。
  */
 
-export type MediaLinkState = "connecting" | "connected" | "failed" | "closed";
+export type DcLinkState = "connecting" | "connected" | "failed" | "closed";
 
 export type RtcSignal =
   | { t: "rtc-offer"; sdp: string }
@@ -42,7 +42,7 @@ export interface MediaLinkOptions {
   createPc?: (config: RTCConfiguration) => RTCPeerConnection;
   /** SDP 整形（降噪/码率那套），默认不动。 */
   sdpTransform?: (sdp: string) => string;
-  onState?: (state: MediaLinkState) => void;
+  onState?: (state: DcLinkState) => void;
   onStream?: (stream: MediaStream) => void;
   /** 等 answer 的时长，超时重发 offer。 */
   answerTimeoutMs?: number;
@@ -58,7 +58,7 @@ export class MediaLink {
   private readonly pipe: SignalPipe;
   private readonly opts: MediaLinkOptions;
   private pc: RTCPeerConnection | null = null;
-  private state: MediaLinkState = "connecting";
+  private state: DcLinkState = "connecting";
   private retries = 0;
   /** node 单测里没有 window，统一用全局计时器（浏览器/Node 都可用）。 */
   private answerTimer: ReturnType<typeof setTimeout> | null = null;
@@ -75,7 +75,7 @@ export class MediaLink {
     return this.pc;
   }
 
-  get currentState(): MediaLinkState {
+  get currentState(): DcLinkState {
     return this.state;
   }
 
@@ -263,7 +263,7 @@ export class MediaLink {
     }
   }
 
-  private setState(next: MediaLinkState): void {
+  private setState(next: DcLinkState): void {
     if (this.state === next) return;
     this.state = next;
     this.opts.onState?.(next);

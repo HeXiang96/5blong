@@ -11,7 +11,7 @@
  */
 
 import { createRequire } from "node:module";
-import { writeFileSync } from "node:fs";
+import { appendFileSync, statSync, writeFileSync } from "node:fs";
 import { CONFIG } from "./config.mjs";
 
 const require = createRequire(import.meta.url);
@@ -129,6 +129,72 @@ export function startPeerServer() {
       if (id.startsWith("5b-h-") && liveHosts.delete(id)) scheduleFlush();
     } catch {
       /* 同上 */
+    }
+  });
+
+  /*
+   * ---- 信令消息追踪（2026-11-03 临时诊断）----
+   *
+   * 现象："进房握手不上" / "某两个人语音永远 ice=new"，
+   * 但服务器这边看不见到底是 OFFER 没到、还是 ANSWER 没回。
+   * `peer` 包会为每条信令消息抛 message 事件（已带 src），这里只**记录**，
+   * 不参与转发，出错也不会影响信令。
+   *
+   * 只记 type/src/dst，不记 SDP、不记候选内容（无隐私风险）。
+   * 心跳（HEARTBEAT）太吵，直接跳过。
+   */
+  const TRACE_FILE = "/data/5blong/signal-trace.log";
+  let traceBytes = 0;
+  try {
+    traceBytes = statSync(TRACE_FILE).size;
+  } catch {
+    traceBytes = 0;
+  }
+  const trace = (line) => {
+    try {
+      if (traceBytes > 5_000_000) {
+        writeFileSync(TRACE_FILE, "");
+        traceBytes = 0;
+      }
+      appendFileSync(TRACE_FILE, line + "\n");
+      traceBytes += line.length + 1;
+    } catch {
+      /* 写不进就算了，绝不能影响信令 */
+    }
+  };
+
+  server.on("message", (client, message) => {
+    try {
+      const type = String(message?.type ?? "");
+      if (!type || type === "HEARTBEAT") return;
+      const src = String(message?.src ?? client?.getId?.() ?? "");
+      const dst = String(message?.dst ?? "");
+      /*
+       * 附带两个纯技术字段，用来区分"哪一类协商、什么候选"：
+       *   kind  = data | media（这条 OFFER/ANSWER 是数据通道还是语音/画面）
+       *   typ   = host | srflx | prflx | relay（候选类型，判断中继有没有被用上）
+       *   proto = udp | tcp
+       * 都是候选串里的标准字段，不含 IP、不含 SDP。
+       */
+      let extra = "";
+      const kind = message?.payload?.type;
+      if (kind === "data" || kind === "media") extra += ` kind=${kind}`;
+      if (type === "CANDIDATE") {
+        const raw = String(message?.payload?.candidate?.candidate ?? "");
+        const proto = /(udp|tcp)/i.exec(raw);
+        const typ = /typ\s+(\w+)/i.exec(raw);
+        extra += ` typ=${typ ? typ[1] : "?"} proto=${proto ? proto[1].toLowerCase() : "?"}`;
+      }
+      trace(`${new Date().toISOString()} ${type} ${src} -> ${dst || "-"}${extra}`);
+    } catch {
+      /* 同上 */
+    }
+  });
+  server.on("close", (client) => {
+    try {
+      trace(`${new Date().toISOString()} DISCONNECT ${String(client?.getId?.() ?? "?")}`);
+    } catch {
+      /* noop */
     }
   });
 
