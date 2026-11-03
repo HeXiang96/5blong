@@ -85,7 +85,7 @@ import { bindSpeaker, openMic, resumeAudio } from "./devices";
 import { ensureIceServers, iceHasTurn, iceServers, onIceUpgrade } from "./ice";
 import { SIGNAL_ROUTES, routeAt } from "./signal-routes";
 import { oneWayStep } from "./one-way";
-import { latestChangelog } from "./changelog";
+import { currentVersion } from "./changelog";
 import { isTauriRuntime } from "./loopback";
 import { SessionStatsRecorder, STATS_SAMPLE_SEC, type SessionSummary } from "./session-stats";
 
@@ -1154,7 +1154,12 @@ export class VoiceMesh {
           peerId: member.id, name: member.name, joinedAt: nowIso, leftAt: null,
           rttSum: 0, rttCount: 0, rttMax: 0, jitterMax: 0, lossPct: 0,
           link: member.local ? "self" : "connecting", reconnects: 0, speakingS: 0,
-          runtime: isTauriRuntime() ? "client" : "web", version: latestChangelog()?.version ?? "",
+          runtime: isTauriRuntime() ? "client" : "web",
+          /*
+           * 版本只报**自己的**：别人的版本我们其实不知道（hello 里没带），
+           * 以前一律填 latestChangelog()，等于把房主自己的版本号安到每个成员头上。
+           */
+          version: member.local ? currentVersion() : "",
         };
         t.members.set(key, stat);
       }
@@ -1242,7 +1247,9 @@ export class VoiceMesh {
       code: t.code,
       createdAt: t.createdAt,
       runtime: isTauriRuntime() ? "client" : "web",
-      version: latestChangelog()?.version ?? "",
+      // 用真实程序版本：latestChangelog() 会跳过纯修 bug 版本（lines 为空），
+      // 曾把 1.9.17 报成 1.9.16，后台"房主版本"列全错。
+      version: currentVersion(),
       members: membersPayload.slice(0, 64),
       events: t.events.slice(-20),
       share: { active: t.share.active, totalS: t.share.totalS, transport: t.share.transport, last: t.share.last },

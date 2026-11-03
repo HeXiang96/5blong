@@ -11,9 +11,13 @@
  */
 
 import { createRequire } from "node:module";
+import { writeFileSync } from "node:fs";
 import { CONFIG } from "./config.mjs";
 
 const require = createRequire(import.meta.url);
+
+/** 在线房号快照文件（后台面板读它，见下面的观测钩子）。 */
+const LIVE_ROOMS_FILE = "/data/5blong/live-rooms.json";
 
 export function startPeerServer() {
   const pkg = require("peer");
@@ -52,6 +56,60 @@ export function startPeerServer() {
     // 前面有 nginx 做 TLS 终止
     proxied: true,
     debug: false,
+  });
+
+  /*
+   * ---- 在线房号观测（2026-11-03）----
+   *
+   * 后台面板原先只能看"客户端主动上报"的房间（/api/rooms/snapshot）。
+   * 房主的网络连不上我们服务器时（正是他会掉到兜底线路的原因），上报也发不出去，
+   * 面板就查无此房 —— CF 时代不会这样，因为那时信令是自己的 Worker，
+   * 服务端自己数人头（面板向它要 /rooms-live）。
+   *
+   * 现在信令虽然换成了开源 `peer` 包，但它暴露了 connection / disconnect 事件，
+   * 客户端 id 就是 `5b-h-<房号>`。这里把在线房号写成一个快照文件，
+   * 后台读它就能知道"这个房号此刻确实有人挂着"，不依赖客户端上报。
+   *
+   * 只记房号与连接时刻，不记 IP、不记成员 —— 与后台原有的隐私口径一致。
+   */
+  const liveHosts = new Map();
+  let flushTimer = null;
+  const flush = () => {
+    flushTimer = null;
+    try {
+      const rooms = [...liveHosts.entries()].map(([id, since]) => ({
+        id,
+        code: id.replace(/^5b-h-/, ""),
+        since,
+      }));
+      writeFileSync(LIVE_ROOMS_FILE, JSON.stringify({ at: Date.now(), rooms }));
+    } catch {
+      /* 写不进去不影响信令本身 */
+    }
+  };
+  const scheduleFlush = () => {
+    if (flushTimer) return;
+    flushTimer = setTimeout(flush, 200);
+  };
+
+  server.on("connection", (client) => {
+    try {
+      const id = String(client.getId?.() ?? "");
+      if (id.startsWith("5b-h-")) {
+        liveHosts.set(id, Date.now());
+        scheduleFlush();
+      }
+    } catch {
+      /* 事件处理绝不能让信令挂掉 */
+    }
+  });
+  server.on("disconnect", (client) => {
+    try {
+      const id = String(client.getId?.() ?? "");
+      if (id.startsWith("5b-h-") && liveHosts.delete(id)) scheduleFlush();
+    } catch {
+      /* 同上 */
+    }
   });
 
   return server;

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-import { CHANGELOG, latestChangelog } from "../src/client/voice/changelog";
+import { CHANGELOG, currentVersion, latestChangelog } from "../src/client/voice/changelog";
 
 describe("首页公告栏更新数据（changelog.ts）", () => {
   it("至少有一条，且每条满足简洁版规范", () => {
@@ -30,5 +30,22 @@ describe("首页公告栏更新数据（changelog.ts）", () => {
     // 它必须是数组里第一条"有内容"的
     const firstWithLines = CHANGELOG.findIndex((entry) => entry.lines.length > 0);
     expect(CHANGELOG.indexOf(latest!)).toBe(firstWithLines);
+  });
+});
+
+describe("真实程序版本（2026-11-03 后台「房主版本」全错）", () => {
+  /*
+   * 故障：后台显示 1.9.17 的房主为 1.9.16。
+   * 原因：上报用的是 latestChangelog()（最新**有公告**的版本），
+   * 而纯修 bug 的版本 lines 为空、被跳过。currentVersion() 取数组首条。
+   */
+  it("currentVersion = CHANGELOG 首条，不受首条无公告影响", () => {
+    expect(currentVersion()).toBe(CHANGELOG[0]!.version);
+  });
+
+  it("首条没有公告内容时，两者必须不同（正是这次报错版本的形态）", () => {
+    if (CHANGELOG[0]!.lines.length === 0) {
+      expect(latestChangelog()!.version).not.toBe(currentVersion());
+    }
   });
 });

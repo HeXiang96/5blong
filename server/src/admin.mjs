@@ -10,6 +10,7 @@
  *
  * 视觉上用同一套 CSS 变量，和 CF 上的后台看起来是同一个东西。
  */
+import { readFileSync } from "node:fs";
 
 import express from "express";
 import { CONFIG, PBKDF2_ROUNDS, SESSION_COOKIE } from "./config.mjs";
@@ -137,6 +138,22 @@ td.num { font-variant-numeric: tabular-nums; }
 .secret { font-size: 24px; font-weight: 700; letter-spacing: .08em; text-align: center;
           background: #fff8e8; border: 1px dashed #d8c9a8; border-radius: 10px; padding: 12px 16px; }
 .mono { font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; word-break: break-all; }
+.room-card { border: 1px solid #e3ded4; border-radius: 14px; margin-bottom: 12px; background: #fff; overflow: hidden; }
+.room-card > summary { list-style: none; cursor: pointer; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 12px 16px; }
+.room-card > summary::-webkit-details-marker { display: none; }
+.room-card > summary:hover { background: #faf6ee; }
+.badge-code { background: #2b2620; color: #ffefd0; border-radius: 8px; padding: 3px 12px; font-weight: 700;
+              font-size: 14px; letter-spacing: .06em; font-variant-numeric: tabular-nums; }
+.dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.dot-on { background: #22a55c; box-shadow: 0 0 0 3px rgba(34,165,92,.18); }
+.live-word { color: #22a55c; font-weight: 600; font-size: 13px; }
+.room-meta { color: #6b6257; font-size: 12.5px; display: flex; flex-wrap: wrap; gap: 10px; }
+.room-body { padding: 0 16px 14px; }
+.chev { margin-left: auto; color: #8a8175; transition: transform .15s ease; font-size: 11px; }
+details[open] > summary .chev { transform: rotate(90deg); }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chips .kv { background: #f6f4ef; border: 1px solid #e3ded4; border-radius: 999px; padding: 5px 12px; font-size: 12.5px; }
+
 @media (prefers-color-scheme: dark) {
   body { background: #191714; color: #f2eee6; }
   .card, table, .stat, .nav a, button, .searchbar input { background: #221f1b; border-color: #35302a; }
@@ -148,7 +165,7 @@ td.num { font-variant-numeric: tabular-nums; }
 }
 `;
 
-export function page(title, bodyHtml, token) {
+export function page(title, bodyHtml, token, refreshMs = 0) {
   const q = token ? `?token=${encodeURIComponent(token)}` : "";
   return `<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="UTF-8" />
@@ -164,6 +181,25 @@ export function page(title, bodyHtml, token) {
   </nav>
 </div>
 ${bodyHtml}
+${
+  refreshMs > 0
+    ? `<script>
+/*
+ * 自动刷新：这是服务端渲染的**快照页**，不刷新就一直显示打开那一刻的房间列表
+ * （2026-11-03 业主："这后台怎么不显示"——页面从中午开着，看到的还是中午的房间）。
+ * 用脚本而不是 <meta refresh>：先记滚动位置再 reload，免得每 10 秒把人弹回顶部。
+ */
+(function () {
+  var KEY = "admin:scrollY";
+  try { var y = sessionStorage.getItem(KEY); if (y !== null) { window.scrollTo(0, Number(y)); sessionStorage.removeItem(KEY); } } catch (e) {}
+  setTimeout(function () {
+    try { sessionStorage.setItem(KEY, String(window.scrollY)); } catch (e) {}
+    location.reload();
+  }, ${Math.max(3000, Math.floor(refreshMs))});
+})();
+</script>`
+    : ""
+}
 </body></html>`;
 }
 
@@ -537,7 +573,30 @@ ${list}`;
       .bind(nowIso)
       .all().results;
 
+    /*
+     * 信令侧观测（2026-11-03）：`peer` 进程把「此刻连着信令的房号」写成快照文件。
+     *
+     * 为什么需要：面板原来只认客户端主动上报（/api/rooms/snapshot）。房主的网络
+     * 连不上我们服务器时（正是他会掉到兜底线路的原因），上报也发不出去 ——
+     * 明明房里有人，面板却查无此房。信令快照不依赖客户端上报，能把这类房号显示出来。
+     */
+    const SIGNAL_ROOMS_FILE = "/data/5blong/live-rooms.json";
+    let signalRooms = [];
+    try {
+      const raw = readFileSync(SIGNAL_ROOMS_FILE, "utf8");
+      const data = JSON.parse(raw);
+      if (Date.now() - Number(data.at) < 60_000 && Array.isArray(data.rooms)) {
+        signalRooms = data.rooms;
+      }
+    } catch {
+      /* 文件不存在（刚重启/从没连过）忽略即可 */
+    }
+    const reported = new Set(live.map((row) => String(row.id)));
+    const signalOnly = signalRooms.filter((row) => !reported.has(String(row.code)));
+
     const liveMembers = live.reduce((sum, row) => sum + Number(row.members ?? 0), 0);
+    /** 正在共享屏幕的房间数（旧面板有这个指标，业主对照着看）。 */
+    const sharing = live.reduce((sum, row) => sum + (row.sharing ? 1 : 0), 0);
 
     const sessions = code
       ? db
@@ -545,6 +604,20 @@ ${list}`;
           .bind(`%${code}%`)
           .all().results
       : db.prepare("SELECT * FROM room_sessions ORDER BY created_at DESC LIMIT 100").all().results;
+
+    // 每日汇总（近 14 天）：与旧后台一致，一眼看活跃度
+    const daily = db
+      .prepare(
+        "SELECT substr(created_at, 1, 10) AS day, COUNT(*) AS sessions, SUM(peak_members) AS peak_total " +
+          "FROM room_sessions GROUP BY day ORDER BY day DESC LIMIT 14",
+      )
+      .all().results;
+    const dailyChips = daily
+      .map(
+        (d) =>
+          `<span class="kv">${escapeHtml(d.day)} · ${d.sessions} 场 · 峰值合计 ${d.peak_total ?? 0} 人</span>`,
+      )
+      .join(" ");
 
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
@@ -639,6 +712,73 @@ ${list}`;
       )
       .join("\n");
 
+    /*
+     * 在线房间卡片：数据来自 rooms 表（心跳），成员明细来自这一场的 room_members
+     * （按房号取最近一次会话）。旧后台就是这样"点开看成员"，业主对照着排障。
+     */
+    const liveCards = live.length
+      ? live
+          .map((r) => {
+            const members = db
+              .prepare(
+                "SELECT * FROM room_members WHERE session_id = (SELECT id FROM room_sessions WHERE code = ? ORDER BY created_at DESC LIMIT 1) ORDER BY joined_at",
+              )
+              .bind(r.id)
+              .all().results;
+            const rows =
+              members
+                .map((m) => {
+                  const active = !m.left_at;
+                  const rtt =
+                    m.rtt_avg_ms != null
+                      ? `${m.rtt_avg_ms}ms${m.rtt_max_ms ? `（峰值 ${m.rtt_max_ms}ms）` : ""}`
+                      : "采样中…";
+                  const linkText =
+                    m.link === "relay" ? "经中继" : m.link === "direct" ? "直连" : m.link || "—";
+                  return `<tr>
+  <td><b>${escapeHtml(m.name || "-")}</b>${active ? "" : ' <span class="tag">已离开</span>'}</td>
+  <td class="num">${active ? "在房" : "—"}</td>
+  <td class="num">${escapeHtml(fmtIso(m.joined_at))}</td>
+  <td class="num">${escapeHtml(rtt)}</td>
+  <td>${escapeHtml(linkText)}</td>
+  <td class="dim">丢包 ${Number(m.loss_pct ?? 0).toFixed(1)}% · 重连 ${m.reconnects ?? 0} · 说话 ${escapeHtml(fmtDuration(m.speaking_s ?? 0))}</td>
+</tr>`;
+                })
+                .join("") ||
+              '<tr><td colspan="6" class="empty">还没有成员明细（第一次快照要几秒才到）</td></tr>';
+            return `<details class="room-card live" open>
+  <summary>
+    <span class="badge-code">${escapeHtml(r.id)}</span>
+    <span class="dot dot-on"></span><span class="live-word">在线</span>
+    <span class="room-meta">${r.runtime === "client" ? "🖥 客户端" : "🌐 网页"} v${escapeHtml(r.version || "?")} · ${Number(r.members ?? 0)} 人 · 最后心跳 ${escapeHtml(fmtIso(r.last_seen))}${r.sharing ? " · 正在共享" : ""}</span>
+    <span class="chev">▶</span>
+  </summary>
+  <div class="room-body">
+    <table><thead><tr><th>成员</th><th>状态</th><th>加入</th><th>延迟(RTT)</th><th>接入</th><th>其它</th></tr></thead><tbody>${rows}</tbody></table>
+  </div>
+</details>`;
+          })
+          .join("")
+      : '<p class="empty">现在没有房间在线。房主创建房间并进入后，这里会 10 秒内出现。</p>';
+
+    /*
+     * 只在信令侧出现的房号：房主确实挂着（`5b-h-<房号>` 在线），
+     * 但他的客户端还没把快照送到 API —— 通常是网络到不了我们，或者刚开房几秒。
+     */
+    const signalCards = signalOnly
+      .map(
+        (r) => `<details class="room-card live" open>
+  <summary>
+    <span class="badge-code">${escapeHtml(String(r.code))}</span>
+    <span class="dot dot-on"></span><span class="live-word">信令在线</span>
+    <span class="room-meta">这个房号此刻连着我们的信令；客户端心跳还没上报（刚开房，或他的网络到不了 API）</span>
+    <span class="chev">▶</span>
+  </summary>
+  <div class="room-body"><p class="empty">暂无成员明细 —— 等房主客户端成功上报一次快照就会出现。</p></div>
+</details>`,
+      )
+      .join("");
+
     const sessionRows = sessions
       .map(
         (s) => `<tr>
@@ -655,17 +795,16 @@ ${list}`;
       .join("\n");
 
     const html = `<div class="stats">
-  <div class="stat"><span class="big">${live.length}</span><span class="label">在线房间</span></div>
+  <div class="stat"><span class="big">${live.length + signalOnly.length}</span><span class="label">在线房间</span></div>
   <div class="stat"><span class="big">${liveMembers}</span><span class="label">在线人数</span></div>
-  <div class="stat"><span class="big">${todayCount}</span><span class="label">今日会话（近 100 条内统计）</span></div>
+  <div class="stat"><span class="big">${sharing}</span><span class="label">正在共享屏幕</span></div>
+  <div class="stat"><span class="big">${todayCount}</span><span class="label">今日会话</span></div>
 </div>
 
-<h2 style="font-size:16px;margin:0 0 10px">正在开着的房间</h2>
-${
-  live.length
-    ? `<table><thead><tr><th>房号</th><th>人数</th><th>共享</th><th>端</th><th>版本</th><th>最后心跳</th></tr></thead><tbody>${liveRows}</tbody></table>`
-    : '<p class="empty">现在没有房间在线。房主创建房间并进入后，这里会实时出现（150 秒内有心跳即算在线）。</p>'
-}
+<h2 style="font-size:16px;margin:0 0 10px">在线房间（点开看成员明细）</h2>
+${liveCards}${signalCards}
+<h2 style="font-size:16px;margin:22px 0 10px">每日汇总（近 14 天）</h2>
+<p class="chips">${dailyChips || '<span class="kv">暂无数据</span>'}</p>
 
 ${detail}
 
@@ -681,7 +820,12 @@ ${
     ? `<table><thead><tr><th>会话</th><th>房号</th><th>开始</th><th>时长</th><th>峰值人数</th><th>房主版本</th></tr></thead><tbody>${sessionRows}</tbody></table>`
     : '<p class="empty">还没有历史会话。</p>'
 }`;
-    res.send(page("在线房间", html, token));
+    /*
+     * 明确写“本页生成于几点”，避免把旧页面当成实时数据（2026-11-03）。
+     * 10 秒自动刷新：房间列表本来就是每 10 秒一次快照，刷新节奏对齐即可。
+     */
+    const stamp = `<p class="meta" style="margin:0 0 10px">本页生成于 ${new Date().toLocaleString("zh-CN", { hour12: false })} · 每 10 秒自动刷新</p>`;
+    res.send(page("在线房间", stamp + html, token, 10_000));
   });
 
   // =========================================================================

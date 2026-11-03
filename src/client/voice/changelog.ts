@@ -666,6 +666,18 @@ export const CHANGELOG: ChangelogEntry[] = [
   },
 ];
 
+/**
+ * 当前程序版本（= CHANGELOG 首条的版本号）。
+ *
+ * 为什么要单列：`latestChangelog()` 返回的是"最新一条**有公告内容**的版本"，
+ * 而纯修 bug 的版本按约定 lines 留空、会被它跳过 —— 于是 1.9.17 被报成 1.9.16
+ * （2026-11-03 业主在后台"房主版本"列发现）。bump 脚本每个版本都会插入一条，
+ * 所以首条的 version 才是真实版本号。
+ */
+export function currentVersion(): string {
+  return CHANGELOG[0]?.version ?? "";
+}
+
 /** 公告栏展示用：最新一条**有内容**的记录。 */
 export function latestChangelog(): ChangelogEntry | undefined {
   return CHANGELOG.find((entry) => entry.lines.length > 0);
