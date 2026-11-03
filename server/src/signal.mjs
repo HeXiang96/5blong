@@ -14,6 +14,9 @@
  *      压不住才回 EXPIRE（客户端据此报"房主不在线"）。
  *   2. **服务端知情**：谁在线、谁在向谁打，都能直接查（/health、/peers）。
  *   3. **判死时间自己定**：默认 180 秒（与 nginx 侧的原设置一致）。
+ *   4. **ROOM-SNAPSHOT 回到信令**：房主的房间快照可以走信令上报（CF 时代就是这样），
+ *      服务端收到后转给现有 API（/api/rooms/snapshot）落库 —— 后台逻辑一行不用改，
+ *      客户端也不必再依赖 HTTP；HTTP 那条路仍然保留（老客户端继续用）。
  */
 import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
@@ -33,6 +36,8 @@ const PENDING_MAX = 200;
  */
 export function startSignalServer(options) {
   const { port, host, path = "/peerjs" } = options;
+  /** 快照转交的本地 API 地址（null 表示只存内存、不落库）。 */
+  const apiBase = options.apiBase ?? "http://127.0.0.1:8788";
 
   /** id → { ws, since, lastSeen } */
   const clients = new Map();
@@ -49,6 +54,7 @@ export function startSignalServer(options) {
           ok: true,
           clients: clients.size,
           rooms: [...clients.keys()].filter((id) => id.startsWith("5b-h-")).length,
+          snapshots: rooms.size,
           pending: pendingCount,
         }),
       );
@@ -65,6 +71,31 @@ export function startSignalServer(options) {
   });
 
   const wss = new WebSocketServer({ server: http, path });
+
+  /** sessionId → 最近一次房间快照（给 /rooms-live 用，也方便排障） */
+  const rooms = new Map();
+
+  /**
+   * 把信令上来的 ROOM-SNAPSHOT 转给现有 API 落库。
+   *
+   * 为什么不在这里直接写库：落库逻辑（会话/成员/事件/峰值/采样）在 rooms.mjs 里，
+   * 复用它可以保证"信令上报"和"HTTP 上报"两条路的入库结果完全一致；
+   * 复制一份迟早会分叉。
+   */
+  const forwardSnapshot = (payload) => {
+    const body = JSON.stringify(payload ?? {});
+    if (payload && typeof payload === "object" && typeof payload.sessionId === "string") {
+      rooms.set(payload.sessionId, { at: Date.now(), code: payload.code ?? "", members: (payload.members ?? []).length });
+    }
+    if (!apiBase) return;
+    void fetch(`${apiBase}/api/rooms/snapshot`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body,
+    }).catch(() => {
+      /* API 暂时不可用不影响信令本身 */
+    });
+  };
 
   const sendJson = (ws, payload) => {
     try {
@@ -140,6 +171,10 @@ export function startSignalServer(options) {
         case "LEAVE":
           clients.delete(id);
           ws.close();
+          return;
+        case "ROOM-SNAPSHOT":
+          // CF 时代房主就是走信令上报的；这里转给 API，入库逻辑复用 HTTP 那条
+          forwardSnapshot(msg.payload);
           return;
         case "OFFER":
         case "ANSWER":
