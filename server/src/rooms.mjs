@@ -56,7 +56,8 @@ export function createRoomsHarness(db) {
       "INSERT INTO room_members (session_id, member_key, name, joined_at, left_at, duration_s, " +
         "rtt_avg_ms, rtt_max_ms, jitter_avg_ms, loss_pct, link, reconnects, speaking_s, runtime, version) " +
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
-        "ON CONFLICT(session_id, member_key) DO UPDATE SET left_at = excluded.left_at, " +
+        "ON CONFLICT(session_id, member_key) DO UPDATE SET name = excluded.name, " +
+        "left_at = excluded.left_at, " +
         "duration_s = excluded.duration_s, rtt_avg_ms = excluded.rtt_avg_ms, " +
         "rtt_max_ms = excluded.rtt_max_ms, jitter_avg_ms = excluded.jitter_avg_ms, " +
         "loss_pct = excluded.loss_pct, link = excluded.link, reconnects = excluded.reconnects, " +
@@ -100,6 +101,48 @@ export function createRoomsHarness(db) {
     }
   }
 
+  /**
+   * 把内存里的成员档写进 `room_members`。
+   *
+   * 以前**只在 finalize() 里写**，于是房间开着的时候这张表是空的 —— 后台「点开看成员明细」
+   * 读的正是它，所以永远显示「还没有成员明细（第一次快照要几秒才到）」，
+   * 等一晚上也等不到（2026-11-03 业主实测房间 467319 有 2 人、明细空白）。
+   *
+   * 在线时 left_at 留空（收尾时 finalize 再补），duration 按"到此刻"先算个近似值。
+   */
+  function persistMembers(sessionId, room, closedAt = null) {
+    const statement = memberStatement();
+    const nowIso = new Date().toISOString();
+    for (const m of room.members.values()) {
+      const leftAt = m.leftAt ?? closedAt;
+      const joined = Date.parse(m.joinedAt);
+      const endRef = Date.parse(leftAt ?? nowIso);
+      const dur =
+        Number.isFinite(joined) && Number.isFinite(endRef)
+          ? Math.max(0, Math.round((endRef - joined) / 1000))
+          : null;
+      statement
+        .bind(
+          sessionId,
+          m.key,
+          m.name,
+          m.joinedAt,
+          leftAt,
+          dur,
+          m.rttCount > 0 ? Math.round(m.rttSum / m.rttCount) : null,
+          m.rttMax || null,
+          m.jitterMax || null,
+          m.lossPct || null,
+          m.link || null,
+          m.reconnects || 0,
+          m.speakingS || 0,
+          m.runtime || null,
+          m.version || null,
+        )
+        .run();
+    }
+  }
+
   /** 会话收尾：写结束时间、时长、峰值、明细分档。关房/断线/崩溃都走这里。 */
   function finalize(sessionId, reason) {
     const room = rooms.get(sessionId);
@@ -122,31 +165,7 @@ export function createRoomsHarness(db) {
         )
         .run();
 
-      const statement = memberStatement();
-      for (const m of room.members.values()) {
-        const leftAt = m.leftAt ?? nowIso;
-        const joined = Date.parse(m.joinedAt);
-        const dur = Number.isFinite(joined) ? Math.max(0, Math.round((Date.parse(leftAt) - joined) / 1000)) : null;
-        statement
-          .bind(
-            sessionId,
-            m.key,
-            m.name,
-            m.joinedAt,
-            leftAt,
-            dur,
-            m.rttCount > 0 ? Math.round(m.rttSum / m.rttCount) : null,
-            m.rttMax || null,
-            m.jitterMax || null,
-            m.lossPct || null,
-            m.link || null,
-            m.reconnects || 0,
-            m.speakingS || 0,
-            m.runtime || null,
-            m.version || null,
-          )
-          .run();
-      }
+      persistMembers(sessionId, room, nowIso);
     } catch (error) {
       console.error(`[rooms] 收尾失败 ${sessionId}：`, error.message);
     }
@@ -243,6 +262,12 @@ export function createRoomsHarness(db) {
     const live = liveCount(room);
     // 人数/共享状态每轮都可能变，跟着刷一次在线行
     syncLiveRow(room, live);
+    // 成员明细也每轮刷一次：房间开着的时候后台就要能看到（以前只写收尾那一刻）
+    try {
+      persistMembers(sessionId, room);
+    } catch (error) {
+      console.error("[rooms] 成员落库失败：", error.message);
+    }
     try {
       if (live > room.peak) {
         room.peak = live;
