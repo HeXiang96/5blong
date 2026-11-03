@@ -923,3 +923,21 @@ describe("兜底补拨的发起方向（2026-11-03 两边同时拨 → 双方都
     expect(dialed).toContain(greater);
   });
 });
+
+describe("上报器自愈（2026-11-03 房主建房后一条快照都没有）", () => {
+  /*
+   * startRoomTelemetry 只在建房成功那一次调用。任何一次异常/提前 return 都会让它永远不跑，
+   * 而看门狗要求 roomTelemetry 已存在——于是"压根没启动"这种情况没人兜。
+   */
+  it("房主没有上报器时，心跳会把它补起来", async () => {
+    const { host } = await startHost();
+    expect((host as any).hosting).toBe(true);
+
+    // 模拟"压根没启动"（不是定时器死了，是整个上报器不存在）
+    (host as any).roomTelemetry = null;
+
+    (host as any).tickLiveness();
+
+    expect((host as any).roomTelemetry).toBeTruthy();
+  });
+});

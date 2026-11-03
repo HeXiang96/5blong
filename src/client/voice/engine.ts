@@ -3717,6 +3717,13 @@ export class VoiceMesh {
   private tickLiveness(): void {
     if (this.destroyed) return;
     const now = Date.now();
+    /*
+     * 上报自愈（2026-11-03 实测：房主建了房，后台一条快照都没有）：
+     * 之前只治了"定时器死了"，没治"压根没启动"——startRoomTelemetry 只在建房成功那一次调用，
+     * 任何一次异常/提前 return 都会让它永远不跑，而看门狗又要求 roomTelemetry 已存在。
+     * 这里只要"我在当房主、有房号、却没有上报器"，就补一个（方法内部自带幂等）。
+     */
+    if (this.hosting && this.code && !this.roomTelemetry) this.startRoomTelemetry();
     // 上报看门狗：独立于专用定时器，定时器死了这里也能把上报拉回来
     this.maybeSnapshot();
 
