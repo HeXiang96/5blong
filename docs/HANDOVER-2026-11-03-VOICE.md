@@ -92,6 +92,7 @@
 | c | **异常静默**：`handle` 的 catch 吞掉一切，answer 生成失败零痕迹 | `onEvent` 回调上报，写进诊断 `events` |
 | d | **单通拆腿循环**：ICE 通 14 秒无音频包（真单通）→ 拆腿重拨 → 治不了单通只制造"断开→重连→又断"循环 | 保持连接 + 3 秒低频复查，包来即转成功 |
 | e | **无限递归隐患**：回落 PeerJS 未先标记 `dcFallback` | 回落前先标记 |
+| f | **★ localDescription 设两次**：`negotiate`/`answerTo` 先设原始再设整形 SDP，answer 方第二次抛 `wrong state: stable`——answer 从未发出、自建协商每次必失败（1.9.20 事件日志实锤） | 整形提前、只设一次（1.9.21） |
 
 注意：`usedtx=0`（audio-profile.ts 明确禁用 DTX，静默期照样发包）——
 "双方都没说话"**不会**导致 0 包；0 包 = 媒体真没流动。别再用"没人说话"解释 0 包。
@@ -123,7 +124,24 @@
 
 ## 4. 已发版（客户端）
 
-### 1.9.20（深夜，最新）
+### 1.9.21（深夜，最新）—— answer 消失的终极根因
+
+1.9.20 的判定事件日志上线当晚就抓到铁证（江南房主端 events）：
+
+```
+answer 端处理 rtc-offer 失败：Failed to set local answer sdp:
+Called in wrong state: stable
+```
+
+根因：`negotiate()` / `answerTo()` 把 localDescription 设**两次**（原始 SDP +
+整形 SDP）。answer 方的第二次在 stable 状态非法 → 抛错（旧版被 catch 吞掉）→
+**answer 从未成功发出过，自建协商每次必失败**，全靠超时回落 PeerJS。
+
+修法：整形提前到 setLocalDescription 之前、只设一次（两端一致）。
+修完预期：房主↔访客**几秒连上**（自建协商首次真正端到端工作）。
+回归 404 项全绿（+2：两端各断言只调一次）。
+
+### 1.9.20
 
 = 1.9.19 全部 + 自建协商四补丁（上表 a~d）+ 防递归（e）+ 判死优化 + 判定事件日志。
 **验证方法**：更新后进房，若自建协商仍失败，诊断 `events` 里会有每一步失败原因
@@ -319,6 +337,9 @@ console.log(JSON.stringify(d.peers,null,1));
        22:12 配额修复立竿见影：relay 候选 1→22、486=0、重拨循环停止
        22:20 1.9.19 实测新问题"进房重连一两分钟"（链路 20s 已通但状态卡死）
        22:47 定性僵尸链路吞 offer + 状态覆盖 + 异常静默 → 发 1.9.20
+       23:07 服务器手动同步 1.9.20（latest.json/exe/网页版全到位）
+       23:09 双方 1.9.20 复现"test3 显示江南重连中"→ events 首战抓到铁证：
+             answerTo 二次 setLocalDescription 抛 wrong state → 发 1.9.21
 ```
 
 ---

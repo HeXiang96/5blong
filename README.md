@@ -102,7 +102,7 @@
 
 > **本节专为后续维护者（含 AI）而写**：交代"共享屏幕为什么卡、改了什么、怎么验证、别踩哪些坑"。  
 > 这一轮**只动共享链路，语音一行未碰**（语音零影响是硬约束）；四批次全部落地，  
-> `npm run check` 全绿（typecheck + <!-- AUTO:TESTS -->402<!-- /AUTO:TESTS --> 单测 + 构建）。  
+> `npm run check` 全绿（typecheck + <!-- AUTO:TESTS -->404<!-- /AUTO:TESTS --> 单测 + 构建）。  
 > 完整方案与逐条推理见 [SCREENSHARE-OPT-PLAN.md](./docs/archive/SCREENSHARE-OPT-PLAN.md)（已归档）；  
 > 早期 v1~v3 草稿 [SCREENSHARE-PERF-PLAN.md](./docs/archive/SCREENSHARE-PERF-PLAN.md) 已被其取代（仅存档）。
 
@@ -355,8 +355,30 @@ ICE 通了却 14 秒没有音频包（真单通）时，原实现拆腿重拨—
 `callPeer → startDcOffer → callPeer` 会无限递归（栈溢出）。回落前先标记。
 
 **回归**：402 项单测全绿（+6：僵尸重建、非 offer 不建链、状态不覆盖、
-失败上报 ×2、僵尸消息上报）。1.9.20 已推送（tag `app-v1.9.20`）。
+失败上报 ×2、僵尸消息上报）。1.9.20 已推送。
 
+### 🎯 1.9.21：answer 消失的**终极根因**修掉（1.9.20 事件日志首次出手即定案）
+
+进房诊断 `events` 抓到铁证（江南房主端）：
+
+```
+answer 端处理 rtc-offer 失败：Failed to set local answer sdp:
+Called in wrong state: stable
+```
+
+根因：`negotiate()` / `answerTo()` 把 localDescription **设了两次**——
+第一次原始 SDP、第二次整形（opus 参数）后的 SDP。**answer 方的第二次非法**
+（PC 已回 stable），抛错被旧版 catch 吞掉 → answer 从未成功发出过 →
+自建协商上线以来**每一次都必然失败**，全靠 12~18s 超时回落 PeerJS。
+
+**修法**：整形提前到 `setLocalDescription` 之前、**只设一次**（两端一致）。
+
+修完预期：自建协商首次真正端到端工作——房主↔访客**几秒连上**，
+不再有 12~18s 超时、不再回落、不再产生僵尸。
+**回归**：404 项单测全绿（+2：两端各断言 `setLocalDescription` 只调一次）。
+1.9.21 已推送（tag `app-v1.9.21`）。
+
+### 📦 今天五个版本的"版本 → 内容"映射
 ### 📦 今天四个版本的"版本 → 内容"映射
 
 | 版本 | 内容 |
@@ -365,7 +387,10 @@ ICE 通了却 14 秒没有音频包（真单通）时，原实现拆腿重拨—
 | **1.9.18**（傍晚） | 凭据晚到自愈（`onIceUpgrade`，等凭据上限维持 2.5s——业主口径）、重拨留间隔（1.2s/3s）、房主信令掉线提示、`reconnect()` 重复挂监听修复、跨线路重试（routeAt 从任意线路起步） |
 | **1.9.19**（21:59） | **自建媒体协商**（房主↔访客走数据通道）+ ICE 探针（`pairs`/`gathering`）+ 上报改走信令/心跳驱动/上报器自愈 + 抢答护栏（`shouldCall`）+ 版本号修正（`currentVersion`）+ **删公共云兜底** |
 | **1.9.20**（22:52） | 自建协商四补丁：僵尸吞 offer / 迟到的 failed 覆盖已连接 / 异常静默→`onEvent` 上报 / 单通不再拆腿（3 秒低频复查）+ 防递归护栏 |
+| **1.9.21**（23:31） | **answer 消失的终极根因**：localDescription 设两次，answer 方第二次非法（`wrong state: stable`）每次必失败——整形提前、只设一次。自建协商首次真正可用 |
 | （服务器侧，随改随生效） | 自建信令 `signal.mjs`（9001，nginx 已切）、`alive_timeout` 60→180s、`user-quota` 12→**256**、后台面板整套移植（卡片/成员明细在线落库/每日汇总/自动刷新/生成时间）、信令消息追踪（临时） |
+
+（事件日志首战立功：1.9.20 加的 `events` 上线当晚就抓到上面的铁证。）
 
 测试基建：本日把 `engine-join-handshake.test.ts` 的固定 `sleep` 全部改为 `waitFor(条件)`
 轮询（慢机器/并行不再假失败）；新增 `tests/signal-routes.test.ts`、`tests/media-link.test.ts`
@@ -696,7 +721,7 @@ SFU 多档（simulcast）也有；但房主有硬编时只发**一档**，SFU �
 
 - 新增 `tests/game-room-code.test.ts`：6 位能进、老 4 位能进、5 位/7 位/字母不算码、首尾空白归一、邀请链接往返解析。
 - 新增视觉夹具 `tests/fixtures/game-join.html?code=<房号>&fill=1`：手输 6 位 / 链接带入 / 填完游戏 ID 三种状态可直接截图目检。
-- 全量用例 <!-- AUTO:TESTS -->402<!-- /AUTO:TESTS --> 项通过；`typecheck`、`build:web:pages`、`docs:check` 全绿。
+- 全量用例 <!-- AUTO:TESTS -->404<!-- /AUTO:TESTS --> 项通过；`typecheck`、`build:web:pages`、`docs:check` 全绿。
 
 ### 三、已知未修（单独排期，不在这版）
 
@@ -1227,7 +1252,7 @@ npm install                 # 安装依赖
 npm run dev                 # 本地开发服务器（网页）
 npm run tauri dev           # 桌面端开发模式（自动起 dev 服务器 + Tauri 窗口）
 npm run typecheck           # 类型检查
-npm test                    # 单元测试（<!-- AUTO:TESTS -->402<!-- /AUTO:TESTS --> 项，由 docs:sync 注入）
+npm test                    # 单元测试（<!-- AUTO:TESTS -->404<!-- /AUTO:TESTS --> 项，由 docs:sync 注入）
 npm run build:web:pages     # 构建静态网页到 dist-web
 npm run tauri build         # 本地出桌面安装包（更新签名需要环境变量，一般直接用 CI）
 npm run deploy:pages        # 手动部署网页到 Cloudflare Pages（复用本机 wrangler 凭据）
@@ -1323,7 +1348,7 @@ npm run signal:setup        # 绑定 Pages → 信令 Worker（service binding S
 - `.github/workflows/`：`release.yml`（云出包，`app-v*` 标签触发）、
   `readme-log.yml`（自动更新 README 提交列表，`[skip ci]`）
 - `tests/`：协议 / 握手 / 准入、屏幕共享（含调谐器与硬编预检）、猪圈、说话检测、定时器、
-  ICE、反馈、会话统计、音量上限、blake3 等，当前合计 <!-- AUTO:TESTS -->402<!-- /AUTO:TESTS --> 项
+  ICE、反馈、会话统计、音量上限、blake3 等，当前合计 <!-- AUTO:TESTS -->404<!-- /AUTO:TESTS --> 项
 - `scripts/`：`deploy-pages.mjs`（部署）、`publish-desktop.mjs`（桌面端更新源发布）、
   `pages-status.mjs`、`bump-version.mjs`（发版一键化）、`readme-log.mjs`（AUTO-LOG，含畸形自愈）、
   `docs-sync.mjs` / `check-docs.mjs`（文档数字注入与校验）、`lib/blake3.mjs`

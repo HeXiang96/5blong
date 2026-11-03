@@ -29,8 +29,10 @@ class FakePc {
   async createAnswer() {
     return { type: "answer", sdp: "ANSWER" };
   }
+  setLocalDescriptionCalls = 0;
   async setLocalDescription(desc: { type: string; sdp: string }) {
     this.localDescription = desc;
+    this.setLocalDescriptionCalls += 1;
   }
   async setRemoteDescription(desc: { type: string; sdp: string }) {
     this.remoteDescription = desc;
@@ -266,5 +268,56 @@ describe("协商失败不再无声（2026-11-03 answer 消失查了一晚）", (
     await link.handle({ t: "rtc-offer", sdp: "LATE" });
     await flush();
     expect(events.some((e) => e.includes("已关闭"))).toBe(true);
+  });
+});
+
+describe("本地描述只设一次（2026-11-03 answer 消失的终极根因）", () => {
+  /* 原实现在 negotiate/answerTo 里把 localDescription 设两次：
+   * 第一次原始 SDP、第二次整形后的 SDP。answer 方的第二次抛
+   * "Called in wrong state: stable"——自建协商上线以来每次必失败
+   * （江南端 events 铁证），只能靠超时回落 PeerJS。
+   * 修法：整形提前到 setLocalDescription 之前，只设一次。 */
+  it("应答方：处理 offer 全程只 setLocalDescription 一次", async () => {
+    const pcs: FakePc[] = [];
+    const pipe = makePipe();
+    const link = new MediaLink({
+      role: "answer",
+      pipe,
+      stream,
+      iceServers: () => [],
+      createPc: () => {
+        const pc = new FakePc();
+        pcs.push(pc);
+        return pc as unknown as RTCPeerConnection;
+      },
+    });
+
+    await link.handle({ t: "rtc-offer", sdp: "OFFER" });
+    await flush();
+
+    expect(pcs[0]!.setLocalDescriptionCalls).toBe(1);
+    expect((pipe as { sent: RtcSignal[] }).sent.some((m) => m.t === "rtc-answer")).toBe(true);
+  });
+
+  it("发起方：start 全程只 setLocalDescription 一次", async () => {
+    const pcs: FakePc[] = [];
+    const pipe = makePipe();
+    const link = new MediaLink({
+      role: "offer",
+      pipe,
+      stream,
+      iceServers: () => [],
+      createPc: () => {
+        const pc = new FakePc();
+        pcs.push(pc);
+        return pc as unknown as RTCPeerConnection;
+      },
+    });
+
+    await link.start();
+    await flush();
+
+    expect(pcs[0]!.setLocalDescriptionCalls).toBe(1);
+    expect((pipe as { sent: RtcSignal[] }).sent.some((m) => m.t === "rtc-offer")).toBe(true);
   });
 });

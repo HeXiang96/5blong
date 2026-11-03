@@ -131,10 +131,18 @@ export class MediaLink {
 
   private async negotiate(): Promise<void> {
     const pc = this.buildPc();
-    await pc.setLocalDescription(await pc.createOffer());
-    const sdp = this.transform(pc.localDescription?.sdp ?? "");
-    // 本地描述用整形后的 SDP 再设一次：createOffer 的原始串不带我们的 opus 参数
-    if (sdp) await pc.setLocalDescription({ type: "offer", sdp });
+    /*
+     * 整形必须在 setLocalDescription **之前**，且只设一次（2026-11-03 实锤）。
+     *
+     * 原实现先设原始 offer、把整形后的 SDP 再设一遍——answer 方的第二次
+     * setLocalDescription(answer) 抛 "Called in wrong state: stable"，
+     * 自建协商上线以来**每一次都必失败**（江南端 events 铁证），只能靠
+     * 12~18s 超时回落 PeerJS。offer 方的第二次恰好合法（重新应用 offer），
+     * 所以从没报错——但两边行为必须一致，一并修。
+     */
+    const offer = await pc.createOffer();
+    const sdp = this.transform(offer.sdp ?? "");
+    await pc.setLocalDescription({ type: "offer", sdp });
     this.pipe.send({ t: "rtc-offer", sdp });
     this.armAnswerTimer();
   }
@@ -144,14 +152,17 @@ export class MediaLink {
      * 收到 offer 就重建 PC：发起方重发（上一轮 answer 丢了）时，
      * 旧 PC 上直接 setRemoteDescription 会进入 renegotiation，状态更难预测。
      * 重建是幂等的、代价只有一次候选收集。
+     *
+     * 整形提前到 setLocalDescription 之前、只设一次（见 negotiate 的说明）——
+     * 原实现设两次，第二次在 stable 状态非法，answer 从未成功发出过。
      */
     this.teardownPc();
     const pc = this.buildPc();
     await pc.setRemoteDescription({ type: "offer", sdp: offerSdp });
     await this.flushPendingCandidates();
-    await pc.setLocalDescription(await pc.createAnswer());
-    const sdp = this.transform(pc.localDescription?.sdp ?? "");
-    if (sdp) await pc.setLocalDescription({ type: "answer", sdp });
+    const answer = await pc.createAnswer();
+    const sdp = this.transform(answer.sdp ?? "");
+    await pc.setLocalDescription({ type: "answer", sdp });
     this.pipe.send({ t: "rtc-answer", sdp });
   }
 
