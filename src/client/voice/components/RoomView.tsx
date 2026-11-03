@@ -62,7 +62,7 @@ const IDLE_MOOD_MS = 180_000;
 import type { SceneThemeId } from "../scene-theme";
 import type { LucideIcon } from "lucide-react";
 import { MonitorUp } from "lucide-react";
-import { SHARE_QUALITY_PRESETS, autoTransportFor, perViewerBitrate } from "../screen-share";
+import { SHARE_QUALITY_PRESETS, autoTransportFor, perViewerBitrate, weightedSubscribers } from "../screen-share";
 import { isTauriRuntime, listLoopbackTargets, listShareWindows } from "../loopback";
 
 /**
@@ -1460,8 +1460,9 @@ export function RoomView({
             isSharer={selfSharing}
             onClose={() => {
               setTvExpanded(false);
-              // 关灯箱退回缩略档：剩下的画面只是小幕布上的缩略图
-              onWatchScreen("preview");
+              // 关灯箱就退回"不看"：停止订阅、释放房主上行。
+              // 幕布上留的是共享者开播时截的封面（见 PenTV 的 showPoster）。
+              onWatchScreen("off");
             }}
           />
           </ErrorBoundary>
@@ -1810,8 +1811,10 @@ export function RoomView({
               </div>
               <p className="vx-share-menu-hint">
                 {(() => {
-                  const decision = autoTransportFor(shareTransport, members.length);
+                  // 与真正发布时同一套算法（use-voice 里也是这个口径）：
+                  // 开始共享这一刻还没人点开看，所以只按"挂着的人 × 0.1"估。
                   const viewers = Math.max(0, members.length - 1);
+                  const decision = autoTransportFor(shareTransport, weightedSubscribers(0, viewers));
                   if (decision.transport === "sfu") {
                     return `将走转发 · ${viewers} 位观众 · 不占你家上行`;
                   }

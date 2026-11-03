@@ -181,6 +181,47 @@ html[data-daypart="dusk"] .vx-fire-glow {
   background: #000;
 }
 
+/*
+ * 静止封面（2026-11-03）：观众不点开就不拉流，幕布上只剩共享者截的这一帧。
+ * 压暗一点，和"真的在播"区分开——亮度和那道扫描线是唯一的线索，
+ * 太亮会让人以为画面卡住了。
+ */
+.vx-screen-poster {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  filter: brightness(0.82) saturate(0.95);
+}
+
+/* 封面上的提示：让人知道"这块屏可以点" */
+.vx-screen-hint {
+  position: absolute;
+  left: 50%;
+  bottom: 9%;
+  transform: translateX(-50%);
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  line-height: 1.5;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  color: #fff7ea;
+  background: rgba(20, 14, 8, 0.62);
+  backdrop-filter: blur(3px);
+  pointer-events: none;
+  animation: vx-hint-breathe 2.8s ease-in-out infinite;
+}
+@keyframes vx-hint-breathe {
+  0%, 100% { opacity: 0.78; }
+  50% { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .vx-screen-hint { animation: none; }
+}
+
 /* 雪花噪点（放大灯箱的"传输中断"态用） */
 .vx-tv-snow {
   position: absolute;

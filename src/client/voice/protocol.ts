@@ -488,6 +488,13 @@ export function isScreenViewPreference(value: unknown): value is ScreenViewPrefe
 /** 画面数据的传输方式：P2P 直连（默认，质量最好）或 SFU 转发（兜底）。 */
 export type ScreenShareTransport = "p2p" | "sfu";
 
+/**
+ * 封面字符串长度上限（字符，含 data URL 前缀）。
+ * 正常值约 20~35KB（宽 480 的 JPEG q0.55）；400K 是"异常但也不该炸"的护栏，
+ * 超过就当作没有封面——宁可暗屏，也不让一条畸形消息把全房 DOM 拖死。
+ */
+export const POSTER_MAX_CHARS = 400_000;
+
 export interface ScreenShareState {
   active: boolean;
   /** 共享者的成员 id（掉线/退出由房主清理）。 */
@@ -514,6 +521,16 @@ export interface ScreenShareState {
    * 缺省 = 旧版本房主，不显示层信息。
    */
   quality?: "hd720" | "hd720p30" | "fhd1080" | "fhd1080p30";
+  /**
+   * 静止封面（data:image/jpeg;base64,...），共享开始时由**共享者**截一帧广播。
+   *
+   * 为什么需要它（2026-11-03）：观众默认不再订阅画面（省一路解码 + 省房主上行），
+   * 但幕布不能是黑的——用户不知道在共享什么，就不会去点。封面只传一次
+   * （宽 480 的 JPEG，约 15~25KB），此后一点流量都不走。
+   *
+   * 缺省 = 旧版本房主，观众端退回"暗屏 + 正在共享"的占位。
+   */
+  poster?: string;
 }
 
 /** 校验从线上收到的屏幕共享状态；形状不对就丢弃。 */
@@ -544,6 +561,13 @@ export function parseScreenShareState(input: unknown): ScreenShareState | null {
     raw["quality"] === "fhd1080p30"
       ? { quality: raw["quality"] }
       : {}),
+    // 封面来自网络，必须卡死：只认 jpeg data URL 且限制长度。
+    // 不这么做的话，一条超长字符串就能把每个成员的 DOM 拖死（幕布是常驻元素）。
+    ...(typeof raw["poster"] === "string" &&
+    raw["poster"].startsWith("data:image/jpeg") &&
+    raw["poster"].length <= POSTER_MAX_CHARS
+      ? { poster: raw["poster"] }
+      : {}),
   };
 }
 
@@ -559,6 +583,8 @@ export interface ScreenSharePublication {
   simulcast?: boolean;
   /** 发布档位（订阅端据实收分辨率推算订阅层）。 */
   quality?: "hd720" | "hd720p30" | "fhd1080" | "fhd1080p30";
+  /** 静止封面；非房主共享时随申报转给房主，由房主并进广播状态（见 ScreenShareState.poster）。 */
+  poster?: string;
 }
 
 export function parseScreenSharePublication(input: unknown): ScreenSharePublication | null {
@@ -581,6 +607,11 @@ export function parseScreenSharePublication(input: unknown): ScreenSharePublicat
     raw["quality"] === "fhd1080" ||
     raw["quality"] === "fhd1080p30"
       ? { quality: raw["quality"] }
+      : {}),
+    ...(typeof raw["poster"] === "string" &&
+    raw["poster"].startsWith("data:image/jpeg") &&
+    raw["poster"].length <= POSTER_MAX_CHARS
+      ? { poster: raw["poster"] }
       : {}),
   };
 }

@@ -1646,6 +1646,7 @@ export class VoiceMesh {
             transport: pub.transport,
             ...(pub.simulcast ? { simulcast: true } : {}),
             ...(pub.quality ? { quality: pub.quality } : {}),
+          ...(pub.poster ? { poster: pub.poster } : {}),
           },
           true,
         );
@@ -1958,7 +1959,7 @@ export class VoiceMesh {
    */
   private applyScreenWatch(peerId: string): void {
     if (this.screenShareState?.sharerId !== this.myId || !this.screenStream) return;
-    const state = this.screenWatch.get(peerId) ?? "preview";
+    const state = this.screenWatch.get(peerId) ?? "off";
     const existing = this.screenCalls.get(peerId);
     if (state === "off") {
       if (!existing) return;
@@ -1999,7 +2000,7 @@ export class VoiceMesh {
     let count = 0;
     for (const member of this.members.values()) {
       if (member.local) continue;
-      if ((this.screenWatch.get(member.id) ?? "preview") !== "off") count += 1;
+      if ((this.screenWatch.get(member.id) ?? "off") !== "off") count += 1;
     }
     return count;
   }
@@ -2215,6 +2216,7 @@ export class VoiceMesh {
           transport: pub.transport,
           ...(pub.simulcast ? { simulcast: true } : {}),
           ...(pub.quality ? { quality: pub.quality } : {}),
+          ...(pub.poster ? { poster: pub.poster } : {}),
         },
         true,
       );
@@ -3584,7 +3586,7 @@ export class VoiceMesh {
   private accountId: string | null = null;
   private screenWatch = new Map<string, ScreenWatchState>();
   /** 我自己作为观众时的观看状态。 */
-  private myScreenWatch: ScreenWatchState = "preview";
+  private myScreenWatch: ScreenWatchState = "off";
   /** 每条画面呼叫的发起时刻：用于回收"发出去了但一直没连上"的僵尸呼叫。 */
   private screenCallAt = new Map<string, number>();
   /** 每条 P2P 画面链路的自适应调谐器（按 peerId）——负责码率与降级阶梯。 */
@@ -3683,7 +3685,7 @@ export class VoiceMesh {
       this.screenCallAt.delete(peerId);
     }
     const viewer = this.members.get(peerId);
-    const watchState = this.screenWatch.get(peerId) ?? "preview";
+    const watchState = this.screenWatch.get(peerId) ?? "off";
     // 不看的人不拨号：这条是"真省上行"，比把码率调小更彻底
     if (watchState === "off") return;
     const isPreview = watchState === "preview";

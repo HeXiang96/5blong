@@ -21,6 +21,7 @@ import {
   RESOLUTION_LADDER,
   SHARE_QUALITY_PRESETS,
   autoTransportFor,
+  weightedSubscribers,
   boostScreenOfferSdp,
   capDegradeSteps,
   h264ProfileRank,
@@ -119,14 +120,39 @@ describe("RESOLUTION_LADDER（降级阶梯）", () => {
   });
 });
 
-describe("autoTransportFor（按人数自动选传输）", () => {
-  it("自动：观众 ≤2 走直连，3 位及以上走 SFU（2026-10-21 从 ≤4 收回）", () => {
-    // 每一路直连都是一份完整上行：4 个观众 × 8Mbps = 32Mbps，家用上行必爆
-    expect(autoTransportFor("auto", 1).transport).toBe("p2p"); // 0 位观众
-    expect(autoTransportFor("auto", 3).transport).toBe("p2p"); // 2 位观众
-    expect(autoTransportFor("auto", 4).transport).toBe("sfu"); // 3 位观众
-    expect(autoTransportFor("auto", 6).transport).toBe("sfu"); // 5 位观众
-    expect(autoTransportFor("auto", 8).transport).toBe("sfu"); // 7 位观众
+describe("weightedSubscribers（在看 vs 只是挂着）", () => {
+  it("watch 计 1、preview 计 0.1、off 不计", () => {
+    expect(weightedSubscribers(0, 0)).toBe(0);
+    expect(weightedSubscribers(3, 0)).toBe(3);
+    expect(weightedSubscribers(0, 10)).toBeCloseTo(1);
+    expect(weightedSubscribers(2, 5)).toBeCloseTo(2.5);
+  });
+
+  it("房主有硬编、放弃 simulcast 时，preview 也按满码率算（传 1）", () => {
+    expect(weightedSubscribers(0, 4, 1)).toBe(4);
+  });
+
+  it("负数被夹到 0，不会算出负权重", () => {
+    expect(weightedSubscribers(-1, -1)).toBe(0);
+  });
+});
+
+describe("autoTransportFor（按加权观看数自动选传输）", () => {
+  it("自动：加权 ≤2 走直连，超过才走 SFU", () => {
+    // 2026-11-03 从"房间人数"改成"加权观看数"：
+    //   5 人房只有 1 个人点开 → 加权 1 → 直连（原来看人数会判 4，强行走转发）
+    //   3 个人都在满屏看   → 加权 3 → 转发
+    // 阈值 2 没变，它来自"家用上行能扛几路满码率"的经验值。
+    expect(autoTransportFor("auto", 0).transport).toBe("p2p");
+    expect(autoTransportFor("auto", 2).transport).toBe("p2p");
+    expect(autoTransportFor("auto", 2.1).transport).toBe("sfu");
+    expect(autoTransportFor("auto", 3).transport).toBe("sfu");
+    expect(autoTransportFor("auto", 12).transport).toBe("sfu");
+  });
+
+  it("手动选择永远优先于自动判断", () => {
+    expect(autoTransportFor("p2p", 99).transport).toBe("p2p");
+    expect(autoTransportFor("sfu", 0).transport).toBe("sfu");
   });
 
   it("30fps 档位的码率上限低于同分辨率 60fps 档", () => {

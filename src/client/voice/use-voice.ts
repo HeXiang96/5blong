@@ -23,6 +23,8 @@ import {
   pickerHints,
   preferredRidFor,
   probeHardwareEncoders,
+  weightedSubscribers,
+  capturePoster,
   publishScreen,
   randomSessionId,
   shareVideoConstraints,
@@ -171,9 +173,9 @@ export function useVoice() {
   /** 当前订阅所用的画质偏好（变化时才重订阅）。 */
   const shareSubModeRef = useRef<ScreenViewPreference>("auto");
   /** 上一次订阅时的观看档位（watch/preview）：变化要求重新订阅。 */
-  const shareSubWatchRef = useRef<"watch" | "preview" | "off">("preview");
+  const shareSubWatchRef = useRef<"watch" | "preview" | "off">("off");
   /** 当前观看档位（watch=灯箱打开 / preview=挂着 / off=不看）。 */
-  const [screenWatchState, setScreenWatchState] = useState<"watch" | "preview" | "off">("preview");
+  const [screenWatchState, setScreenWatchState] = useState<"watch" | "preview" | "off">("off");
   /** 共享者本机采集的流（自己电视的播放源；订阅流供其他端用）。 */
   const shareLocalStreamRef = useRef<MediaStream | null>(null);
   /** 最新成员数：开播时据此决定 P2P 还是 SFU（避免闭包里的陈旧值）。 */
@@ -773,9 +775,11 @@ export function useVoice() {
         if (desktopNative && !settings.shareAudio) {
           setNotice({ kind: "info", text: "只共享画面（要带声音可在设置里打开「共享时带上系统声音」）" });
         }
-        // 传输方式：显式选择优先，"自动"按观众数决定（1~2 人直连、3 人以上 SFU）——
-        // P2P 的上行是"码率 × 观众数"，3 人以上会把家用上行打爆（P1-11）。
-        const decision = autoTransportFor(settings.shareTransport, memberCountRef.current);
+        // 传输方式：显式选择优先；"自动"按**加权观看数**决定，不再按房间人数。
+        // 开始共享这一刻还没人点开（默认不看），所以先用"0 个在看"起算——
+        // 房间再大也先走直连，等真有人点开、加权值上去再评估。
+        const weighted = weightedSubscribers(0, Math.max(0, memberCountRef.current - 1));
+        const decision = autoTransportFor(settings.shareTransport, weighted);
         let transport = decision.transport;
         stepNoticeShown.current = false;
         /*
@@ -837,6 +841,14 @@ export function useVoice() {
         } else {
           sessionId = randomSessionId();
         }
+        /*
+         * 截一帧当幕布封面（2026-11-03）。
+         *
+         * 观众端默认不订阅画面了（"点开才拉流"），所以幕布上只剩这张静态图——
+         * 必须由共享者取好、随状态广播出去。1.2 秒内拿不到就放弃，
+         * 宁可暗屏也不能让人点了共享之后干等。
+         */
+        const poster = await capturePoster(stream);
         const ok = engine.requestScreenShare(
           {
             sessionId,
@@ -848,6 +860,7 @@ export function useVoice() {
             // 订阅端据此把"实收分辨率"换算成订阅层（f/h/q）显示在灯箱上
             quality,
             ...(simulcast ? { simulcast: true } : {}),
+            ...(poster ? { poster } : {}),
           },
           transport === "p2p" ? stream : undefined,
           quality,
@@ -1000,7 +1013,10 @@ export function useVoice() {
     demoAutoStarted.current = true;
     void (async () => {
       try {
-        const decision = autoTransportFor(settings.shareTransport, memberCountRef.current);
+        const decision = autoTransportFor(
+          settings.shareTransport,
+          weightedSubscribers(0, Math.max(0, memberCountRef.current - 1)),
+        );
         let transport = decision.transport;
         let sessionId: string;
         let simulcast = false;

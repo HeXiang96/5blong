@@ -203,6 +203,14 @@ export function PenTV({ state, stream, stageWidth, stageHeight: stageH, stageBot
   );
 
   const showVideo = phase === "live" && stream && !snowing;
+  /*
+   * 没有画面流、但有封面 → 显示静止图（2026-11-03）。
+   *
+   * 观众默认不订阅画面（点开才拉流）：这时代码里根本没有 MediaStream，
+   * 幕布只剩共享者开播时截的那一帧。这比黑屏强得多——用户看得见在共享什么，
+   * 才知道值不值得点开；也省掉了每人一路 1080p 的持续解码。
+   */
+  const showPoster = phase === "live" && !snowing && !stream && Boolean(state?.poster);
 
   return (
     <>
@@ -229,6 +237,11 @@ export function PenTV({ state, stream, stageWidth, stageHeight: stageH, stageBot
             <span className="vx-screen-surface">
               {showVideo ? (
                 <video ref={videoRef} className="vx-tv-video" autoPlay playsInline muted />
+              ) : showPoster ? (
+                <>
+                  <img className="vx-screen-poster" src={state?.poster} alt="" draggable={false} />
+                  <span className="vx-screen-hint">点击观看</span>
+                </>
               ) : (
                 <span className="vx-screen-dark" />
               )}

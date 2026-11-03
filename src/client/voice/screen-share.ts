@@ -464,20 +464,39 @@ export function preferredRidFor(pref: ScreenViewPreference): "f" | "h" {
  * 有 14 Mbps，8 Mbps 档位摊到 4 路仍够；且直连画质明显优于绕境外的 SFU）。
  * 观众的显式选择永远优先，"auto" 才按人数决定。
  */
+/**
+ * 加权观众数：把"真的在看"和"只是挂着"分开算。
+ *
+ * 为什么不能直接用房间人数（2026-11-03 业主指出）：
+ *   5 人房里只有 1 个人点开看，按人数会被判成 4 个观众、强行走 SFU，
+ *   白花转发额度；反过来"3 个人都在看但房间是 4 人"也判断不出来。
+ *
+ * 权重（与引擎里三档观看状态一一对应）：
+ *   watch   = 1    收满码率
+ *   preview = 0.1  只收 simulcast 低层（约全码率 1/10）
+ *                  房主机器有硬编、放弃 simulcast 时没有分层，要传 1
+ *   off     = 0    完全不收——引擎会直接关掉那条呼叫，这是唯一真正释放上行的做法
+ */
+export function weightedSubscribers(watch: number, preview: number, previewWeight = 0.1): number {
+  return Math.max(0, watch) + Math.max(0, preview) * previewWeight;
+}
+
+const formatWeight = (n: number): string => (Number.isInteger(n) ? String(n) : n.toFixed(1));
+
 export function autoTransportFor(
   preference: "p2p" | "sfu" | "auto",
-  memberCount: number,
+  weightedViewers: number,
 ): { transport: "p2p" | "sfu"; reason: string } {
   if (preference === "p2p") return { transport: "p2p", reason: "你选了直连" };
   if (preference === "sfu") return { transport: "sfu", reason: "你选了 SFU 转发" };
-  const viewers = Math.max(0, memberCount - 1);
+  const w = Math.max(0, weightedViewers);
   /*
-   * 2026-10-21 从 ≤4 收到 ≤2（对齐 Piik 的端点出站配额思路）：
-   * 每一路直连都是一份完整上行。4 个观众按 1080p60 的 8Mbps 上限就是 32Mbps，
-   * 家用上行必炸，表现为"房主自己卡、观众全糊"。3 个观众起改走 SFU。
+   * 阈值仍是"2 路满码率"——这个数字来自家用上行会被打爆的经验值，别动。
+   * 变的是**分子**：不再是房间人数，而是按观看状态加权后的数。
+   * 于是"10 人房只有 1 个人点开看"会走直连，而"3 个人都在满屏看"会走转发。
    */
-  if (viewers <= 2) return { transport: "p2p", reason: `观众 ${viewers} 人，直连画质最好` };
-  return { transport: "sfu", reason: `观众 ${viewers} 人，直连上行会打爆，自动走 SFU` };
+  if (w <= 2) return { transport: "p2p", reason: `加权 ${formatWeight(w)} 路，直连画质最好` };
+  return { transport: "sfu", reason: `加权 ${formatWeight(w)} 路，直连上行会打爆，自动走 SFU` };
 }
 
 /** getDisplayMedia 选择器提示项（Chromium 支持；TS 类型未收录，运行时透传）。
@@ -2139,4 +2158,61 @@ export function createDemoStream(): MediaStream | null {
   // 画布停更时轨道静默；组件卸载不了 canvas，就挂个终结钩子
   stream.getVideoTracks()[0]?.addEventListener("ended", () => window.clearInterval(timer));
   return stream;
+}
+
+/**
+ * 从共享流里截一帧，压成小尺寸 JPEG data URL，当作"小幕布"的封面。
+ *
+ * 为什么由**共享者**截、而不是每个观众自己截（2026-11-03）：
+ *   观众默认不再订阅画面（省一路解码 + 省房主上行），既然没订阅就根本没画面可截。
+ *   所以封面必须在共享端一次性取好，跟着共享状态广播出去，之后零流量。
+ *
+ * 失败一律返回空串（调用方按"没有封面"处理，退回暗屏占位）——
+ * 取封面失败绝不能影响开播本身，这是硬约束：共享能开起来比封面好看重要得多。
+ */
+export async function capturePoster(stream: MediaStream, maxWidth = 480): Promise<string> {
+  if (typeof document === "undefined") return "";
+  const video = document.createElement("video");
+  // 不挂到 DOM 上也能解码；muted+playsInline 是为了让某些浏览器允许自动播放
+  video.muted = true;
+  video.playsInline = true;
+  video.srcObject = stream;
+  try {
+    await new Promise<void>((resolve, reject) => {
+      // 1.5 秒还没首帧就放弃（有些采集源要等窗口真的开始刷新）
+      const timer = window.setTimeout(() => reject(new Error("timeout")), 1500);
+      video.onloadeddata = () => {
+        window.clearTimeout(timer);
+        resolve();
+      };
+      video.onerror = () => {
+        window.clearTimeout(timer);
+        reject(new Error("video error"));
+      };
+      void video.play().catch(() => {
+        /* 自动播放被拦也照样可能已经解出首帧，由 onloadeddata 决定 */
+      });
+    });
+    // 等一帧真正画上去，否则 drawImage 可能取到全黑
+    await new Promise<void>((resolve) => {
+      if (typeof requestAnimationFrame === "function") requestAnimationFrame(() => resolve());
+      else window.setTimeout(resolve, 32);
+    });
+    const vw = video.videoWidth || maxWidth;
+    const vh = video.videoHeight || Math.round((maxWidth * 9) / 16);
+    if (vw <= 0 || vh <= 0) return "";
+    const scale = Math.min(1, maxWidth / vw);
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(2, Math.round(vw * scale));
+    canvas.height = Math.max(2, Math.round(vh * scale));
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return "";
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    // 0.55 是"看得出内容"和"别把信令撑大"之间的折中：480×270 约 20KB
+    return canvas.toDataURL("image/jpeg", 0.55);
+  } catch {
+    return "";
+  } finally {
+    video.srcObject = null;
+  }
 }
