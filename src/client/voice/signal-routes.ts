@@ -17,9 +17,17 @@
  * 表现是"同一个房号，彼此看不见"。所以这个改动必须和
  * 「强制更新到新版本」一起发，不能只放网页端。
  *
- * ⚠️ 第二条 `0.peerjs.com` 是公共云，和我们的服务器**不是同一个注册表**。
- * 它只在第一条彻底连不上时兜底（两边都连公共云才可能相遇），
- * 所以它是"总比进不去强"，不是"无缝切换"。别指望跨线路能互相发现。
+ * ⚠️ 2026-11-03 删除了公共云兜底（原第二条 `0.peerjs.com`）。
+ *
+ * 原因不是"公共云不能用"，而是**兜底到那里的人其实是三无用户**：
+ *   信令：能连上公共云 ✓
+ *   /ice：拿不到（API 在我们服务器上）→ 没有中继凭据
+ *   中继/账号/后台：全部失效
+ * 他只会以为自己建了一间房（702621 实测就是这样：整份访问日志 0 命中，
+ * 面板查无此房，排障一整天都在找错方向）。
+ *
+ * 现在只剩我们自己的服务器：连不上就**明确报错并重试**，而不是静默漂到一张空表上。
+ * 这就是 `routeAt` 仍保留的原因 —— 将来加国内备用节点时，轮换规则直接可用。
  */
 export interface SignalRoute {
   host: string;
@@ -29,12 +37,16 @@ export interface SignalRoute {
   label: string;
 }
 
-export const SIGNAL_ROUTES: SignalRoute[] = import.meta.env.DEV
-  ? [{ host: "0.peerjs.com", port: 443, secure: true, key: "peerjs", label: "peerjs-cloud" }]
-  : [
-      { host: "5blong.site", port: 443, secure: true, key: "peerjs", label: "own-hk" },
-      { host: "0.peerjs.com", port: 443, secure: true, key: "peerjs", label: "peerjs-cloud" },
-    ];
+export const SIGNAL_ROUTES: SignalRoute[] = [
+  /*
+   * 只有一条：我们自己的香港信令服务（nginx 的 /peerjs 反代到 127.0.0.1:9001，
+   * 进程叫 5blong-signal-node，代码在 server/src/signal.mjs）。
+   *
+   * DEV 也指向这里：本地 dev server 本来就连生产的账号/房间接口，
+   * 本地没有信令服务可用；而随机 id 不会和真实用户撞号。
+   */
+  { host: "5blong.site", port: 443, secure: true, key: "peerjs", label: "own-hk" },
+];
 
 /**
  * 从 `start` 起按 `attempt` 轮换线路（越界自动绕回）。

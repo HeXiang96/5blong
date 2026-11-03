@@ -32,7 +32,7 @@ describe("routeAt（信令线路轮换）", () => {
     expect(routeAt(0, 9, routes).label).toBe("peerjs-cloud");
   });
 
-  it("只有一条线路时（DEV 构建）永远返回它，不会绕成空", () => {
+  it("只有一条线路时（现在的生产配置）永远返回它，不会绕成空", () => {
     const single = [routes[0]!];
     expect(routeAt(5, 3, single).label).toBe("own-hk");
   });
