@@ -204,13 +204,16 @@ export function PenTV({ state, stream, stageWidth, stageHeight: stageH, stageBot
 
   const showVideo = phase === "live" && stream && !snowing;
   /*
-   * 没有画面流、但有封面 → 显示静止图（2026-11-03）。
+   * 没画面流时幕布就是暗的（2026-11-03 业主定）。
    *
-   * 观众默认不订阅画面（点开才拉流）：这时代码里根本没有 MediaStream，
-   * 幕布只剩共享者开播时截的那一帧。这比黑屏强得多——用户看得见在共享什么，
-   * 才知道值不值得点开；也省掉了每人一路 1080p 的持续解码。
+   * 曾经试过"共享者截一帧当封面"，放弃了：封面是把一张**来自网络**的图片塞进
+   * 常驻元素，长度能卡、解码后的尺寸卡不住（小文件也能解出巨图），
+   * 一条消息就能让整房卡死。收益只是"看得见在共享什么"，不值这个风险。
+   *
+   * 现在用 `state.label`（共享者那边的窗口标题）代替——纯文本、零解码、
+   * 本来就在协议里，说的也是同一件事。
    */
-  const showPoster = phase === "live" && !snowing && !stream && Boolean(state?.poster);
+  const showStandby = phase === "live" && !snowing && !stream;
 
   return (
     <>
@@ -237,13 +240,26 @@ export function PenTV({ state, stream, stageWidth, stageHeight: stageH, stageBot
             <span className="vx-screen-surface">
               {showVideo ? (
                 <video ref={videoRef} className="vx-tv-video" autoPlay playsInline muted />
-              ) : showPoster ? (
-                <>
-                  <img className="vx-screen-poster" src={state?.poster} alt="" draggable={false} />
-                  <span className="vx-screen-hint">点击观看</span>
-                </>
               ) : (
-                <span className="vx-screen-dark" />
+                <>
+                  <span className="vx-screen-dark" />
+                  {showStandby ? (
+                    /*
+                     * 待机态：暗屏 + 一行"点击观看" + 共享者那边的窗口标题。
+                     * 不给缩略图——观众没订阅就没有画面，而截图那条路
+                     * 会把"来自网络的图片"引进常驻 DOM，代价远超收益。
+                     */
+                    <span className="vx-screen-standby">
+                      <span className="vx-screen-play" aria-hidden="true" />
+                      <span className="vx-screen-hint">点击观看</span>
+                      {state?.label ? (
+                        <span className="vx-screen-label" title={state.label}>
+                          {state.label}
+                        </span>
+                      ) : null}
+                    </span>
+                  ) : null}
+                </>
               )}
               <span className="vx-tv-scan" />
             </span>

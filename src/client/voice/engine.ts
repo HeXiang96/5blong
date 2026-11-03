@@ -1646,7 +1646,6 @@ export class VoiceMesh {
             transport: pub.transport,
             ...(pub.simulcast ? { simulcast: true } : {}),
             ...(pub.quality ? { quality: pub.quality } : {}),
-          ...(pub.poster ? { poster: pub.poster } : {}),
           },
           true,
         );
@@ -2216,7 +2215,6 @@ export class VoiceMesh {
           transport: pub.transport,
           ...(pub.simulcast ? { simulcast: true } : {}),
           ...(pub.quality ? { quality: pub.quality } : {}),
-          ...(pub.poster ? { poster: pub.poster } : {}),
         },
         true,
       );

@@ -24,7 +24,6 @@ import {
   preferredRidFor,
   probeHardwareEncoders,
   weightedSubscribers,
-  capturePoster,
   publishScreen,
   randomSessionId,
   shareVideoConstraints,
@@ -841,14 +840,6 @@ export function useVoice() {
         } else {
           sessionId = randomSessionId();
         }
-        /*
-         * 截一帧当幕布封面（2026-11-03）。
-         *
-         * 观众端默认不订阅画面了（"点开才拉流"），所以幕布上只剩这张静态图——
-         * 必须由共享者取好、随状态广播出去。1.2 秒内拿不到就放弃，
-         * 宁可暗屏也不能让人点了共享之后干等。
-         */
-        const poster = await capturePoster(stream);
         const ok = engine.requestScreenShare(
           {
             sessionId,
@@ -860,7 +851,6 @@ export function useVoice() {
             // 订阅端据此把"实收分辨率"换算成订阅层（f/h/q）显示在灯箱上
             quality,
             ...(simulcast ? { simulcast: true } : {}),
-            ...(poster ? { poster } : {}),
           },
           transport === "p2p" ? stream : undefined,
           quality,

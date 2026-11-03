@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>幕布待机态（观众未点开）</title>
+<link rel="stylesheet" href="/src/client/voice/styles.css">
+<link rel="stylesheet" href="/src/client/voice/pen-tv.css">
+<style>
+  body {
+    margin: 0; min-height: 100vh; display: grid; place-items: center;
+    background: #f7ecd9; font-family: system-ui, "Microsoft YaHei", sans-serif;
+  }
+  .stage { width: 620px; display: grid; gap: 18px; }
+  .frame-demo { width: 560px; justify-self: center; }
+  .cap { text-align: center; font-size: 12px; color: #8a7a63; }
+</style>
+</head>
+<body>
+  <div class="stage">
+    <div class="frame-demo">
+      <button class="vx-screen-frame" type="button" style="cursor: pointer;">
+        <span class="vx-screen-surface">
+          <span class="vx-screen-dark"></span>
+          <span class="vx-screen-standby">
+            <span class="vx-screen-play" aria-hidden="true"></span>
+            <span class="vx-screen-hint">点击观看</span>
+            <span class="vx-screen-label">腾讯会议 — 周会 11-03</span>
+          </span>
+          <span class="vx-tv-scan"></span>
+        </span>
+      </button>
+    </div>
+    <p class="cap">观众没点开时：暗屏 + 提示 + 共享的窗口名（不含任何图片）</p>
+  </div>
+</body>
+</html>
