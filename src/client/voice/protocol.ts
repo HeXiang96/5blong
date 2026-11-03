@@ -561,10 +561,10 @@ export function parseScreenShareState(input: unknown): ScreenShareState | null {
     raw["quality"] === "fhd1080p30"
       ? { quality: raw["quality"] }
       : {}),
-    // 封面来自网络，必须卡死：只认 jpeg data URL 且限制长度。
+    // 封面来自网络，必须卡死：只认 base64 jpeg data URL 且限制长度。
     // 不这么做的话，一条超长字符串就能把每个成员的 DOM 拖死（幕布是常驻元素）。
     ...(typeof raw["poster"] === "string" &&
-    raw["poster"].startsWith("data:image/jpeg") &&
+    raw["poster"].startsWith("data:image/jpeg;base64,") &&
     raw["poster"].length <= POSTER_MAX_CHARS
       ? { poster: raw["poster"] }
       : {}),
@@ -609,7 +609,7 @@ export function parseScreenSharePublication(input: unknown): ScreenSharePublicat
       ? { quality: raw["quality"] }
       : {}),
     ...(typeof raw["poster"] === "string" &&
-    raw["poster"].startsWith("data:image/jpeg") &&
+    raw["poster"].startsWith("data:image/jpeg;base64,") &&
     raw["poster"].length <= POSTER_MAX_CHARS
       ? { poster: raw["poster"] }
       : {}),

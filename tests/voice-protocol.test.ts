@@ -5,6 +5,7 @@ import {
   CODE_HINT,
   HOST_ID_PREFIX,
   MAX_MEMBERS,
+  POSTER_MAX_CHARS,
   ROOM_CODE_LEN,
   PUBLIC_WEB_BASE,
   buildInviteUrl,
@@ -21,6 +22,8 @@ import {
   parseHostMessage,
   parseInviteHash,
   parseJoinInput,
+  parseScreenSharePublication,
+  parseScreenShareState,
   randomIndex,
   randomToken,
   rejectText,
@@ -697,5 +700,80 @@ describe("带钥匙的邀请（私密房一键直达）", () => {
       hostId: "5b-h-302114",
       roomKey: "abcdefghijklmnopqrstuvwx",
     });
+  });
+});
+
+/*
+ * 幕布封面是**从网络收到的不受信字符串**，而且会被塞进 <img src>。
+ * 幕布还是常驻元素（每个成员每次都渲染），所以一个畸形值能同时打中整房。
+ * 这几条测试是那个校验的守门人——改动解析逻辑时先让它们过。
+ */
+describe("屏幕共享封面（网络输入必须卡死）", () => {
+  const base = {
+    active: true,
+    sharerId: "5b-m-1",
+    sessionId: "s1",
+    trackName: "video",
+    startedAt: 1,
+    transport: "p2p",
+  };
+  const JPEG = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQ==";
+
+  it("保留合法的 base64 JPEG", () => {
+    expect(parseScreenShareState({ ...base, poster: JPEG })?.poster).toBe(JPEG);
+  });
+
+  it("丢弃所有非「base64 JPEG」的写法", () => {
+    const bad = [
+      "data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=", // SVG 能带脚本
+      "data:image/png;base64,iVBORw0KGgo=", // 格式不对
+      "data:image/jpeg,<svg onload=alert(1)>", // 非 base64 变体
+      "javascript:alert(1)",
+      "https://evil.example/x.jpg",
+      "blob:https://5blong.site/1234",
+      "",
+    ];
+    for (const poster of bad) {
+      expect(parseScreenShareState({ ...base, poster })?.poster).toBeUndefined();
+    }
+  });
+
+  it("丢弃超长字符串（否则一条消息就能把全房的 DOM 拖死）", () => {
+    const huge = "data:image/jpeg;base64," + "A".repeat(POSTER_MAX_CHARS);
+    expect(huge.length).toBeGreaterThan(POSTER_MAX_CHARS);
+    expect(parseScreenShareState({ ...base, poster: huge })?.poster).toBeUndefined();
+  });
+
+  it("刚好等于上限仍然接受（不要把正常的大图卡掉）", () => {
+    const prefix = "data:image/jpeg;base64,";
+    const exact = prefix + "A".repeat(POSTER_MAX_CHARS - prefix.length);
+    expect(parseScreenShareState({ ...base, poster: exact })?.poster).toBe(exact);
+  });
+
+  it("没有封面时不留这个键（旧房主 / 截帧失败都走这条）", () => {
+    const st = parseScreenShareState({ ...base });
+    expect(st).not.toBeNull();
+    expect(Object.prototype.hasOwnProperty.call(st, "poster")).toBe(false);
+  });
+
+  it("非字符串一律不认（数字 / 对象 / 数组）", () => {
+    for (const poster of [123, { a: 1 }, [JPEG], null as unknown as string]) {
+      expect(parseScreenShareState({ ...base, poster })?.poster).toBeUndefined();
+    }
+  });
+
+  it("申报入口同样卡（非房主共享时房主会把它并进广播）", () => {
+    const pub = {
+      sessionId: "s1",
+      trackName: "video",
+      trackNameAudio: "",
+      label: "",
+      hasAudio: false,
+      transport: "p2p",
+    };
+    expect(parseScreenSharePublication({ ...pub, poster: JPEG })?.poster).toBe(JPEG);
+    expect(
+      parseScreenSharePublication({ ...pub, poster: "data:image/svg+xml;base64,PHN2Zz4=" })?.poster,
+    ).toBeUndefined();
   });
 });
