@@ -39,19 +39,23 @@ const SITE = (process.env.SITE_BASE || "https://5blong.site").replace(/\/+$/, ""
 /**
  * 安装包下载地址（2026-11-03 接阿里云 GA 全球加速）。
  *
- * 为什么清单和包分开两个域名：
- *   `latest.json` 只有几百字节，走直连 170~260ms 已经够了；
- *   安装包 7.5MB，走公网国际出口实测 0.45~9.9 MB/s **剧烈波动**
- *   （同一个文件、同一分钟，速度差 20 倍），晚高峰能拖到 25 秒。
- *   把 url 换成 dl 子域（解析到 GA 加速 IP，走阿里云骨干回源香港）
- *   实测稳定 17~19 MB/s，0.4 秒下完。
+ * ⚠️ **默认关闭（2026-11-03 17:20 事故后改的）**
  *
- * ⚠️ 必须是域名不能是 IP：证书是签给 `*.5blong.site` 的，
- * 用 IP 访问会证书不匹配，Tauri 的 updater 直接拒绝下载。
- * ⚠️ 只改下载 url，`latest.json` 本身仍在 SITE 下——客户端的 updater
- * endpoints 写死了 5blong.site，改那个要发版。
+ * 加速本身是有效的：国内实测 15~38MB/s，直连 0.45~11.5MB/s。
+ * 但 **Windows 的原生 TLS 栈（schannel）连不上 GA 的加速 IP**：
+ *   .NET:  "基础连接已经关闭: 发送时发生错误"
+ *   curl:  "schannel: failed to receive handshake, SSL/TLS connection failed"
+ *   openssl / Node / 浏览器: 正常（15~38MB/s）
+ * 而 Tauri 的 updater 在 Windows 上用的就是 native-tls（reqwest 默认后端），
+ * 于是所有客户端下载更新全部失败——这就是 1.9.14 → 1.9.15 那次事故。
+ *
+ * 所以现在是**显式开启**：只有确认客户端换了 rustls 并铺开之后，
+ * 才在 systemd 里设 `Environment=DL_BASE=https://dl.5blong.site`。
+ * 不设 = 走主域直连（慢，但任何客户端都能下）。
+ *
+ * 加速管道的其余部分（dl 的 nginx server 块、证书、DNS）都留着，随时可用。
  */
-const DL_SITE = (process.env.DL_BASE || "https://dl.5blong.site").replace(/\/+$/, "");
+const DL_SITE = (process.env.DL_BASE || "").replace(/\/+$/, "");
 const TARGET = "windows-x86_64";
 const DRY = process.argv.includes("--dry-run");
 const FORCE = process.argv.includes("--force");
@@ -237,7 +241,7 @@ function probeSelfReady() {
 }
 
 async function resolveDownloadBase() {
-  if (DL_SITE === SITE) return { base: SITE, from: "未配置加速域名" };
+  if (!DL_SITE || DL_SITE === SITE) return { base: SITE, from: "未启用加速（默认）" };
   const r = await probeSelfReady();
   if (r.ok) return { base: DL_SITE, from: "本机已就绪（证书 + nginx）" };
   log("warn", `加速域名未就绪（${r.detail}），本次退回主域直连`);
