@@ -34,7 +34,18 @@ import { Readable } from "node:stream";
 import os from "node:os";
 import path from "node:path";
 
-const DEST = process.env.WEB_DIR || "/var/www/5blong";
+/**
+ * 应用产物落在 `app/` 子目录，**不是站根**（2026-11-03 真踩过一次）。
+ *
+ * 站根 `/var/www/5blong` 现在是介绍页（5blong.site），apps 在 web 子域。
+ * 早期这个常量指向站根，结果定时器每 5 分钟就把应用的 index.html 盖到介绍页上，
+ * 用户打开 5blong.site 看到的是房间界面而不是介绍页。
+ *
+ * 现在的目录分工：
+ *   /var/www/5blong/        介绍页 + desktop/（更新源）
+ *   /var/www/5blong/app/    应用（web.5blong.site 的 root）
+ */
+const DEST = process.env.WEB_DIR || "/var/www/5blong/app";
 const STATE = process.env.WEB_STATE || "/data/5blong/web-sha";
 const OWNER = process.env.WEB_OWNER || "www-data:www-data";
 const REPO = "HeXiang96/5blong";
@@ -134,7 +145,9 @@ function inspect(archive) {
 async function main() {
   // 下载落在系统临时目录：不污染静态站目录，dry-run 也不留垃圾。
   const tmp = path.join(os.tmpdir(), `5blong-dist-web-${process.pid}.tar.gz`);
-  const next = DEST + ".next";
+  // 暂存目录必须放在站点根之外：放根里会被 nginx 暴露成 /app.next/，
+  // 而且介绍页那次 rsync --delete 会顺手把它删掉（半途失败）。
+  const next = process.env.WEB_STAGING || "/var/www/.5blong-app-staging";
 
   if (!(await grab(tmp))) return;
   const sha = sha256File(tmp);
