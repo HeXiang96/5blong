@@ -1922,8 +1922,15 @@ export class VoiceMesh {
    * 三档的意义在**共享者的上行**：off 会把那一路直接关掉（真省带宽），
    * preview 只发低码率缩略（扫一眼够用），watch 才是满码率。
    */
-  setScreenWatch(state: ScreenWatchState): void {
-    if (this.myScreenWatch === state) return;
+  /**
+   * 观众告诉共享者"我看不看"。
+   *
+   * `force` 是给"共享刚开始"用的：默认状态就是 off，而这里在值没变时直接
+   * return —— 新进房的人永远不会发出第一条 off，共享者那边查不到记录，
+   * 只能按默认值（preview）给每个人都推一路流，"默认不看"就白做了。
+   */
+  setScreenWatch(state: ScreenWatchState, force = false): void {
+    if (!force && this.myScreenWatch === state) return;
     this.myScreenWatch = state;
     const sharer = this.screenShareState?.sharerId;
     if (!sharer || sharer === this.myId) return;
@@ -1958,7 +1965,7 @@ export class VoiceMesh {
    */
   private applyScreenWatch(peerId: string): void {
     if (this.screenShareState?.sharerId !== this.myId || !this.screenStream) return;
-    const state = this.screenWatch.get(peerId) ?? "off";
+    const state = this.screenWatch.get(peerId) ?? "preview";
     const existing = this.screenCalls.get(peerId);
     if (state === "off") {
       if (!existing) return;
@@ -1999,7 +2006,7 @@ export class VoiceMesh {
     let count = 0;
     for (const member of this.members.values()) {
       if (member.local) continue;
-      if ((this.screenWatch.get(member.id) ?? "off") !== "off") count += 1;
+      if ((this.screenWatch.get(member.id) ?? "preview") !== "off") count += 1;
     }
     return count;
   }
@@ -2317,6 +2324,15 @@ export class VoiceMesh {
     if (this.hosting && broadcast) {
       this.broadcastHost({ t: "screen-share", state });
       if (state && !previous) {
+        /*
+         * 新一场开始：上一场的观看记录全部作废（2026-11-03）。
+         *
+         * 不清的话，上一场点开过的人在 startScreenCalls 里会被**立刻**按
+         * watch 的满码率拨一路，而他这一场根本没点开——白白多推一路 1080p，
+         * 要等到他上报 off 才收掉。清空之后一律按"未知 = preview"起步，
+         * 再由各自的真实状态收敛。
+         */
+        this.screenWatch.clear();
         // 支架砸地（立即）+ 开机（落地 ~0.9s 后）
         this.emitSound("tv-land", state.sharerId);
         this.timers.after(900, () => {
@@ -2835,6 +2851,23 @@ export class VoiceMesh {
         if (message.state?.sharerId === this.myId && !prev) this.startScreenCalls();
         if (!message.state && prev?.sharerId === this.myId) this.closeScreenCalls();
         if (!message.state) this.viewerScreenPrefs.clear();
+        /*
+         * 新共享开始（或共享者换了人）：无条件把自己的状态告诉共享者（2026-11-03）。
+         *
+         * 两个原因，都会真出问题：
+         * 1. 默认是 off，而 setScreenWatch 在"值没变"时不发送 —— 新进房的人
+         *    永远发不出第一条 off，共享者查不到记录，只能按 preview 给每个人
+         *    推一路流，"默认不看"等于没做。
+         * 2. 上一场看过的人本地还是 watch —— 这一场他根本没点开，
+         *    不该以 watch 的身份占着共享者的上行。所以顺便重置成 off。
+         *
+         * 只在共享者变化时触发，不会随每次状态重播刷消息。
+         */
+        const sharerNow = message.state?.sharerId;
+        if (sharerNow && sharerNow !== this.myId && sharerNow !== prev?.sharerId) {
+          this.myScreenWatch = "off";
+          this.setScreenWatch("off", true);
+        }
         this.events.screenShare?.(message.state);
         break;
       }
@@ -3683,7 +3716,7 @@ export class VoiceMesh {
       this.screenCallAt.delete(peerId);
     }
     const viewer = this.members.get(peerId);
-    const watchState = this.screenWatch.get(peerId) ?? "off";
+    const watchState = this.screenWatch.get(peerId) ?? "preview";
     // 不看的人不拨号：这条是"真省上行"，比把码率调小更彻底
     if (watchState === "off") return;
     const isPreview = watchState === "preview";
@@ -3826,7 +3859,12 @@ export class VoiceMesh {
 
   /** 观众数变化：对已建立的画面连接重新分摊码率（各自的降级档位保持不变）。 */
   private retuneScreenSenders(): void {
-    const viewers = Math.max(1, this.members.size - 1);
+    /*
+     * 按**实际在看的人数**分摊，不再按房间人数（2026-11-03）。
+     * 名单里有 10 个人、只有 2 个点开时，按 10 分摊等于每人白降一档画质；
+     * tuners 里本来就只有在看的那几位（不看的根本不建发送链）。
+     */
+    const viewers = Math.max(1, this.watcherCount());
     const maxBitrate = perViewerBitrate(this.screenQuality, viewers);
     for (const tuner of this.screenTuners.values()) tuner.retune(maxBitrate);
   }
