@@ -1,3 +1,5 @@
+declare const __APP_VERSION__: string;
+
 import { useEffect, useState, type FormEvent } from "react";
 import {
   Copy,
@@ -198,11 +200,15 @@ export function LandingView({
   const [themeMenuOpen, setThemeMenuOpen] = useState(false);
   const viewWidth = typeof window !== "undefined" ? window.innerWidth : 1000;
 
-  // 桌面端显示当前版本号（网页版始终是最新部署，不显示）。
+  // 版本号：桌面端问 Tauri（运行时真实版本）；网页版用构建时注入的
+  // __APP_VERSION__——网页"部署即最新"，显示的其实是"这次部署带的是哪一版"，
+  // 业主用它判断网页端是不是已经是最新的了（2026-11-03 反馈看不了版本号）。
   // 动态导入 @tauri-apps/api/app：它与 UpdateOverlay 共用该模块，
   // 若这里静态导入会让那边的动态导入失效（构建警告 INEFFECTIVE_DYNAMIC_IMPORT），
-  // 且网页端根本用不到——按需加载才不白占首屏包。
-  const [appVersion, setAppVersion] = useState<string | null>(null);
+  // 按需加载才不白占首屏包。
+  const [appVersion, setAppVersion] = useState<string | null>(
+    typeof __APP_VERSION__ === "string" ? __APP_VERSION__ : null,
+  );
   const isDesktop = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
   useEffect(() => {
     if (!isDesktop) return;

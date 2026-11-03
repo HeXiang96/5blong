@@ -178,7 +178,12 @@
   }
   .plat .tag.soon { background: #efe7d9; color: var(--ink-3); }
   .plat p { margin: 0; color: var(--ink-2); font-size: 14px; flex: 1; }
-  .plat .act { margin-top: 6px; }
+  .plat .act { margin-top: 6px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  /* 加速域名偶尔不通时的退路；小字，不抢主按钮 */
+  .dl-alt { font-size: 12px; color: var(--ink-3); text-decoration: underline; text-underline-offset: 2px; }
+  .dl-alt:hover { color: var(--ink-2); }
+  /* 页脚版本号：从更新清单里读，不用每次发版改静态页 */
+  .ver { margin-left: 8px; font-variant-numeric: tabular-nums; opacity: .55; }
   .plat.off { opacity: .72; }
 
   /* ---------------------------------------------------------------- FAQ */
@@ -306,7 +311,10 @@
         <article class="plat">
           <h3>Windows <span class="tag">推荐</span></h3>
           <p>免管理员安装，托盘常驻，一键把电脑里的声音也分享出来。</p>
-          <div class="act"><a class="btn btn-ghost btn-sm" href="/desktop/5blong_latest_x64-setup.exe" data-latest>下载安装包</a></div>
+          <div class="act">
+            <a class="btn btn-ghost btn-sm" href="/desktop/5blong_latest_x64-setup.exe" data-latest>下载安装包</a>
+            <a class="dl-alt" href="/desktop/5blong_latest_x64-setup.exe" data-latest-alt>下载慢？换直连</a>
+          </div>
         </article>
         <article class="plat">
           <h3>网页版 <span class="tag">无需安装</span></h3>
@@ -361,7 +369,7 @@
 
 <footer>
   <div class="wrap foot">
-    <div>© 2026 5blong · 低延迟语音房</div>
+    <div>© 2026 5blong · 低延迟语音房 <span class="ver" data-version></span></div>
     <div>
       <a href="https://github.com/HeXiang96/5blong" target="_blank" rel="noopener">开源仓库</a>
       <span style="opacity:.4;margin:0 10px;">/</span>
@@ -379,12 +387,26 @@
    */
   (function () {
     var link = document.querySelector("[data-latest]");
+    var alt = document.querySelector("[data-latest-alt]");
     if (!link) return;
     fetch("/desktop/latest.json", { cache: "no-store" })
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (m) {
         var p = m && m.platforms && (m.platforms["windows-x86_64-nsis"] || m.platforms["windows-x86_64"]);
-        if (p && p.url) link.href = p.url;
+        if (!p || !p.url) return;
+        /*
+         * 网页下载走加速域名 dl（浏览器 TLS 栈能连，实测 15~38MB/s）；
+         * 客户端自动更新仍走主域直连——它用的 rustls 连不上这个加速 IP，
+         * 两边各走各的，谁也不拖累谁。文件名从清单里取，发版不用改这张页。
+         */
+        if (m.version) {
+          var ver = document.querySelector("[data-version]");
+          if (ver) ver.textContent = "v" + m.version;
+        }
+        var name = String(p.url).split("/").pop();
+        if (!/^5blong_[0-9.]+_x64-setup.exe$/.test(name)) return;
+        link.href = "https://dl.5blong.site/desktop/" + name;
+        if (alt) alt.href = "https://5blong.site/desktop/" + name;
       })
       .catch(function () {});
   })();

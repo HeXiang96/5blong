@@ -37,25 +37,27 @@ const DEST = process.env.DESKTOP_DIR || "/var/www/5blong/desktop";
 const SITE = (process.env.SITE_BASE || "https://5blong.site").replace(/\/+$/, "");
 
 /**
- * 安装包下载地址（2026-11-03 接阿里云 GA 全球加速）。
+ * **网页下载专用**的加速域名（阿里云 GA），写进 `latest-web.json`。
  *
- * ⚠️ **默认关闭（2026-11-03 17:20 事故后改的）**
+ * 2026-11-03 实测的 TLS 兼容矩阵（同一分钟、同一个包）：
  *
- * 加速本身是有效的：国内实测 15~38MB/s，直连 0.45~11.5MB/s。
- * 但 **Windows 的原生 TLS 栈（schannel）连不上 GA 的加速 IP**：
- *   .NET:  "基础连接已经关闭: 发送时发生错误"
- *   curl:  "schannel: failed to receive handshake, SSL/TLS connection failed"
- *   openssl / Node / 浏览器: 正常（15~38MB/s）
- * 而 Tauri 的 updater 在 Windows 上用的就是 native-tls（reqwest 默认后端），
- * 于是所有客户端下载更新全部失败——这就是 1.9.14 → 1.9.15 那次事故。
+ *   网页端 / Edge      BoringSSL    ✅ 能下
+ *   Node / openssl     OpenSSL      ✅ 200，15~38MB/s
+ *   curl / .NET        schannel     ❌ 握手失败
+ *   客户端 updater      rustls       ❌ error sending request（业主本机实测）
  *
- * 所以现在是**显式开启**：只有确认客户端换了 rustls 并铺开之后，
- * 才在 systemd 里设 `Environment=DL_BASE=https://dl.5blong.site`。
- * 不设 = 走主域直连（慢，但任何客户端都能下）。
+ * 结论：**GA 的加速 IP 只对浏览器系 TLS 栈友好**。所以拆成两份清单：
  *
- * 加速管道的其余部分（dl 的 nginx server 块、证书、DNS）都留着，随时可用。
+ *   latest.json       → 主域直连。**客户端 updater 只读这份**（任何版本都能下）
+ *   latest-web.json   → dl 加速。**只有介绍页的「下载安装包」按钮读它**
+ *
+ * 这是把"能加速的人"和"只能直连的人"分开，谁也不拖累谁：
+ * 浏览器点下载拿到 0.4 秒的体验，客户端自动更新永远走能用的那条路。
+ *
+ * ⚠️ 别把这两个文件搞反。改回一份清单就意味着一刀切，
+ * 1.9.14→1.9.15 那次全员更新失败就是这么来的。
  */
-const DL_SITE = (process.env.DL_BASE || "").replace(/\/+$/, "");
+const DL_SITE = (process.env.DL_BASE || "https://dl.5blong.site").replace(/\/+$/, "");
 const TARGET = "windows-x86_64";
 const DRY = process.argv.includes("--dry-run");
 const FORCE = process.argv.includes("--force");
@@ -241,21 +243,20 @@ function probeSelfReady() {
 }
 
 /**
- * 两份清单各自的下载域名（2026-11-03 起按客户端能力分流）。
+ * 两份清单各自的下载域名。
  *
- *   latest.json     → 主域直连，**所有客户端**都读这份（老版本只认它）
- *   latest-ga.json  → 加速域名，只有带 `X-Update-Caps: rustls` 的 1.9.16+ 才读
+ *   latest.json     → 主域直连，**客户端 updater 读这份**（任何版本都能下）
+ *   latest-web.json → dl 加速域名，**只有介绍页的下载按钮读这份**
  *
- * 为什么不是一刀切：加速域名对部分客户端的 TLS 栈不可达，而清单只有一份时，
- * 老客户端读到的地址必须是它能用的。分流之后两边各拿各的，谁也不影响谁，
- * 也不需要为了开加速去强制更新。
+ * 为什么要分开：GA 的加速 IP 只对浏览器系 TLS 栈友好（实测矩阵见文件开头），
+ * 客户端用的 rustls 连不上。一份清单只能有一个地址，就一定会打死其中一边。
  *
- * 加速没配（DL_BASE 为空）或本机没备好时，两份写一样的内容——等于关闭加速。
+ * 本机没备好（证书/nginx 有问题）时两份都写直连——网页那边最多慢点，不会坏。
  */
 async function resolveBases() {
-  if (!DL_SITE || DL_SITE === SITE) return { direct: SITE, ga: SITE, from: "未启用加速（默认）" };
+  if (!DL_SITE || DL_SITE === SITE) return { direct: SITE, ga: SITE, from: "未配置加速域名" };
   const r = await probeSelfReady();
-  if (r.ok) return { direct: SITE, ga: DL_SITE, from: "加速已启用（本机就绪）" };
+  if (r.ok) return { direct: SITE, ga: DL_SITE, from: "网页下载走加速（本机就绪）" };
   log("warn", `加速域名未就绪（${r.detail}），两份清单都写直连`);
   return { direct: SITE, ga: SITE, from: `加速未就绪：${r.detail}` };
 }
@@ -268,7 +269,7 @@ function localVersion() {
 /**
  * 版本没变时，把两份清单里的下载域名修正成当前该用的那个。
  *
- * 场景：`latest-ga.json` 已经指向 `dl.5blong.site`，某天 GA 欠费/证书过期/线路挂掉。
+ * 场景：`latest-web.json` 已经指向 `dl.5blong.site`，某天 GA 欠费/证书过期/线路挂掉。
  * 因为版本没变，常规流程会直接 skip——**带 header 的客户端还指着那个坏地址**，
  * 没有任何东西会去修它，只能等人发现。这条分支就是那个"人"。
  * 修完之后加速那份自动降级成直连，等于临时关掉加速。
@@ -278,21 +279,26 @@ function localVersion() {
  */
 function repairDownloadBase(bases) {
   let changed = false;
+  // 缺哪份就用另一份当模板：版本没变时走的是这条分支，它只修不建，
+  // 新加的 latest-web.json 就永远生不出来（踩过）。
+  const directFile = path.join(DEST, "latest.json");
+  const template = existsSync(directFile) ? readFileSync(directFile, "utf8") : "";
   for (const [name, base] of [
     ["latest.json", bases.direct],
-    ["latest-ga.json", bases.ga],
+    ["latest-web.json", bases.ga],
   ]) {
     const f = path.join(DEST, name);
-    if (!existsSync(f)) continue;
+    const raw = existsSync(f) ? readFileSync(f, "utf8") : template;
+    if (!raw) continue;
     let j;
     try {
-      j = JSON.parse(readFileSync(f, "utf8"));
+      j = JSON.parse(raw);
     } catch {
       continue;
     }
     if (!j?.platforms) continue;
 
-    let touched = false;
+    let touched = !existsSync(f);
     const platforms = Object.fromEntries(
       Object.entries(j.platforms).map(([key, value]) => {
         if (!value || typeof value.url !== "string") return [key, value];
@@ -399,7 +405,7 @@ async function main() {
 
   if (DRY) {
     log("dry-run", `会下载 ${plat.url}`);
-    log("dry-run", `会写 latest.json（${bases.direct}/desktop/…）和 latest-ga.json（${bases.ga}/desktop/…），minimum=${gate.value || "未设置"}`);
+    log("dry-run", `会写 latest.json（${bases.direct}/desktop/…）和 latest-web.json（${bases.ga}/desktop/…），minimum=${gate.value || "未设置"}`);
     return;
   }
 
@@ -427,7 +433,7 @@ async function main() {
   });
   for (const [name, base] of [
     ["latest.json", bases.direct],
-    ["latest-ga.json", bases.ga],
+    ["latest-web.json", bases.ga],
   ]) {
     const out = build(base);
     const file = path.join(DEST, name);

@@ -1,4 +1,5 @@
 import react from "@vitejs/plugin-react";
+import { readFileSync } from "node:fs";
 import { defineConfig } from "vite";
 
 /**
@@ -10,8 +11,14 @@ import { defineConfig } from "vite";
  * 生产产物由 `npm run build:web:pages` 指定（--base ./ --outDir dist-web）；
  * 这里的 build.outDir 只是 `npm run dev`/默认构建时的兜底。
  */
+const pkgVersion = JSON.parse(readFileSync("./package.json", "utf8")).version as string;
+
 export default defineConfig({
   plugins: [react()],
+  // 网页版显示"当前部署的版本"用（桌面端走 Tauri 的 getVersion，不需要这个）
+  define: {
+    __APP_VERSION__: JSON.stringify(pkgVersion),
+  },
   build: {
     outDir: "dist-web",
     emptyOutDir: true,
