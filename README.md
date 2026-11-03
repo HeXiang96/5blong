@@ -900,6 +900,7 @@ npm run feedback:admin list 20   # 终端查看最近反馈（url / list / rm �
 <!-- AUTO-LOG:START -->
 ### 近期提交（自动生成）
 
+- `eb2373a` chore: 探针改成真实工程文件（上次失败是 heredoc 缩进把 YAML 块弄坏了）（11-03 13:40）
 - `a4e90c1` chore: 临时探针——验证 rustls 能否连 GA 加速 IP（验完即删）（11-03 13:30）
 - `bd28243` style(whatsnew): 重做更新公告弹窗——文案错、排版散、图标像占位符、不跟场景主题（11-03 13:28）
 - `9a2328b` fix(release): 关闭 GA 下载加速——Windows 原生 TLS 连不上它，导致全员更新失败（11-03 13:19）
@@ -907,7 +908,6 @@ npm run feedback:admin list 20   # 终端查看最近反馈（url / list / rm �
 - `30d6c5b` fix(screen-share): 修「默认不看」带来的三个真问题（其中一个会让旧客户端看不到共享）（11-03 13:13）
 - `1fe329c` revert: 幕布不放封面，改纯黑待机 + 提示（业主定）（11-03 13:07）
 - `a915e2c` test: 给幕布封面的输入校验加 7 条守门测试（并把白名单收紧到 base64）（11-03 13:02）
-- `3b8e201` feat(screen-share): 观众默认不拉流，幕布改静止封面；传输判断按实际观看数（11-03 12:59）
 <!-- AUTO-LOG:END -->
 
 ## 怎么用
