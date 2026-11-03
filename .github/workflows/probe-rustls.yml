@@ -1,0 +1,65 @@
+# 临时探针（2026-11-03，验完即删）
+#
+# 目的：确认 **rustls** 能不能连上阿里云 GA 的加速 IP（dl.5blong.site）。
+# 背景：Windows 原生 TLS（schannel）连不上，导致客户端更新全部失败；
+#       本机没有 MSVC 链接器，编不了 Rust，所以借 runner 跑一次。
+# 判据：日志里出现 PROBE_OK 即通过；出现 PROBE_FAIL 则这条路走不通。
+name: probe-rustls
+
+on:
+  push:
+    paths:
+      - '.github/workflows/probe-rustls.yml'
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: windows-latest
+    steps:
+      - name: 生成最小工程
+        shell: bash
+        run: |
+          mkdir -p probe/src
+          cat > probe/Cargo.toml <<'EOF'
+          [package]
+          name = "probe"
+          version = "0.1.0"
+          edition = "2021"
+
+          [dependencies]
+          reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+          tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+          EOF
+          cat > probe/src/main.rs <<'EOF'
+          #[tokio::main]
+          async fn main() {
+              let c = reqwest::Client::builder()
+                  .use_rustls_tls()
+                  .build()
+                  .expect("client");
+              let mut failed = false;
+              for url in [
+                  "https://dl.5blong.site/desktop/latest.json",
+                  "https://5blong.site/desktop/latest.json",
+              ] {
+                  let t0 = std::time::Instant::now();
+                  match c.get(url).header("cache-control", "no-cache").send().await {
+                      Ok(r) => {
+                          let s = r.status();
+                          let n = r.bytes().await.map(|b| b.len()).unwrap_or(0);
+                          println!("PROBE_OK {url} status={s} bytes={n} ms={}", t0.elapsed().as_millis());
+                      }
+                      Err(e) => {
+                          println!("PROBE_FAIL {url} err={e}");
+                          failed = true;
+                      }
+                  }
+              }
+              if failed {
+                  std::process::exit(1);
+              }
+          }
+          EOF
+      - name: 跑探针
+        shell: bash
+        run: cargo run --manifest-path probe/Cargo.toml
