@@ -43,6 +43,8 @@ export interface MediaLinkOptions {
   /** SDP 整形（降噪/码率那套），默认不动。 */
   sdpTransform?: (sdp: string) => string;
   onState?: (state: DcLinkState) => void;
+  /** 协商过程的每一步/失败原因（引擎写进诊断 events，2026-11-03 起失败不再无声）。 */
+  onEvent?: (kind: "info" | "error", detail: string) => void;
   onStream?: (stream: MediaStream) => void;
   /** 等 answer 的时长，超时重发 offer。 */
   answerTimeoutMs?: number;
@@ -85,16 +87,28 @@ export class MediaLink {
     await this.negotiate();
   }
 
-  /** 引擎把数据通道里收到的 rtc-* 消息交给它。任何异常都不外抛。 */
+  /** 引擎把数据通道里收到的 rtc-* 消息交给它。异常不再无声（见 catch）。 */
   async handle(msg: RtcSignal): Promise<void> {
-    if (this.closed) return;
+    if (this.closed) {
+      this.opts.onEvent?.("warn" as "info", `收到 ${msg.t} 但本链路已关闭（消息被忽略）`);
+      return;
+    }
     try {
       if (msg.t === "rtc-offer" && this.role === "answer") await this.answerTo(msg.sdp);
       else if (msg.t === "rtc-answer" && this.role === "offer") await this.applyAnswer(msg.sdp);
       else if (msg.t === "rtc-ice") await this.addRemoteCandidate(msg.cand);
       else if (msg.t === "rtc-bye") this.close(false);
-    } catch {
-      /* 单条消息处理失败不能拖垮整条链路：超时会重发 offer，下一轮还能救回来 */
+    } catch (error) {
+      /*
+       * 2026-11-03 前这里静默吞掉一切——answer 生成失败连痕迹都没有，
+       * 排障只能靠推理。现在把失败原因上报（引擎写进诊断 events），
+       * 协商类消息失败如实转 failed（引擎会回落 PeerJS）。
+       */
+      this.opts.onEvent?.(
+        "error",
+        `${this.role} 端处理 ${msg.t} 失败：${String((error as Error)?.message ?? error).slice(0, 160)}`,
+      );
+      if (msg.t === "rtc-offer" || msg.t === "rtc-answer") this.setState("failed");
     }
   }
 

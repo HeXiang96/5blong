@@ -982,3 +982,70 @@ describe("上报通道优先级（2026-11-03 改回 CF 时代的信令上报）"
     expect(posts.some((u) => u.includes("/api/rooms/snapshot"))).toBe(true);
   });
 });
+
+describe("自建协商的健壮性（2026-11-03 僵尸链路吞 offer / 状态被覆盖）", () => {
+  /* 诊断实锤：Bink 端留下 pc 为空的 dcLink（僵尸），后续 offer 被它的 closed 守卫
+   * 无声吞掉——answer 永远不来。另外自建腿迟到的 failed 会把 PeerJS 腿已连上的
+   * 状态覆盖回 failed（pk=20 与 link=failed 并存）。 */
+  class FakeDcPc {
+    localDescription: unknown = null;
+    remoteDescription: unknown = null;
+    connectionState = "new";
+    iceConnectionState = "new";
+    onicecandidate: ((e: unknown) => void) | null = null;
+    ontrack: ((e: unknown) => void) | null = null;
+    onconnectionstatechange: (() => void) | null = null;
+    async setLocalDescription(d: unknown) { this.localDescription = d; }
+    async setRemoteDescription(d: unknown) { this.remoteDescription = d; }
+    async createOffer() { return { type: "offer", sdp: "OFFER" }; }
+    async createAnswer() { return { type: "answer", sdp: "ANSWER" }; }
+    async addIceCandidate() {}
+    addTrack() {}
+    addTransceiver() {}
+    close() {}
+  }
+
+  /** 房主端接待一个"访客发来的 rtc-* 消息"的最小环境。 */
+  const receive = async (host: unknown, guestId: string, msg: unknown) => {
+    (host as any).handleDcSignal(guestId, msg);
+    await sleep(0);
+    return (host as any).dcLinks.get(guestId);
+  };
+
+  beforeEach(() => {
+    vi.stubGlobal("RTCPeerConnection", FakeDcPc);
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("非 offer 消息对未知对端：消费掉但绝不建链（僵尸不再诞生）", async () => {
+    const { host } = await startHost();
+    const consumed = (host as any).handleDcSignal("5b-g-zombie1", { t: "rtc-bye" });
+    expect(consumed).toBe(true);
+    expect((host as any).dcLinks.size).toBe(0);
+  });
+
+  it("已关闭的僵尸收到 offer：删除重建，新 offer 有活人接待", async () => {
+    const { host } = await startHost();
+    (host as any).guests.set("5b-g-zombie2", { conn: { open: true, send: () => {} }, joined: true });
+    const first = await receive(host, "5b-g-zombie2", { t: "rtc-offer", sdp: "v=0" });
+    expect(first).toBeTruthy();
+    first.close(); // 变僵尸
+    const second = await receive(host, "5b-g-zombie2", { t: "rtc-offer", sdp: "v=0" });
+    expect(second).not.toBe(first);
+    expect(second.currentState).not.toBe("closed");
+  });
+
+  it("自建腿迟到的 failed 不覆盖 PeerJS 腿已连上的状态", async () => {
+    const { host } = await startHost();
+    (host as any).guests.set("5b-g-zombie3", { conn: { open: true, send: () => {} }, joined: true });
+    const link = await receive(host, "5b-g-zombie3", { t: "rtc-offer", sdp: "v=0" });
+    expect(link).toBeTruthy();
+    // PeerJS 腿已接管且连上
+    (host as any).roomLinkState.set("5b-g-zombie3", "connected");
+    // 此时自建腿才迟到报 failed
+    (link as any).opts.onState("failed");
+    expect((host as any).roomLinkState.get("5b-g-zombie3")).toBe("connected");
+  });
+});

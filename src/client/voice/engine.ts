@@ -4334,8 +4334,28 @@ export class VoiceMesh {
     const t = (data as { t?: unknown }).t;
     if (t !== "rtc-offer" && t !== "rtc-answer" && t !== "rtc-ice" && t !== "rtc-bye") return false;
     const msg = data as RtcSignal;
-    // 收到 offer 说明对方在发起 → 我们当应答方；其余消息沿用已有链路的角色
-    const link = this.ensureDcLink(peerId, msg.t === "rtc-offer" ? "answer" : "offer");
+    /*
+     * 只对 rtc-offer 建链（2026-11-03）。
+     *
+     * 以前任何 rtc-* 都会 ensureDcLink，且角色按消息类型临时判定：
+     * 一条迟到的 rtc-bye 就能以错误的角色（offer）造出一条"僵尸"——
+     * closed、没有 PC，却留在表里把之后真正的 offer 全部吞掉
+     * （handle 的 closed 守卫直接 return）。结果就是 answer 永远不来，
+     * 双方日志毫无痕迹，实测反复复现"进房后重连一两分钟"。
+     */
+    if (t !== "rtc-offer") {
+      const existing = this.dcLinks.get(peerId);
+      if (!existing) return true; // 没有现成链路的散消息：丢弃，绝不建僵尸
+      void existing.handle(msg);
+      return true;
+    }
+    // offer 到达时若挂着已关闭的僵尸：删掉重建，让新 offer 有活人接待
+    const stale = this.dcLinks.get(peerId);
+    if (stale && stale.currentState === "closed") {
+      this.dcLinks.delete(peerId);
+      this.pushRoomEvent("info", "自建协商：清理已关闭的旧链路后重新应答");
+    }
+    const link = this.ensureDcLink(peerId, "answer");
     if (!link) return true;
     void link.handle(msg);
     return true;
@@ -4363,9 +4383,22 @@ export class VoiceMesh {
           return;
         }
         if (state !== "failed") return;
+        this.closeDcLink(peerId);
+        /*
+         * 迟到的失败不覆盖已连接（2026-11-03）。
+         *
+         * 自建腿 answer 超时（12~18s）才判 failed，此时回落 PeerJS 的腿可能
+         * 已经连上（诊断实测：pk=20 与 link=failed 并存）。旧实现无条件把
+         * 状态写成 failed —— 界面从此卡"重连中"，稳定连接不再触发 ICE 事件，
+         * 直到某个偶然事件把判定再跑一遍才翻正，表现就是"重连一两分钟"。
+         */
+        const alreadyConnected = this.roomLinkState.get(peerId) === "connected";
+        if (alreadyConnected) {
+          this.pushRoomEvent("info", "自建协商失败，但 PeerJS 腿已接管且连接正常——状态保持");
+          return;
+        }
         this.roomLinkState.set(peerId, "failed");
         this.events.mediaState(peerId, "failed");
-        this.closeDcLink(peerId);
         /*
          * 自建协商失败 → 回落 PeerJS 老路径。
          * 这条主要救"对端还是老版本"（他根本不会看 rtc-* 消息），
@@ -4374,6 +4407,10 @@ export class VoiceMesh {
         if (this.dcFallback.has(peerId)) return;
         this.dcFallback.add(peerId);
         this.callPeer(peerId);
+      },
+      onEvent: (kind, detail) => {
+        // 协商每一步的成败与失败原因（原 handle 静默吞异常，排障只能靠推理）
+        this.pushRoomEvent(kind === "error" ? "error" : "info", `自建协商[${peerId.slice(4, 12)}] ${detail}`);
       },
     });
     this.dcLinks.set(peerId, link);
@@ -4396,6 +4433,11 @@ export class VoiceMesh {
   private startDcOffer(peerId: string): void {
     const link = this.ensureDcLink(peerId, "offer");
     if (!link) {
+      /*
+       * 数据通道还没就绪：必须先标记回落再 callPeer —— 否则 callPeer 会
+       * 再进自建分支、再调 startDcOffer，无限递归（栈溢出）。
+       */
+      this.dcFallback.add(peerId);
       this.callPeer(peerId);
       return;
     }
@@ -4726,8 +4768,17 @@ export class VoiceMesh {
               // 每 700ms 再探一次，最多约 14 秒
               mediaProbes += 1;
               this.timers.after(700, () => void classify());
-            } else {
-              this.scheduleVoiceHeal(peerId, call, VOICE_HEAL_GRACE_MS);
+            } else if (mediaProbes === 20) {
+              /*
+               * ICE 通了却 14 秒没有音频包 = 疑似单向未通（usedtx=0，静默期照样发包，
+               * "不涨"不是安静）。原实现在这里 scheduleVoiceHeal 拆腿重拨——
+               * 但重拨走同样的路由，治不了单通，只会把链路搅进"断开→重连→又断"的
+               * 循环（2026-11-03 业主实测）。改为保持连接 + 低频观察（每 3 秒），
+               * 包一来（对方开麦/路由恢复）立刻转成功。
+               */
+              mediaProbes = 19;
+              this.pushRoomEvent("error", `与「${this.members.get(peerId)?.name ?? peerId.slice(0, 6)}」的链路已通但 14 秒无音频包，疑似单向未通——保持连接观察，不做重拨`);
+              this.timers.after(3000, () => void classify());
             }
             return;
           }

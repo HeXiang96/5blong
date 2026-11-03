@@ -225,3 +225,46 @@ describe("自建媒体协商（SDP/ICE 走数据通道）", () => {
     expect(states).toContain("connected");
   });
 });
+
+describe("协商失败不再无声（2026-11-03 answer 消失查了一晚）", () => {
+  /* 原实现 handle 的 catch 把一切异常吞掉：answer 生成失败连痕迹都没有。
+   * 现在失败原因通过 onEvent 上报（引擎写进诊断 events），协商消息失败转 failed。 */
+  it("应答方处理 offer 抛错时：onEvent 收到原因，状态转 failed", async () => {
+    const pipe = makePipe();
+    const events: string[] = [];
+    const states: string[] = [];
+    const link = new MediaLink({
+      role: "answer",
+      pipe,
+      stream,
+      iceServers: () => [],
+      createPc: () => {
+        throw new Error("模拟 setRemoteDescription 前置失败");
+      },
+      onEvent: (kind, detail) => events.push(`${kind}:${detail}`),
+      onState: (st) => states.push(st),
+    });
+
+    await link.handle({ t: "rtc-offer", sdp: "OFFER" });
+    await flush();
+
+    expect(events.some((e) => e.startsWith("error:") && e.includes("answer 端处理 rtc-offer"))).toBe(true);
+    expect(states).toContain("failed");
+  });
+
+  it("已关闭的链路收到消息：上报被忽略，不再无声吞掉", async () => {
+    const pipe = makePipe();
+    const events: string[] = [];
+    const link = new MediaLink({
+      role: "offer",
+      pipe,
+      stream,
+      iceServers: () => [],
+      onEvent: (kind, detail) => events.push(`${kind}:${detail}`),
+    });
+    link.close();
+    await link.handle({ t: "rtc-offer", sdp: "LATE" });
+    await flush();
+    expect(events.some((e) => e.includes("已关闭"))).toBe(true);
+  });
+});
