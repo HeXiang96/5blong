@@ -60,7 +60,7 @@
 
 ### 部署与运维
 
-- 服务器：香港 ECS `8.210.198.140`，域名 `5blong.site`（未备案，走"全球不含中国大陆"线路）。
+- 服务器：香港 ECS，域名 `5blong.site`（未备案，走"全球不含中国大陆"线路）。
 - 部署目录 `/opt/5blong/server`，静态产物 `/var/www/5blong`，数据库 `/data/5blong/app.db`。
 - 令牌与密钥全在服务器 `/etc/5blong/env`（后台令牌、TURN 密钥、SFU 密钥），**仓库里没有**。
 - 自检：`node /opt/5blong/server/scripts/turn-check.mjs`（中继完整分配测试，

@@ -1,4 +1,5 @@
 import dgram from "node:dgram";
+import dns from "node:dns/promises";
 import { createHash, createHmac } from "node:crypto";
 
 /*
@@ -13,8 +14,15 @@ import { createHash, createHmac } from "node:crypto";
  *    直接带 MI 会得到 400（第一次就是这么错的）。
  */
 
-const HOST = "8.210.198.140";
+/*
+ * 中继地址用域名，不把服务器 IP 写进公开仓库。
+ * UDP 只能往 IP 发，所以先解析一次；下面的 external-ip 校验也拿它做基准。
+ * 要打别的机器：TURN_HOST=turn.example.com node turn-check.mjs
+ */
+const HOST = process.env.TURN_HOST || "5blong.site";
 const PORT = 3478;
+const HOST_IP = (await dns.lookup(HOST)).address;
+console.log(`中继：${HOST} → ${HOST_IP}:${PORT}`);
 
 const ice = await (await fetch("https://5blong.site/ice")).json();
 const { username, credential } = ice.iceServers[0];
@@ -80,7 +88,7 @@ function exchange(packet, timeoutMs = 6000) {
       resolve(msg);
     };
     socket.on("message", onMessage);
-    socket.send(packet, PORT, HOST);
+    socket.send(packet, PORT, HOST_IP);
   });
 }
 
@@ -144,7 +152,7 @@ const ipInt = relayAttr.readUInt32BE(4) ^ 0x2112a442;
 const relayIp = `${(ipInt >>> 24) & 255}.${(ipInt >>> 16) & 255}.${(ipInt >>> 8) & 255}.${ipInt & 255}`;
 
 const inRange = relayPort >= 50000 && relayPort <= 50999;
-const rightIp = relayIp === "8.210.198.140";
+const rightIp = relayIp === HOST_IP;
 console.log(`✓ 分配成功：中继 ${relayIp}:${relayPort}`);
 console.log(`${inRange ? "✓" : "✗"} 端口在 50000-50999 段内（${relayPort}）`);
 console.log(`${rightIp ? "✓" : "✗"} 返回公网 IP（external-ip ${rightIp ? "正确" : "错了 → " + relayIp}）`);

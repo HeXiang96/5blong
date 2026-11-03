@@ -1,0 +1,12 @@
+[Unit]
+Description=Sync 5blong desktop update source every 10 minutes
+
+[Timer]
+# 开机 2 分钟后先对一次，之后每 10 分钟一次
+OnBootSec=2min
+OnUnitActiveSec=10min
+AccuracySec=30s
+Persistent=true
+
+[Install]
+WantedBy=timers.target

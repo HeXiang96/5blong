@@ -1,0 +1,11 @@
+[Unit]
+Description=5blong desktop update source sync (Pages/GitHub -> /var/www/5blong/desktop)
+Documentation=file:/opt/5blong/server/scripts/sync-desktop.mjs
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/node /opt/5blong/server/scripts/sync-desktop.mjs
+Nice=10
+# 只读远端、只写静态站目录，不需要任何密钥

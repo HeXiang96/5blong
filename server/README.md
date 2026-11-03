@@ -129,7 +129,7 @@ curl -s 127.0.0.1:8788/healthz | head
 # 在开发机上
 cd /path/to/5blong
 npm run build:web:pages
-rsync -av --delete dist-web/ root@8.210.198.140:/var/www/5blong/
+rsync -av --delete dist-web/ root@5blong.site:/var/www/5blong/
 ```
 
 ### 5. 配 nginx + 证书
