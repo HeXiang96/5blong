@@ -2,6 +2,17 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
+<script>
+  /* 临时兜底（2026-11-03）：1.9.13 之前的客户端仍生成 5blong.site/#c=… 的链接。
+     介绍页上线后这些链接会落到这里，所以先把带房间参数的访问送到 web 子域。
+     等用户都升到 1.9.13（或确认没人用旧链接），删掉这一段即可。 */
+  (function () {
+    if (/[#&?](c|g)=/.test(location.hash) || /[?&](c|g)=/.test(location.search)) {
+      location.replace("https://web.5blong.site/" + location.search + location.hash);
+    }
+  })();
+</script>
+
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>5blong — 开个语音房，把链接丢给朋友</title>
 <meta name="description" content="免注册、免安装的低延迟语音房。开个房，复制邀请链接，朋友点开就在房间里。语音、听歌、看视频、共享屏幕。">
@@ -53,11 +64,7 @@
   }
   .nav { display: flex; align-items: center; gap: 28px; height: 64px; }
   .brand { display: flex; align-items: center; gap: 9px; font-weight: 800; letter-spacing: -.02em; font-size: 19px; }
-  .brand i {
-    width: 22px; height: 22px; border-radius: 7px;
-    background: linear-gradient(135deg, var(--brand), #d9a86a);
-    display: inline-block;
-  }
+  .brand { font-size: 20px; letter-spacing: -.03em; }
   .nav-links { display: flex; gap: 22px; margin-left: auto; align-items: center; }
   .nav-links a { color: var(--ink-2); }
   .nav-links a:not(.btn) { font-size: 14px; }
@@ -75,7 +82,10 @@
   .btn-primary:hover { background: #7d4c11; }
   .btn-ghost { background: #fff; color: var(--ink); border-color: var(--line); }
   .btn-ghost:hover { border-color: #d9c6a6; }
-  .btn-sm { height: 34px; padding: 0 16px; font-size: 13.5px; }
+  .btn-sm { height: 34px; padding: 0 18px; font-size: 13.5px; }
+  .nav .btn-sm { padding: 0 22px; font-size: 14px; flex: 0 0 auto; min-width: 112px; }
+  .nav .btn-primary { background: var(--brand); box-shadow: none; }
+  .nav .btn-primary:hover { background: var(--brand-deep); }
 
   /* ---------------------------------------------------------------- Hero */
   /* 注意：这里是 .wrap + .hero 同一个元素，只能用 padding-block，
@@ -106,7 +116,7 @@
     content: ""; position: absolute; left: -2px; right: -2px; bottom: -.26em; height: .1em;
     background: var(--accent); border-radius: 999px;
   }
-  .lede { font-size: clamp(15.5px, 1.6vw, 18px); color: var(--ink-2); max-width: 30em; margin: 0 0 30px; }
+  .lede { font-size: clamp(15.5px, 1.6vw, 18px); color: var(--ink-2); max-width: 33em; margin: 0 0 30px; }
   .cta-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
   .hint { font-size: 13px; color: var(--ink-3); margin-top: 16px; }
 
@@ -164,7 +174,7 @@
   .plat.off { opacity: .72; }
 
   /* ---------------------------------------------------------------- FAQ */
-  .faq { max-width: 780px; margin: 0 auto; }
+  .faq { max-width: none; }
   details {
     background: var(--card); border: 1px solid var(--line); border-radius: 14px;
     padding: 18px 22px; margin-bottom: 10px;
@@ -185,12 +195,12 @@
   .foot a:hover { color: var(--ink); }
 
   .cta-band {
-    background: #14110d; color: #fff7ea; border-radius: 22px;
+    background: #f7eddd; color: var(--ink); border: 1px solid #ead9bf; border-radius: 22px;
     padding: 44px 40px; display: flex; flex-wrap: wrap; gap: 20px;
     align-items: center; justify-content: space-between;
   }
   .cta-band h2 { margin: 0; font-size: clamp(22px, 2.6vw, 30px); letter-spacing: -.02em; }
-  .cta-band p { margin: 6px 0 0; color: #b7a68d; font-size: 14.5px; }
+  .cta-band p { margin: 6px 0 0; color: var(--ink-2); font-size: 14.5px; }
   .cta-band .btn-primary { box-shadow: none; }
 </style>
 </head>
@@ -198,12 +208,12 @@
 
 <header>
   <div class="wrap nav">
-    <a class="brand" href="/"><i></i>5blong</a>
+    <a class="brand" href="/">5blong</a>
     <nav class="nav-links">
       <a class="hide-sm" href="#how">怎么用</a>
       <a class="hide-sm" href="#platforms">下载</a>
       <a class="hide-sm" href="#faq">常见问题</a>
-      <a class="btn btn-primary btn-sm" href="https://web.5blong.site/">使用网页版</a>
+      <a class="btn btn-primary btn-sm" href="https://web.5blong.site/">开始使用</a>
     </nav>
   </div>
 </header>

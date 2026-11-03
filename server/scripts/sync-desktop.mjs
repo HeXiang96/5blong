@@ -46,11 +46,33 @@ const FORCE = process.argv.includes("--force");
  *    这一版还得靠它送达；等旧客户端被强制更新干净、pages.dev 下线后，
  *    把下面这一项删掉即可，其余代码不用动。
  *
- * 注意用的是 `releases/latest/download/...`（直接重定向到资产），不走 API，
- * 所以没有每小时 60 次的限流问题。
+ * ⚠️ `releases/latest/download/...` 这个地址**有 CDN 缓存**：刚发完版那几分钟
+ * 它还在返回上一版的文件，直接拉会以为"没有新版本"，白等一个周期。
+ * 所以先用 API 问出确切的 tag，再按 tag 拼直链（tag 直链不走那个缓存。
  */
-const SOURCES = [
-  { label: "github", url: "https://github.com/HeXiang96/5blong/releases/latest/download/latest.json" },
+const REPO = "HeXiang96/5blong";
+
+/** 问 GitHub API 当前最新 release 的 tag。拿不到就返回空串（退回 latest 兜底）。 */
+async function resolveLatestTag() {
+  try {
+    const res = await fetch(`https://api.github.com/repos/${REPO}/releases/latest`, {
+      signal: AbortSignal.timeout(20_000),
+      headers: { accept: "application/vnd.github+json", "cache-control": "no-cache" },
+    });
+    if (!res.ok) {
+      log("warn", `问最新版本失败：HTTP ${res.status}`);
+      return "";
+    }
+    const json = await res.json();
+    return typeof json.tag_name === "string" ? json.tag_name : "";
+  } catch (e) {
+    log("warn", `问最新版本失败：${e.message}`);
+    return "";
+  }
+}
+
+const FALLBACK_SOURCES = [
+  { label: "github-latest", url: `https://github.com/${REPO}/releases/latest/download/latest.json` },
   { label: "pages", url: "https://5blong.pages.dev/desktop/latest.json" },
 ];
 
@@ -85,9 +107,9 @@ async function fetchJson(url) {
 }
 
 /** 依次试来源，第一个可用且结构合法的就用。 */
-async function loadManifest() {
+async function loadManifest(sources) {
   const errors = [];
-  for (const { label, url } of SOURCES) {
+  for (const { label, url } of sources) {
     try {
       const j = await fetchJson(url);
       const plat = j?.platforms?.[TARGET];
@@ -193,7 +215,15 @@ async function main() {
   const current = localVersion();
   log("local", `本地版本 v${current}（${DEST}）`);
 
-  const { manifest } = await loadManifest();
+  const tag = await resolveLatestTag();
+  const sources = tag
+    ? [
+        { label: `github ${tag}`, url: `https://github.com/${REPO}/releases/download/${tag}/latest.json` },
+        ...FALLBACK_SOURCES,
+      ]
+    : FALLBACK_SOURCES;
+
+  const { manifest } = await loadManifest(sources);
   const remote = manifest.version;
 
   if (!FORCE && compareVersion(remote, current) <= 0) {

@@ -37,9 +37,36 @@ import path from "node:path";
 const DEST = process.env.WEB_DIR || "/var/www/5blong";
 const STATE = process.env.WEB_STATE || "/data/5blong/web-sha";
 const OWNER = process.env.WEB_OWNER || "www-data:www-data";
-const ARCHIVE_URL =
-  process.env.WEB_ARCHIVE_URL ||
-  "https://github.com/HeXiang96/5blong/releases/latest/download/dist-web.tar.gz";
+const REPO = "HeXiang96/5blong";
+const FALLBACK_URL = `https://github.com/${REPO}/releases/latest/download/dist-web.tar.gz`;
+
+/**
+ * 解析要下载的地址。
+ *
+ * **为什么不用 `releases/latest/download/...`**：那个地址有 CDN 缓存，刚发完版
+ * 那几分钟还指着上一版——上一版根本没有 dist-web.tar.gz（1.9.12 及更早没有），
+ * 于是每次发版后的头几轮都白跑一次。用 API 问出确切 tag，直链不带那层缓存。
+ */
+async function resolveArchiveUrl() {
+  if (process.env.WEB_ARCHIVE_URL) return process.env.WEB_ARCHIVE_URL;
+  try {
+    const res = await fetch(`https://api.github.com/repos/${REPO}/releases/latest`, {
+      signal: AbortSignal.timeout(20_000),
+      headers: { accept: "application/vnd.github+json", "cache-control": "no-cache" },
+    });
+    if (res.ok) {
+      const json = await res.json();
+      if (typeof json.tag_name === "string" && json.tag_name) {
+        return `https://github.com/${REPO}/releases/download/${json.tag_name}/dist-web.tar.gz`;
+      }
+    } else {
+      log("warn", `问最新版本失败：HTTP ${res.status}`);
+    }
+  } catch (e) {
+    log("warn", `问最新版本失败：${e.message}`);
+  }
+  return FALLBACK_URL;
+}
 
 const DRY = process.argv.includes("--dry-run");
 const archiveArg = (() => {
@@ -60,7 +87,9 @@ async function grab(dest) {
     log("source", `本地包 ${archiveArg}`);
     return true;
   }
-  const res = await fetch(ARCHIVE_URL, {
+  const url = await resolveArchiveUrl();
+  log("source", url.replace("https://github.com/HeXiang96/5blong/releases/download/", ""));
+  const res = await fetch(url, {
     redirect: "follow",
     signal: AbortSignal.timeout(180_000),
     headers: { "cache-control": "no-cache" },
@@ -134,12 +163,16 @@ async function main() {
   log("unpack", `已解到 ${next}`);
 
   // 第一步：只覆盖新增，不删。index.html 是原子替换，旧 assets 先留着。
-  execFileSync("rsync", ["-a", "--exclude=desktop/", `${next}/`, `${DEST}/`]);
-  log("copy", `已覆盖 ${DEST}（desktop/ 未动）`);
+  // ⚠️ 必须同时排除 app/ 与 desktop/：
+  //   desktop/ = 桌面端更新源；app/ = web.5blong.site 的应用目录。
+  //   2026-11-03 真踩过：只排除了 desktop/，第一次跑同步就把 app/ 整个删了，
+  //   两个域名一起挂。这次是补上第二道 exclude。
+  execFileSync("rsync", ["-a", "--exclude=desktop/", "--exclude=app/", `${next}/`, `${DEST}/`]);
+  log("copy", `已覆盖 ${DEST}（desktop/ 与 app/ 未动）`);
 
   // 第二步：等几秒让正在加载的页面把旧 assets 取完，再清理孤儿文件。
   await sleep(5000);
-  execFileSync("rsync", ["-a", "--delete", "--exclude=desktop/", `${next}/`, `${DEST}/`]);
+  execFileSync("rsync", ["-a", "--delete", "--exclude=desktop/", "--exclude=app/", `${next}/`, `${DEST}/`]);
   execFileSync("chown", ["-R", OWNER, DEST]);
   log("prune", "旧资源已清理，属主已修正");
 
