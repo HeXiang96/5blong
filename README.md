@@ -900,14 +900,14 @@ npm run feedback:admin list 20   # 终端查看最近反馈（url / list / rm �
 <!-- AUTO-LOG:START -->
 ### 近期提交（自动生成）
 
+- `3b8e201` feat(screen-share): 观众默认不拉流，幕布改静止封面；传输判断按实际观看数（11-03 12:59）
+- `4904d5d` feat: 安装包下载走阿里云 GA 加速（dl.5blong.site）（11-03 12:53）
+- `ddfcbaa` fix: 网页同步的目标目录指向站根，把介绍页覆盖了（11-03 12:25）
 - `497e7c5` release: v1.9.14（11-03 11:59）
 - `a22bfca` feat: 引导瘦身、更新公告换成 1.9.13、介绍页补功能一览（11-03 11:57）
 - `5c23e33` chore(landing): 删除临时跳转兜底（业主决定不等，旧链接直接失效）（11-03 11:52）
 - `e7c1760` style(landing): FAQ 恢复与三列同宽（max-width:none 是取消限制，反而撑满视口）（11-03 11:50）
 - `ae062d4` fix: 网页同步误删 app/ 目录；更新源改用 API 查 tag（11-03 11:49）
-- `b193e1c` release: v1.9.13（11-03 11:34）
-- `7d12dcd` feat: 邀请链接改指 web.5blong.site，1.9.13 强制更新（11-03 11:34）
-- `3136ee4` feat(landing): 新增宣传介绍页，版式照 piik，配色对齐客户端（11-03 11:15）
 <!-- AUTO-LOG:END -->
 
 ## 怎么用
