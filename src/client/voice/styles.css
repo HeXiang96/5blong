@@ -229,6 +229,8 @@ select {
   color: var(--vx-text);
   font-weight: 550;
   cursor: pointer;
+  /* 按钮文字永远不折行：窄容器里被压扁时，中文会逐字竖排（2026-10-28 实拍） */
+  white-space: nowrap;
   transition: transform 0.12s ease, background 0.15s ease, border-color 0.15s ease;
 }
 

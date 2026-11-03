@@ -29,7 +29,10 @@
  */
 const FALLBACK: RTCIceServer[] = [
   {
-    urls: ["stun:stun.cloudflare.com:3478", "stun:stun.chat.bilibili.com:3478"],
+    // 自己那台（coturn 兼做 STUN）+ 国内公共备份。
+    // 原来第一条是 stun.cloudflare.com，它和 pages.dev 一样被路由到境外，
+    // 换成香港这台之后，反射地址发现这一跳也回到 37ms。
+    urls: ["stun:5blong.site:3478", "stun:stun.chat.bilibili.com:3478"],
   },
 ];
 
@@ -41,7 +44,12 @@ const ICE_ENDPOINT = (() => {
   if (import.meta.env.DEV) return "/ice";
   const host = typeof location !== "undefined" ? location.hostname : "";
   if (host === "tauri.localhost" || host.endsWith(".tauri.localhost")) {
-    return "https://5blong.pages.dev/ice";
+    /*
+     * 桌面端没有同域服务端，只能打绝对地址。指向香港那台（不是 pages.dev）：
+     * /ice 现在是本机 coturn 签发，中继也在这台机器上，
+     * 打回 Cloudflare 等于又绕一次太平洋，白搬。
+     */
+    return "https://5blong.site/ice";
   }
   return "/ice";
 })();
@@ -55,6 +63,31 @@ const CACHE_MS = 12 * 60 * 60 * 1000;
 let current: RTCIceServer[] = FALLBACK;
 let expiresAt = 0;
 let inflight: Promise<void> | null = null;
+
+/**
+ * 失败后的自动重试（业主反复反馈"有时候连不上、只有某两个人听不到"）。
+ *
+ * 原先的注释是「失败无所谓：进房路径自己会再试」—— 实际并不成立：
+ * 进房那次只等 2.5 秒，失败后 `current` 停在纯 STUN，而 **PeerJS 只在构造
+ * 那一刻读 ICE 配置**，之后即使补到 TURN 也用不上。于是整场都没有中继，
+ * 表现为"只有走不了直连的那一对互相听不到"。
+ *
+ * 现在改成：失败就退避重试（1s/2s/4s/8s/16s，最多 5 次，总计约 31 秒）。
+ * 只要 TURN 可达，凭据最终一定会拿到 —— 这是"不再靠运气"的前提。
+ */
+const RETRY_BASE_MS = 1000;
+const RETRY_MAX = 5;
+let retryCount = 0;
+
+function scheduleRetry(): void {
+  if (retryCount >= RETRY_MAX) return;
+  const delay = RETRY_BASE_MS * Math.pow(2, retryCount);
+  retryCount += 1;
+  globalThis.setTimeout(() => {
+    // expiresAt 仍是 0（没成功过），所以这次调用会真的发请求
+    void refreshIceServers();
+  }, delay);
+}
 
 /**
  * 当前生效的 ICE 配置。**同步**返回，供 PeerJS 在构造 Peer 时取值
@@ -97,16 +130,25 @@ export function refreshIceServers(): Promise<void> {
         signal: controller.signal,
         cache: "no-store",
       });
-      // 501 = 服务端没配 TURN key；502 = 配了但签发失败。两者都退回纯 STUN。
-      if (!res.ok) return;
+      // 501 = 服务端没配 TURN key；502 = 配了但签发失败。两者都退回纯 STUN，但要重试。
+      if (!res.ok) {
+        scheduleRetry();
+        return;
+      }
       const data = (await res.json()) as { iceServers?: unknown };
-      if (!validIceServers(data.iceServers)) return;
+      if (!validIceServers(data.iceServers)) {
+        scheduleRetry();
+        return;
+      }
       // 静态 STUN 放前面：TURN 只在打洞失败时才被 ICE 选中，顺序不影响正确性，
       // 但先列 STUN 让"能直连就直连"的意图在配置上一眼可见。
       current = [...FALLBACK, ...data.iceServers];
       expiresAt = Date.now() + CACHE_MS;
+      // 成功一次就把退避重置，下次失效（12 小时后）重新从 1 秒起步
+      retryCount = 0;
     } catch {
-      /* 网络不可达 / 超时 / 非 JSON —— 一律退回纯 STUN */
+      /* 网络不可达 / 超时 / 非 JSON —— 退回纯 STUN，并按退避继续重试 */
+      scheduleRetry();
     } finally {
       clearTimeout(timer);
       inflight = null;

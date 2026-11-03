@@ -9,20 +9,30 @@ import type { MediaConnection } from "peerjs";
  * - 共享音频走默认多为单声道，人声与音乐都失真。
  *
  * 这里把两端都显式化：
- * - 语音：单声道、关 DTX、40kbps（人声足够，省上行）；
+ * - 语音：单声道、关 DTX、**64kbps**（业主 2026-10-28 口径：默认就要高音质，P2P 也一样）；
  * - 共享声音：立体声、关 DTX、128kbps（音乐/游戏声够用）。
+ *
+ * ⚠️ `maxaveragebitrate` 与 setParameters 的 `maxBitrate` 都是**上限**，不是固定值：
+ * 链路不够时 WebRTC 的拥塞控制会自己往下压，所以"默认高音质"不会在弱网上硬扛。
+ * 但 P2P 模式下每人都要给 N-1 个人各编一路，13 人时 12 路 × 64k ≈ 0.77 Mbps 上行，
+ * 手机热点这种上行很窄的网络会各降各的——这是预期行为，不是 bug。
  */
-export const VOICE_AUDIO_BITRATE = 40_000;
+export const VOICE_AUDIO_BITRATE = 64_000;
 export const SCREEN_AUDIO_BITRATE = 128_000;
 
 export type AudioProfile = "voice" | "music";
 
 /** 按用途生成 SDP 改写：只动 Opus 那一行 fmtp，绝不碰视频。 */
 export function opusSdpTransform(profile: AudioProfile) {
+  /*
+   * `useinbandfec=1` 显式写上：Chrome 默认发的 fmtp 本来就带它，
+   * 但少数实现不给 fmtp 行（走下面"补一条"的分支），那种情况下会漏掉 FEC。
+   * 丢包 5% 的房间里，它是"偶尔卡一下"和"基本听不出来"的分界。
+   */
   const extra =
     profile === "music"
-      ? ";stereo=1;sprop-stereo=1;usedtx=0;maxaveragebitrate=128000"
-      : ";stereo=0;sprop-stereo=0;usedtx=0;maxaveragebitrate=40000";
+      ? ";stereo=1;sprop-stereo=1;usedtx=0;useinbandfec=1;maxaveragebitrate=128000"
+      : ";stereo=0;sprop-stereo=0;usedtx=0;useinbandfec=1;maxaveragebitrate=64000";
 
   return (sdp: string): string => {
     // 先确认对端用了 Opus，并拿到它的 payload type
@@ -37,7 +47,7 @@ export function opusSdpTransform(profile: AudioProfile) {
         const cleaned = params
           // sprop-stereo 必须排在 stereo 前面：否则 "stereo" 会先匹配到
           // "sprop-stereo" 的后半截，留下一个坏掉的 "sprop-" 前缀
-          .replace(/;?(sprop-stereo|stereo|usedtx|maxaveragebitrate)=[^;]*/gi, "")
+          .replace(/;?(sprop-stereo|stereo|usedtx|useinbandfec|maxaveragebitrate)=[^;]*/gi, "")
           .replace(/;;+/g, ";")
           .replace(/;+$/, "");
         return `a=fmtp:${pt} ${cleaned}${extra}`;

@@ -271,6 +271,24 @@ export class LocalAccountAdapter implements AccountAdapter {
     this.emit();
   }
 
+  async changePassword(current: string, next: string): Promise<AuthResult> {
+    const me = this.current();
+    if (!me) return { error: "not-found" };
+    const accounts = read<Record<string, StoredAccount>>(ACCOUNTS_KEY, {});
+    const stored = accounts[me.id];
+    if (!stored) return { error: "not-found" };
+    // 和线上同一套顺序：先验旧密码，再判强度，最后判"新旧相同"
+    if ((await hashPassword(current, stored.salt)) !== stored.hash) {
+      return { error: "bad-credentials" };
+    }
+    if (!validatePassword(next)) return { error: "password-weak" };
+    if (current === next) return { error: "same-password" };
+    stored.salt = randomHex(16);
+    stored.hash = await hashPassword(next, stored.salt);
+    write(ACCOUNTS_KEY, accounts);
+    return {};
+  }
+
   async updateProfile(
     patch: Partial<Pick<AccountProfile, "name" | "avatar" | "username" | "roomCode">>,
   ): Promise<AuthResult> {

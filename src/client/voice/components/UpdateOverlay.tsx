@@ -60,7 +60,12 @@ function formatMb(bytes: number): string {
  * 硬边界（2026-10-26 记录）：只对 1.9.4 及以后有效。1.9.3 及更老的安装包里
  * 没有这段代码，"稍后再说"写死在它们的二进制里，服务端改不了。
  */
-const GATE_URL = "https://5blong.pages.dev/desktop/latest.json";
+/*
+ * 强制更新门禁。**必须和 tauri.conf.json 里的 updater 端点保持一致** ——
+ * 那是两套独立机制：updater 负责下载安装，这里负责"低于 minimum 就不让用"。
+ * 只改一处会出现"能检测到更新、但门槛判断还去问旧地址"的半新半旧状态。
+ */
+const GATE_URL = "https://5blong.site/desktop/latest.json";
 
 export function UpdateOverlay() {
   const [phase, setPhase] = useState<Phase>("idle");
@@ -220,7 +225,7 @@ export function UpdateOverlay() {
           </div>
           {mandatory ? (
             <p className="vx-update-sub">
-              一直装不上？用浏览器打开 5blong.pages.dev 手动下载安装包，覆盖安装即可，房间和设置都保留。
+              一直装不上？用浏览器打开 5blong.site 手动下载安装包，覆盖安装即可，房间和设置都保留。
             </p>
           ) : null}
         </div>

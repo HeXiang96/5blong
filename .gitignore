@@ -16,3 +16,10 @@ dist-deploy/
 
 # 本地验证截图/临时产物
 outputs/
+
+# 自托管服务端（server/）的本地临时产物
+server/.tmp/
+server/**/*.db
+server/**/*.db-wal
+server/**/*.db-shm
+server/.env

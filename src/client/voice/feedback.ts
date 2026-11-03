@@ -52,7 +52,7 @@ export function apiUrl(path: string): string {
   if (import.meta.env.DEV) return path;
   const host = typeof location !== "undefined" ? location.hostname : "";
   if (host === "tauri.localhost" || host.endsWith(".tauri.localhost")) {
-    return `https://5blong.pages.dev${path}`;
+    return `https://5blong.site${path}`;
   }
   return path;
 }

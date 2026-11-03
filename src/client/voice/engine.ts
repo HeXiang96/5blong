@@ -81,7 +81,8 @@ import type { AudioProcessing, VoiceSettings } from "./settings";
 // 音量上限（值导入）：UI、持久化、引擎共用一份，见 settings.ts 的说明
 import { MIC_VOLUME_MAX, PEER_VOLUME_MAX } from "./settings";
 import { bindSpeaker, openMic, resumeAudio } from "./devices";
-import { ensureIceServers, iceServers } from "./ice";
+import { ensureIceServers, iceHasTurn, iceServers } from "./ice";
+import { SIGNAL_ROUTES } from "./signal-routes";
 import { oneWayStep } from "./one-way";
 import { latestChangelog } from "./changelog";
 import { isTauriRuntime } from "./loopback";
@@ -103,21 +104,33 @@ import { SessionStatsRecorder, STATS_SAMPLE_SEC, type SessionSummary } from "./s
  *   这正是这次要修的那一环。
  */
 
-/**
- * 信令服务器线路（按顺序尝试）。
+/*
+ * 信令线路从 `signal-routes.ts` 统一引入。
  *
- * 背景（2026-10-15 测试者实测）：PeerJS 客户端默认连 `wss://0.peerjs.com/peerjs`，
- * 部分网络直达不了（校内网/公司网/代理规则/DNS 污染），报错就是"没能进入房间"。
- * 而这些网络通常**能打开本站**，所以第一条线路借我们自己的域名（Worker 里
- * `/peerjs*` 做了透明转发，协议不变）；**最后一条走直连**，万一我们的中转
- * 出问题也不至于全断。本地开发没有 Worker，直接用直连。
+ * 这里原来自己抄了一份（和开黑圈那份内容相同），结果每次换服务器都要改两处，
+ * 漏一处就是"语音房能用、开黑圈进不去"这种只在一半功能上出现的怪问题。
+ * 真实事故参照 2026-10-26 房号正则被复制两份那次。
  */
-const SIGNAL_ROUTES: { host: string; port: number; secure: boolean; key: string; label: string }[] = import.meta.env.DEV
-  ? [{ host: "0.peerjs.com", port: 443, secure: true, key: "peerjs", label: "peerjs-cloud" }]
-  : [
-      { host: "5blong.pages.dev", port: 443, secure: true, key: "peerjs", label: "own-domain" },
-      { host: "0.peerjs.com", port: 443, secure: true, key: "peerjs", label: "peerjs-cloud" },
-    ];
+
+/**
+ * 房间遥测的落库地址。
+ *
+ * 原来是房主通过**信令 WebSocket** 发一条 `ROOM-SNAPSHOT`，由 Cloudflare 的
+ * 信令 Worker 落库。自建信令之后那条路走不通了 —— 我们用 npm `peer` 做信令服务，
+ * 它不认识这条消息，会直接忽略，于是「在线房间」页面一直是空的。
+ *
+ * 改成 HTTP POST 的三个理由：
+ *   1. 不动信令服务（改错了是整房连不上，代价远大于遥测丢失）；
+ *   2. HTTP 可重试、可观测，也不用为了上报维持一条长连接；
+ *   3. payload 原样不动，服务端逻辑几乎可以照搬。
+ *
+ * 桌面端没有同域服务端，必须绝对地址；网页端相对路径即可。
+ */
+const ROOM_TELEMETRY_ENDPOINT = (() => {
+  if (import.meta.env.DEV) return "/api/rooms/snapshot";
+  if (isTauriRuntime()) return "https://5blong.site/api/rooms/snapshot";
+  return "/api/rooms/snapshot";
+})();
 
 /** 信令瞬时失败的换连接重试：次数与退避（毫秒）。 */
 const SIGNAL_RETRY_ATTEMPTS = 3;
@@ -1210,10 +1223,22 @@ export class VoiceMesh {
       share: { active: t.share.active, totalS: t.share.totalS, transport: t.share.transport, last: t.share.last },
     };
     t.events = [];
+    /*
+     * 只发不看结果：下一轮（约 10 秒后）快照会覆盖式重发全部状态，
+     * 所以这里失败不需要重试，也不能弹任何提示。
+     * keepalive 让请求在页面切走/刷新时也能发完。
+     */
     try {
-      socket.send({ type: "ROOM-SNAPSHOT", payload });
+      void fetch(ROOM_TELEMETRY_ENDPOINT, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        keepalive: true,
+      }).catch(() => {
+        /* 网络抖动：下一轮会补上 */
+      });
     } catch {
-      /* 发送失败静默：下一轮快照会补 */
+      /* fetch 本身抛错（极少）：同上，下一轮补 */
     }
   }
 
@@ -3608,6 +3633,12 @@ export class VoiceMesh {
    * 用包数误判更少（开黑圈那边也是这个判法）。
    */
   private voiceWatch = new Map<string, { packets: number; hits: number }>();
+
+  /**
+   * 是否正在为"拿不到中继凭据"做整体重拨（重建 Peer）。
+   * 重建会把全房连接踢下线几秒，必须防重入，否则多条腿同时用尽时会连环重建。
+   */
+  private peerRedialing = false;
   /** 单向重连次数（一通就清零）：到顶就不再拆，免得来回抖。 */
   private oneWayHeals = new Map<string, number>();
   private voiceWatchTimer = 0;
@@ -3931,8 +3962,17 @@ export class VoiceMesh {
     /*
      * relay = 这条腿只收集中继候选（见 openPeer 里的 config getter）。
      * 同一段同步代码里设标志 → 建 PC → 复位，所以不会影响别的连接。
+     *
+     * ⚠️ 本端没有 TURN 时**不能**用 relay 策略（业主实测的 A-C 场景）：
+     * `iceTransportPolicy: "relay"` 会让本端一个候选都不收集，连接根本建不起来。
+     * 而谁发起是由 `myId < peerId` 单边决定的，于是同一对用户换个方向拨结果就不同：
+     *   A 发起 → A 有 TURN，能收集 relay 候选，C 作为接听方用 normal 策略，通；
+     *   C 发起 → C 只有纯 STUN，relay-only 收 0 个候选，必然失败。
+     * 表现就是"只有某两个人互相听不到，其他人之间都正常"。
+     * 没 TURN 时退回 all：至少还有一次打洞机会，比零候选强。
      */
-    this.relayNextCall = relay;
+    const relayUsable = relay && iceHasTurn();
+    this.relayNextCall = relayUsable;
     let call: MediaConnection | undefined;
     try {
       call = this.peer.call(peerId, stream, {
@@ -4294,6 +4334,35 @@ export class VoiceMesh {
       if (this.roomLinkState.get(peerId) !== "failed") {
         this.roomLinkState.set(peerId, "failed");
         this.events.mediaState(peerId, "failed");
+      }
+      /*
+       * 最后一道兜底（业主反馈"中继进房互相听不到"）。
+       *
+       * 单腿重拨从第 2 次起**只收集中继候选**，但 PeerJS 只在构造 Peer 的那一刻
+       * 读 ICE 配置，之后不再回看。于是：进房时 /ice 超过 2.5 秒 → 退回纯 STUN →
+       * Peer 用纯 STUN 建好 → 打洞失败 → relay-only 重拨时**一个中继候选都没有** →
+       * 三次用尽后停在失败。而能换掉 ICE 配置的只有 redialWithFreshPeer()（重建 Peer），
+       * 单腿自愈从来没调用过它 —— 这就是"两个人都显示已连接、却互相听不到"的成因。
+       *
+       * 只在【非房主 + 确实没有 TURN + 没在重建中】时升级：房主重建会换掉 peer id，
+       * 全房都要重连，代价太大，宁可在界面上让房主看到"已断开"并手动重进。
+       */
+      if (
+        !iceHasTurn() &&
+        !this.peerRedialing &&
+        this.hostId &&
+        this.myId !== this.hostId &&
+        // redialWithFreshPeer 自己不做上限检查（由调用方负责），这里必须自己拦一道
+        this.dialAttempts < MAX_DIAL_ATTEMPTS
+      ) {
+        this.peerRedialing = true;
+        this.pushRoomEvent(
+          "error",
+          "多次重拨未通，且本次进房没拿到中继凭据 —— 正在重建连接重新申请",
+        );
+        void this.redialWithFreshPeer().finally(() => {
+          this.peerRedialing = false;
+        });
       }
       return;
     }

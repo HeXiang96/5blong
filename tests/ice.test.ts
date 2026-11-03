@@ -66,7 +66,12 @@ describe("兜底状态（尚未拉到凭据）", () => {
     const ice = await freshModule();
     const urls = urlsOf(ice.iceServers() as { urls: string[] }[]);
 
-    expect(urls).toContain("stun:stun.cloudflare.com:3478");
+    /*
+     * 2026-11-03 起第一条不再是 stun.cloudflare.com：
+     * 自建了 coturn（同一台香港机器兼做 STUN），到它 37ms，
+     * 到 Cloudflare 要 154-220ms —— 反射地址发现这一跳也跟着变快了。
+     */
+    expect(urls).toContain("stun:5blong.site:3478");
     expect(urls).toContain("stun:stun.chat.bilibili.com:3478");
     // 2026-10-14 UDP 实探：小米无响应、Google 大陆问不到 —— 死地址不许留在兜底里
     expect(urls).not.toContain("stun:stun.miwifi.com:3478");

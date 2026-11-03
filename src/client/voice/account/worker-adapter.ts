@@ -39,7 +39,9 @@ function isDesktopRuntime(): boolean {
 function apiBase(): string {
   const override = import.meta.env["VITE_ACCOUNT_API"] as string | undefined;
   if (override) return override.replace(/\/$/, "");
-  if (isDesktopRuntime()) return "https://5blong.pages.dev/api/account";
+  // 桌面端必须绝对地址。指向香港那台：账号数据已经在那边，打回 pages.dev
+  // 会读到一份过时的库（并行期的数据分叉就是这么来的）。
+  if (isDesktopRuntime()) return "https://5blong.site/api/account";
   return "/api/account";
 }
 
@@ -54,6 +56,7 @@ function toError(code: unknown): AccountError {
     case "already-friend":
     case "self":
     case "room-taken":
+    case "same-password":
       return code;
     case "cooldown":
     case "rate-limited":
@@ -189,6 +192,15 @@ export class WorkerAccountAdapter implements AccountAdapter {
     this.me = null;
     writeCachedMe(null);
     this.emit();
+  }
+
+  async changePassword(current: string, next: string): Promise<AuthResult> {
+    const { data } = await this.request("/password", {
+      method: "POST",
+      body: { current, next },
+    });
+    if (data["error"]) return { error: toError(data["error"]) };
+    return {};
   }
 
   async updateProfile(

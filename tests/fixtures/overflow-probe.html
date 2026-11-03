@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>溢出探针</title>
+    <style>
+      body { margin: 0; font: 12px/1.5 ui-monospace, Consolas, monospace; background: #fff; }
+      iframe { width: 390px; height: 844px; border: 1px solid #ccc; }
+      #wrap { display: flex; gap: 12px; padding: 8px; }
+      #out { white-space: pre-wrap; width: 460px; color: #111; }
+      h1 { font-size: 13px; margin: 0 0 6px; }
+      .bad { color: #b3261e; }
+    </style>
+  </head>
+  <body>
+    <!--
+      用法：?page=landing|member-menu|friends-panel&w=390
+      把目标页塞进 390px 宽的 iframe，加载后遍历所有元素，
+      列出 rect.right 超出视口宽度的那些 —— 横向溢出的真正来源。
+    -->
+    <div id="wrap">
+      <iframe id="f"></iframe>
+      <div>
+        <h1 id="title">检测中…</h1>
+        <div id="out"></div>
+      </div>
+    </div>
+    <script>
+      const q = new URLSearchParams(location.search);
+      const page = q.get("page") || "landing";
+      const w = Number(q.get("w") || 390);
+      const frame = document.getElementById("f");
+      frame.width = w;
+      frame.src = `/tests/fixtures/${page}.html?theme=light&cb=${Date.now()}`;
+
+      frame.addEventListener("load", () => {
+        setTimeout(() => {
+          const doc = frame.contentDocument;
+          const title = document.getElementById("title");
+          const out = document.getElementById("out");
+          if (!doc) {
+            title.textContent = "拿不到 iframe 文档（跨源？）";
+            return;
+          }
+          const userW = frame.contentWindow.innerWidth;
+          const scrollW = doc.documentElement.scrollWidth;
+          title.textContent = `视口 ${userW}px · 文档 ${scrollW}px · 溢出 ${scrollW - userW}px`;
+
+
+      // ---- 触控目标与小字号审计（?audit=1）----
+      if (q.get("audit") === "1") {
+        const small = [];
+        const sel = "button, a, input, select, textarea, [role=button], [tabindex]";
+        for (const el of doc.querySelectorAll(sel)) {
+          const r = el.getBoundingClientRect();
+          if (r.width <= 0 || r.height <= 0) continue;
+          if (getComputedStyle(el).visibility === "hidden") continue;
+          if (r.width < 44 || r.height < 44) {
+            const cls = [...el.classList].join(".");
+            const label = (el.textContent || el.getAttribute("aria-label") || el.tagName).trim().slice(0, 12);
+            small.push(`${el.tagName.toLowerCase()}${cls ? "." + cls : ""} ${Math.round(r.width)}x${Math.round(r.height)} "${label}"`);
+          }
+        }
+        const tiny = [];
+        for (const el of doc.querySelectorAll("body *")) {
+          if (!el.textContent || el.children.length > 0) continue;
+          const fs = parseFloat(getComputedStyle(el).fontSize);
+          if (fs > 0 && fs < 11.5) {
+            const cls = [...el.classList].join(".");
+            tiny.push(`${fs}px ${el.tagName.toLowerCase()}${cls ? "." + cls : ""} "${el.textContent.trim().slice(0, 10)}"`);
+          }
+        }
+        out.textContent =
+          `视口 ${userW} · 文档 ${scrollW}\n\n` +
+          `【小于 44px 的触控目标 ${small.length} 个】\n` + small.slice(0, 30).join("\n") +
+          `\n\n【字号 < 11.5px 的文字 ${tiny.length} 处】\n` + tiny.slice(0, 15).join("\n");
+        return;
+      }
+          const rows = [];
+          for (const el of doc.querySelectorAll("body *")) {
+            const r = el.getBoundingClientRect();
+            if (r.width <= 0 || r.height <= 0) continue;
+            if (r.right <= userW + 1) continue;
+            const cls = [...el.classList].join(".");
+            const id = el.id ? "#" + el.id : "";
+            rows.push(
+              `${el.tagName.toLowerCase()}${id}${cls ? "." + cls : ""}  right=${Math.round(r.right)}`,
+            );
+          }
+          out.textContent = rows.length
+            ? rows.slice(0, 40).join("\n") + (rows.length > 40 ? `\n…共 ${rows.length} 个` : "")
+            : "没有元素溢出 ✅";
+        }, 900);
+      });
+    </script>
+  </body>
+</html>

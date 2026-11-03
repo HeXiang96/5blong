@@ -9,6 +9,7 @@ import {
   type VoiceSettings,
 } from "../settings";
 import { saveIdentity } from "../identity";
+import { ACCOUNT_ERROR_TEXT, type AccountError } from "../account/types";
 import {
   canSelectSpeaker,
   listDevices,
@@ -36,6 +37,7 @@ export function SettingsView({
   onOpenFeedback,
   onOpenOnboarding,
   onExportDiagnostics,
+  onChangePassword,
 }: {
   identity: Identity;
   settings: VoiceSettings;
@@ -48,6 +50,8 @@ export function SettingsView({
   onOpenOnboarding: () => void;
   /** 导出诊断包（引擎状态 + 每条链路 stats + 最近事件），用于排查问题 */
   onExportDiagnostics: () => void;
+  /** 改登录密码：由上层注入（网页端走 cookie、客户端走 Bearer，适配器自己处理） */
+  onChangePassword: (current: string, next: string) => Promise<{ error?: AccountError }>;
 }) {
   const [tab, setTab] = useState<Tab>("profile");
   const [draft, setDraft] = useState<Identity>(identity);
@@ -58,6 +62,12 @@ export function SettingsView({
   const [level, setLevel] = useState(0);
   const [testError, setTestError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  /* 改密码：三个输入框 + 一条结果提示（成功绿、失败红，都写在下面那行小字里） */
+  const [pwdCurrent, setPwdCurrent] = useState("");
+  const [pwdNext, setPwdNext] = useState("");
+  const [pwdConfirm, setPwdConfirm] = useState("");
+  const [pwdBusy, setPwdBusy] = useState(false);
+  const [pwdNote, setPwdNote] = useState<{ ok: boolean; text: string } | null>(null);
   const [theme, setTheme] = useState<ThemeChoice>(() => loadTheme());
   const stopTest = useRef<(() => void) | null>(null);
   const fileInput = useRef<HTMLInputElement | null>(null);
@@ -73,7 +83,8 @@ export function SettingsView({
   useEffect(() => {
     void refreshDevices();
     const off = onDeviceChange(() => void refreshDevices());
-    return () => {
+
+  return () => {
       off();
       stopTest.current?.();
     };
@@ -110,6 +121,26 @@ export function SettingsView({
     } catch {
       onNotice("error", "这张图片无法读取，请换一张（支持 JPG / PNG / WebP）");
     }
+  };
+
+  /** 提交改密码。四道本地校验先跑，省一次请求。 */
+  const submitPassword = async (): Promise<void> => {
+    if (pwdNext !== pwdConfirm) {
+      setPwdNote({ ok: false, text: "两次输入的新密码不一样" });
+      return;
+    }
+    setPwdBusy(true);
+    setPwdNote(null);
+    const result = await onChangePassword(pwdCurrent, pwdNext);
+    setPwdBusy(false);
+    if (result.error) {
+      setPwdNote({ ok: false, text: ACCOUNT_ERROR_TEXT[result.error] ?? "修改失败，稍后再试" });
+      return;
+    }
+    setPwdCurrent("");
+    setPwdNext("");
+    setPwdConfirm("");
+    setPwdNote({ ok: true, text: "密码已更新，其它设备上的登录已失效" });
   };
 
   const save = () => {
@@ -253,6 +284,66 @@ export function SettingsView({
                 </div>
                 <small>保存在本机，用于区分重名的人，不参与房间鉴权。</small>
               </div>
+            </section>
+            <section className="vx-card">
+              <h3>登录密码</h3>
+              <label className="vx-field">
+                <span className="vx-field-label">旧密码</span>
+                <input
+                  className="vx-input"
+                  type="password"
+                  autoComplete="current-password"
+                  value={pwdCurrent}
+                  onChange={(event) => setPwdCurrent(event.target.value)}
+                />
+              </label>
+              <label className="vx-field">
+                <span className="vx-field-label">新密码</span>
+                <input
+                  className="vx-input"
+                  type="password"
+                  autoComplete="new-password"
+                  value={pwdNext}
+                  onChange={(event) => setPwdNext(event.target.value)}
+                />
+              </label>
+              <label className="vx-field">
+                <span className="vx-field-label">再输一次</span>
+                <input
+                  className="vx-input"
+                  type="password"
+                  autoComplete="new-password"
+                  value={pwdConfirm}
+                  onChange={(event) => setPwdConfirm(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") void submitPassword();
+                  }}
+                />
+              </label>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  className="vx-btn vx-btn-small vx-btn-primary"
+                  disabled={pwdBusy || !pwdCurrent || !pwdNext}
+                  onClick={() => void submitPassword()}
+                >
+                  {pwdBusy ? "提交中…" : "修改密码"}
+                </button>
+                {pwdNote ? (
+                  <span
+                    role="status"
+                    style={{
+                      fontSize: 12,
+                      color: pwdNote.ok ? "var(--vx-live)" : "var(--vx-danger)",
+                    }}
+                  >
+                    {pwdNote.text}
+                  </span>
+                ) : null}
+              </div>
+              <p style={{ margin: "8px 0 0", fontSize: 12, color: "var(--vx-text-faint)" }}>
+                至少 8 位，且不要用重复字符。改完其它设备需要重新登录。
+              </p>
             </section>
           </>
         ) : tab === "audio" ? (

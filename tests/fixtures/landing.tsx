@@ -12,14 +12,29 @@ import "../../src/client/voice/pen-life.css";
 import "../../src/client/voice/pen-fence.css";
 import "../../src/client/voice/pen-tv.css";
 import "../../src/client/voice/pen-themes.css";
+import "../../src/client/voice/skin-paper.css";
 
 const params = new URLSearchParams(location.search);
 document.documentElement.dataset.theme = params.get("theme") ?? "light";
+// ?skin=paper：v2.0「纸与朱砂」试穿（只影响外观，不参与构建）
+const skin = params.get("skin");
+if (skin) document.documentElement.dataset.skin = skin;
 // 场景主题 / 时段：验证首页卡片与公告栏在雪原、万圣夜下的配色适配
 const scene = params.get("scene");
 if (scene) document.documentElement.dataset.scene = scene;
 const daypart = params.get("daypart");
 if (daypart) document.documentElement.dataset.daypart = daypart;
+
+/*
+ * ?noboard=1：隐藏右下角「最新更新」公告牌。
+ * 真实产品里它常驻，但**宣传片 / 演示截图里不能出现版本号和更新日志** ——
+ * 观众会去核对版本，而且那块木牌会抢走落地卡片的视线。
+ */
+if (params.get("noboard") === "1") {
+  const style = document.createElement("style");
+  style.textContent = ".vx-landing-board{display:none!important}";
+  document.head.appendChild(style);
+}
 
 /*
  * ?thememenu=1：自动点开右上角调色板的主题菜单。

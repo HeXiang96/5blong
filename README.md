@@ -26,6 +26,54 @@
 
 ---
 
+## 自托管后端迁移（2026-11-03）：语音账号服务已搬离 Cloudflare
+
+> **给后续维护者（含 AI）**：这一轮把后端从 Cloudflare 搬到了一台**自有的香港 ECS**，
+> 全程零停机（新旧两套并行）。完整交接记录（给接手的 AI 读）：
+> [HANDOVER-2026-11-03.md](./docs/HANDOVER-2026-11-03.md)。
+
+### 为什么搬（实测数据，不是猜测）
+
+- `5blong.pages.dev` 这条线路被 Cloudflare 路由到**洛杉矶**（`colo=LAX`、`loc=CN`）。
+  抽样 85 个 CF IP，29 个有响应，**没有一个落在亚洲** —— 所谓"CF 优选"对这条线路无解。
+- 到香港 20–41ms，到 CF 154–220ms；主包 654KB 实测 3.5–7.8 秒，迁后 **0.3–0.6 秒**。
+- `/ice`（中继凭据）跨境时 8 次里 1 次超 6 秒，而客户端只等 2.5 秒 ——
+  超时退回纯 STUN，打洞失败就没有中继可用，这就是"两个人都显示已连接却互相听不到"的上游成因之一。
+
+### 现在的架构
+
+```
+5blong.site（香港 ECS，2核2G）
+  ├─ 静态站（nginx 直出，/assets/* 长缓存）
+  ├─ 账号/好友/邀请接口（Node 22 + node:sqlite，server/）
+  ├─ 房间遥测（POST /api/rooms/snapshot）
+  ├─ 开黑圈（/game/entitle、/game/verify、/game-admin）
+  ├─ 屏幕共享代理（/sfu → Cloudflare Realtime，密钥只在服务端）
+  ├─ 信令（PeerJS，server/src/peer.mjs）
+  ├─ 收件箱推送（/peerjs/inbox，WebSocket，好友/邀请红点）
+  ├─ TURN/STUN 中继（coturn，3478/5349 + 50000-50999）
+  └─ SQLite（/data/5blong/app.db，WAL，每天 03:00 备份）
+```
+
+仍在 Cloudflare 的只剩两样：**屏幕共享的 SFU 服务本体**（入口已在我们这），以及
+**旧客户端还在连的 pages.dev**（切完版本就能下线）。语音 64kbps 高音质已上线（未发版）。
+
+### 部署与运维
+
+- 服务器：香港 ECS `8.210.198.140`，域名 `5blong.site`（未备案，走"全球不含中国大陆"线路）。
+- 部署目录 `/opt/5blong/server`，静态产物 `/var/www/5blong`，数据库 `/data/5blong/app.db`。
+- 令牌与密钥全在服务器 `/etc/5blong/env`（后台令牌、TURN 密钥、SFU 密钥），**仓库里没有**。
+- 自检：`node /opt/5blong/server/scripts/turn-check.mjs`（中继完整分配测试，
+  能同时验证 UDP 可达 / 凭据签名 / external-ip / 端口段四件事）。
+- 桌面端更新源已双通道：`5blong.site` 优先、GitHub Releases 兜底
+  （`/desktop/latest.json` + exe 已同步一份到 ECS）。
+
+### ⚠️ 并行期的硬规则
+
+信令是**全局注册表**：网页端（5blong.site）和已安装的桌面客户端（pages.dev）
+**不在一张注册表里，同一房号也互相看不见**。这批客户端改动**尚未发版**，
+发版时必须同步抬高 `MIN_SUPPORTED`，把旧版赶上来，否则就是两个世界。
+
 ## 共享屏幕优化（2026-10-14 晚）：从根上解决"观众看着卡/糊"
 
 > **本节专为后续维护者（含 AI）而写**：交代"共享屏幕为什么卡、改了什么、怎么验证、别踩哪些坑"。  

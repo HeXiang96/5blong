@@ -27,7 +27,7 @@ const API_BASE = (() => {
   if (import.meta.env.DEV) return "";
   const host = typeof location !== "undefined" ? location.hostname : "";
   if (host === "tauri.localhost" || host.endsWith(".tauri.localhost")) {
-    return "https://5blong.pages.dev";
+    return "https://5blong.site";
   }
   return "";
 })();
@@ -238,7 +238,7 @@ export function useGame() {
         speaking: (ids) => setSpeaking(new Set(ids)),
       });
     }
-    if (typeof window !== "undefined" && window.location.hostname !== "5blong.pages.dev") {
+    if (typeof window !== "undefined" && window.location.hostname !== "5blong.site") {
       (window as unknown as { __gameMesh?: GameMesh }).__gameMesh = meshRef.current;
     }
     return meshRef.current;

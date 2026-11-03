@@ -38,9 +38,13 @@ import "../../src/client/voice/styles.css";
 import "../../src/client/voice/account.css";
 // 场景主题必须最后加载（靠层叠顺序取胜），和 main.tsx 的顺序一致
 import "../../src/client/voice/pen-themes.css";
+import "../../src/client/voice/skin-paper.css";
 
 const params = new URLSearchParams(location.search);
 document.documentElement.dataset.theme = params.get("theme") ?? "light";
+// ?skin=paper：v2.0「纸与朱砂」试穿（只影响外观，不参与构建）
+const skin = params.get("skin");
+if (skin) document.documentElement.dataset.skin = skin;
 if (params.get("daypart")) document.documentElement.dataset.daypart = params.get("daypart")!;
 // 场景主题（雪原 / 万圣夜 / 春节）：面板配色要跟着变，这里也要能复现
 if (params.get("scene")) document.documentElement.dataset.scene = params.get("scene")!;

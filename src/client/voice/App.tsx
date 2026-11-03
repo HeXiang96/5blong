@@ -664,6 +664,7 @@ export function App() {
           onOpenFeedback={openFeedback}
           onOpenOnboarding={() => setOnboardingOpen(true)}
           onExportDiagnostics={() => void voice.exportDiagnostics()}
+          onChangePassword={(current, next) => accountAdapter.changePassword(current, next)}
         />
         <FeedbackDialog
           open={feedback.open}
@@ -809,6 +810,7 @@ export function App() {
             onOpenFeedback={openFeedback}
             onOpenOnboarding={() => setOnboardingOpen(true)}
           onExportDiagnostics={() => void voice.exportDiagnostics()}
+          onChangePassword={(current, next) => accountAdapter.changePassword(current, next)}
           />
         </div>
       ) : null}

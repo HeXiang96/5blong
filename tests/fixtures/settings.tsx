@@ -43,6 +43,12 @@ createRoot(document.getElementById("root")!).render(
       onClose={() => {}}
       onOpenFeedback={() => {}}
       onOpenOnboarding={() => {}}
+      /* 夹具没有真实账号：用 demo1234 当旧密码，方便目检"成功 / 旧密码错"两种状态 */
+      onChangePassword={async (current, next) => {
+        if (current !== "demo1234") return { error: "bad-credentials" as const };
+        if (next.length < 8) return { error: "password-weak" as const };
+        return {};
+      }}
       onExportDiagnostics={() => {}}
       onNotice={() => {}}
     />

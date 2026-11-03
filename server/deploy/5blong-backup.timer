@@ -1,0 +1,14 @@
+[Unit]
+Description=5blong 每日备份定时器（凌晨 3 点）
+
+[Timer]
+# 每天 03:00 本地时间
+OnCalendar=*-*-* 03:00:00
+# 关键：关机/重启错过的那次，开机后会补跑一次
+Persistent=true
+# 随机抖动最多 5 分钟，避免和其他定时任务撞在同一秒
+RandomizedDelaySec=300
+Unit=5blong-backup.service
+
+[Install]
+WantedBy=timers.target

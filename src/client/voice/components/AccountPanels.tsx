@@ -581,7 +581,9 @@ export function FriendsDrawer({
 
     return (
       <div
-        className={`vx-friend-row ${online ? "vx-friend-row-on" : "vx-friend-row-off"}`}
+        className={`vx-friend-row ${online ? "vx-friend-row-on" : "vx-friend-row-off"}${
+          isAlias || isRemove ? " vx-friend-row-edit" : ""
+        }`}
         key={id}
       >
         <span className={`vx-friend-dot${online ? " vx-friend-dot-on" : ""}`} aria-hidden />
@@ -632,23 +634,29 @@ export function FriendsDrawer({
         )}
 
         {isAlias ? (
-          <>
+          /*
+           * 编辑态：按钮单独占一行、靠右对齐。
+           * 业主实拍（2026-10-28）：两个按钮挤在输入框右边，宽度被压到只剩一个字，
+           * 「保存」「取消」竖排成两列，看着像坏掉了。原因是 .vx-btn 没有 nowrap，
+           * flex 行里一压就逐字换行。这里让它整行换行，输入框拿满第一行。
+           */
+          <div className="vx-friend-edit-acts">
             <button type="button" className="vx-btn vx-btn-small vx-btn-primary" onClick={() => void saveAlias(id)}>
               保存
             </button>
             <button type="button" className="vx-btn vx-btn-small vx-btn-quiet" onClick={() => setRow(null)}>
               取消
             </button>
-          </>
+          </div>
         ) : isRemove ? (
-          <>
+          <div className="vx-friend-edit-acts">
             <button type="button" className="vx-btn vx-btn-small vx-friend-danger" onClick={() => void doRemove(id)}>
               移除
             </button>
             <button type="button" className="vx-btn vx-btn-small vx-btn-quiet" onClick={() => setRow(null)}>
               取消
             </button>
-          </>
+          </div>
         ) : (
           <>
             {/*

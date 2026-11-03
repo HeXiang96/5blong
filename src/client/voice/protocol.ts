@@ -269,7 +269,13 @@ export function verifyHostProof(
 // 邀请链接
 // ---------------------------------------------------------------------------
 
-export const PUBLIC_WEB_BASE = "https://5blong.pages.dev";
+/*
+ * 邀请链接的落地地址（2026-11-03 从 pages.dev 换成自建域名）。
+ *
+ * 必须跟着信令一起换：链接落在哪个域名，就从那个域名加载前端、
+ * 也就连那个域名的信令。两边不一致会出现"点链接进来的人，和房里的人互相看不见"。
+ */
+export const PUBLIC_WEB_BASE = "https://5blong.site";
 
 export interface Invite {
   code: string;
@@ -1070,7 +1076,7 @@ function parseMember(value: unknown): WireMember | null {
  * 单房人数上限（**含房主**：房主 + 12 位访客 = 13 人）。
  *
  * 全互联 mesh 的边数是 n(n-1)/2，13 人即 78 条媒体连接，平均每个客户端
- * 上行 12 路 Opus（每路 40kbps，合计约 0.5Mbps）——带宽不是瓶颈，
+ * 上行 12 路 Opus（每路 64kbps，合计约 0.77Mbps）——带宽不是瓶颈，
  * 瓶颈是"每人都要给 12 个人编码"，弱机/弱网时更容易出现单腿劣化。
  * 所以单向链路看门狗（engine.checkMediaFlow）在 10 人以上尤其重要。
  *

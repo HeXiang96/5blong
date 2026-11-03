@@ -13,19 +13,27 @@ const SDP = [
 ].join("\r\n");
 
 describe("opusSdpTransform", () => {
-  it("语音：关 DTX、单声道、40k", () => {
+  it("语音：关 DTX、单声道、64k、带 FEC", () => {
     const out = opusSdpTransform("voice")(SDP);
     expect(out).toContain("usedtx=0");
     expect(out).toContain("stereo=0");
     expect(out).toContain(`maxaveragebitrate=${VOICE_AUDIO_BITRATE}`);
-    expect(out).toContain("useinbandfec=1"); // 原有参数保留
+    // 2026-10-28 业主口径「默认高音质」：64k
+    expect(VOICE_AUDIO_BITRATE).toBe(64_000);
+    /*
+     * FEC 必须显式保留/写入。Chrome 默认 SDP 里本来就带 useinbandfec=1，
+     * 但清理正则如果把它删了又没补回来，丢包 5% 的房间里会明显更毛。
+     */
+    expect(out).toContain("useinbandfec=1");
+    expect(out.match(/useinbandfec/g)?.length).toBe(1);
   });
 
-  it("共享声音：立体声、关 DTX、128k", () => {
+  it("共享声音：立体声、关 DTX、128k、带 FEC", () => {
     const out = opusSdpTransform("music")(SDP);
     expect(out).toContain("stereo=1");
     expect(out).toContain("sprop-stereo=1");
     expect(out).toContain(`maxaveragebitrate=${SCREEN_AUDIO_BITRATE}`);
+    expect(out).toContain("useinbandfec=1");
   });
 
   it("不会碰视频的 fmtp", () => {

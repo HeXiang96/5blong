@@ -1,0 +1,22 @@
+{
+  "name": "5blong-server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "5blong 自托管后端：账号接口 + PeerJS 信令 + TURN 凭据（替换 Cloudflare Pages Worker）",
+  "engines": {
+    "node": ">=22.5"
+  },
+  "scripts": {
+    "start": "node src/index.mjs",
+    "dev": "node --watch src/index.mjs",
+    "peer": "node scripts/peer.mjs",
+    "init-db": "node scripts/init-db.mjs",
+    "selftest": "node scripts/selftest.mjs"
+  },
+  "dependencies": {
+    "express": "^4.21.1",
+    "peer": "^1.0.2",
+    "ws": "^8.18.0"
+  }
+}

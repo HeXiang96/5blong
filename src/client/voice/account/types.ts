@@ -136,6 +136,8 @@ export type AccountError =
   | "self"
   | "room-taken"
   | "room-locked"
+  /** 新密码和旧密码一样（改密码时拦下，避免白改一趟） */
+  | "same-password"
   /** 刚被拒绝过 / 刚被删过，24 小时内不许再申请（2026-10-27） */
   | "cooldown"
   /** 今日好友请求 / 邀请 / 敲门次数超上限（软限流，防脚本刷） */
@@ -156,6 +158,8 @@ export interface AccountAdapter {
   updateProfile(
     patch: Partial<Pick<AccountProfile, "name" | "avatar" | "username" | "roomCode">>,
   ): Promise<AuthResult>;
+  /** 改自己的登录密码：必须验旧密码，成功后其它设备的登录会失效 */
+  changePassword(current: string, next: string): Promise<AuthResult>;
   search(query: string): Promise<AccountProfile[]>;
   /** 加好友。note = 可选的申请附言（≤30 字），对方在「待处理」里能看到。 */
   addFriend(accountId: string, note?: string): Promise<AuthResult>;
@@ -216,6 +220,7 @@ export const ACCOUNT_ERROR_TEXT: Record<AccountError, string> = {
   self: "不能加自己为好友",
   "room-taken": "这个房号已经被别人认领了，换一个试试",
   "room-locked": "房号已经锁定：每个账号只有一次改号机会",
+  "same-password": "新密码不能和旧密码一样",
   cooldown: "对方暂时不接受好友申请，过一天再试",
   "rate-limited": "今天操作太频繁了，明天再来",
   unknown: "出了点问题，稍后再试",

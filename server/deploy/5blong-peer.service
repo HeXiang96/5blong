@@ -1,0 +1,32 @@
+[Unit]
+Description=5blong PeerJS 信令服务
+Documentation=https://github.com/HeXiang96/5blong
+After=network.target
+Before=nginx.service
+
+[Service]
+Type=simple
+User=5blong
+Group=5blong
+WorkingDirectory=/opt/5blong/server
+EnvironmentFile=/etc/5blong/env
+ExecStart=/usr/bin/node scripts/peer.mjs
+
+Restart=always
+RestartSec=3
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+# 信令是纯内存态，不需要写盘
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/data/5blong
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=5blong-peer
+
+[Install]
+WantedBy=multi-user.target

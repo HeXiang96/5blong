@@ -114,6 +114,10 @@ export default {
     if (url.pathname === "/accounts-admin") {
       return handleAccountsAdmin(request, env);
     }
+    // /reset → 用户自助重置密码（凭管理员发的一次性链接，无需登录）
+    if (url.pathname === "/reset") {
+      return handlePasswordReset(request, env, url);
+    }
 
     // /rooms → 在线房间面板（令牌保护；与反馈页分开，避免一页太臃肿）
     if (url.pathname === "/rooms") {
@@ -1163,6 +1167,150 @@ async function adminAudit(env, actor, action, target, detail) {
   }
 }
 
+/**
+ * 密码重置链接（业主需求：用户忘了密码、也记不住 8 位 ID）。
+ *
+ * 流程：管理员在后台按**用户名**搜到人 → 生成一条链接 → 私发给用户 →
+ * 用户自己打开设新密码。链接里只有那一个账号，看不到任何别人的信息。
+ *
+ * 为什么用签名而不是建表：
+ *   - 签名 token 无状态，不占库、不用跑建表脚本；
+ *   - 链接 30 分钟内有效，且一旦设过新密码，旧链接再打开也只是"再设一次"，
+ *     而攻击者本来就必须先拿到这条私发的链接 —— 收益不值一张表。
+ * 签名密钥复用 FEEDBACK_TOKEN（已经是 Pages 的 secret，不额外增加配置项）。
+ */
+const RESET_TTL_MS = 30 * 60_000;
+
+function b64urlEncode(text) {
+  let bin = "";
+  for (const byte of new TextEncoder().encode(text)) bin += String.fromCharCode(byte);
+  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function b64urlDecode(text) {
+  const pad = text.length % 4 ? "=".repeat(4 - (text.length % 4)) : "";
+  const bin = atob(text.replace(/-/g, "+").replace(/_/g, "/") + pad);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i += 1) out[i] = bin.charCodeAt(i);
+  return new TextDecoder().decode(out);
+}
+
+async function resetSignature(secret, payload) {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(payload));
+  return hexOf(sig).slice(0, 32);
+}
+
+async function makeResetToken(env, accountId) {
+  const secret = env.FEEDBACK_TOKEN;
+  if (!secret) return "";
+  const payload = `${accountId}.${Date.now() + RESET_TTL_MS}`;
+  return `${b64urlEncode(payload)}.${await resetSignature(secret, payload)}`;
+}
+
+/** 验签并取出账号 ID；过期/被改过一律返回 null。 */
+async function readResetToken(env, token) {
+  const secret = env.FEEDBACK_TOKEN;
+  if (!secret || !token) return null;
+  const dot = token.lastIndexOf(".");
+  if (dot <= 0) return null;
+  let payload;
+  try {
+    payload = b64urlDecode(token.slice(0, dot));
+  } catch {
+    return null;
+  }
+  if ((await resetSignature(secret, payload)) !== token.slice(dot + 1)) return null;
+  const [id, exp] = payload.split(".");
+  if (!id || !/^\d{8}$/.test(id)) return null;
+  if (!Number(exp) || Number(exp) < Date.now()) return null;
+  return id;
+}
+
+/** 用户端看到的设置密码表单（只有新密码两格，没有账号列表）。 */
+function resetFormPage(token, who, errorText, status) {
+  const label = who?.name || who?.username || "你的账号";
+  return adminPage(
+    "设置新密码",
+    `<div class="card">
+  <p class="msg">房主发来的是 <b>${escapeHtml(String(label))}</b> 的密码重置链接。</p>
+  <p class="msg">设好新密码就能正常登录了。这条链接 <b>30 分钟内有效</b>。</p>
+  ${errorText ? `<p class="msg" style="color:#a33">⚠ ${escapeHtml(errorText)}</p>` : ""}
+  <form method="post" action="/reset?t=${encodeURIComponent(token)}" style="margin-top:12px">
+    <p class="msg" style="margin:0 0 6px">新密码</p>
+    <input name="next" type="password" autocomplete="new-password" required
+           style="width:100%;box-sizing:border-box;padding:10px 12px;border:1px solid #d8cfc0;border-radius:10px;font:inherit;background:#fff">
+    <p class="msg" style="margin:12px 0 6px">再输一次</p>
+    <input name="confirm" type="password" autocomplete="new-password" required
+           style="width:100%;box-sizing:border-box;padding:10px 12px;border:1px solid #d8cfc0;border-radius:10px;font:inherit;background:#fff">
+    <p style="margin:14px 0 0">
+      <button style="padding:10px 22px;border:none;border-radius:10px;background:#2e4b3c;color:#f7f5f0;font:inherit;cursor:pointer">设置新密码</button>
+    </p>
+    <p class="msg" style="margin-top:10px;color:#8a8175;font-size:12px">
+      至少 8 位，且不要用重复字符。设好后，其它设备上的登录会失效。
+    </p>
+  </form>
+</div>`,
+    status,
+  );
+}
+
+/** GET/POST /reset?t=TOKEN —— 用户自助设新密码（无需登录）。 */
+async function handlePasswordReset(request, env, url) {
+  if (!env.DB) return adminPage("暂不可用", "<p>账号服务还没配置。</p>", 503);
+  const token = url.searchParams.get("t") ?? "";
+  const id = await readResetToken(env, token);
+  if (!id) {
+    return adminPage(
+      "链接已失效",
+      `<div class="card"><p class="msg">这条重置链接已经过期（或复制不全）。</p>
+       <p class="msg">找房主在后台重新生成一条吧。</p></div>`,
+      400,
+    );
+  }
+  const who = await env.DB.prepare("SELECT username, name FROM accounts WHERE id = ?").bind(id).first();
+  if (!who) {
+    return adminPage("找不到账号", `<div class="card"><p class="msg">这个账号可能已经被删掉了。</p></div>`, 404);
+  }
+
+  if (request.method !== "POST") return resetFormPage(token, who, "", 200);
+
+  const form = await request.formData();
+  const next = String(form.get("next") ?? "");
+  const confirm = String(form.get("confirm") ?? "");
+  if (next !== confirm) return resetFormPage(token, who, "两次输入的新密码不一样", 400);
+  const weak = passwordProblem(next);
+  if (weak) return resetFormPage(token, who, "密码至少 8 位，且至少 4 种不同字符", 400);
+
+  const salt = randomHex(16);
+  const hash = await pbkdf2Hex(next, salt);
+  await env.DB.batch([
+    env.DB.prepare("UPDATE accounts SET salt = ?, hash = ?, updated_at = ? WHERE id = ?").bind(
+      salt,
+      hash,
+      Date.now(),
+      id,
+    ),
+    // 密码重置 = 把所有可疑会话踢掉；用户随后用新密码登录
+    env.DB.prepare("DELETE FROM account_sessions WHERE account_id = ?").bind(id),
+  ]);
+  await adminAudit(env, "reset-link", "pass_reset", id, "通过重置链接自行修改了密码");
+
+  return adminPage(
+    "密码已设置",
+    `<div class="card"><p class="msg">✅ 新密码已经生效。</p>
+     <p class="msg">回到 5blong 用新密码登录就行，其它设备需要重新登录。</p>
+     <p style="margin-top:14px"><a href="https://5blong.pages.dev">打开 5blong</a></p></div>`,
+    200,
+  );
+}
+
 /** GET/POST /accounts-admin?staff=TOKEN */
 async function handleAccountsAdmin(request, env) {
   try {
@@ -1265,6 +1413,95 @@ async function accountsAdminInner(request, env) {
       }
     }
 
+    if (action === "reset_link") {
+      /*
+       * 生成一条 30 分钟有效的自助重置链接（业主诉求：用户连 8 位 ID 都记不住，
+       * 所以管理员按用户名搜到人，直接把链接发过去让他自己设密码）。
+       * 直接渲染结果页而不是 303：链接要能被一键复制，放 flash 里会截断。
+       */
+      if (who.role !== "main") {
+        flash.push("err:生成重置链接需要主令牌");
+      } else {
+        const target = await env.DB.prepare("SELECT id, username, name FROM accounts WHERE id = ?")
+          .bind(id)
+          .first();
+        if (!target) {
+          flash.push(`err:找不到账号 ${id}`);
+        } else {
+          const token = await makeResetToken(env, id);
+          if (!token) {
+            flash.push("err:没有配置 FEEDBACK_TOKEN，无法签名重置链接");
+          } else {
+            const link = `https://5blong.pages.dev/reset?t=${encodeURIComponent(token)}`;
+            await adminAudit(env, who.name, "pass_reset_link", id, "生成了密码重置链接（30 分钟有效）");
+            return adminPage(
+              "重置链接已生成",
+              `<div class="card">
+  <p class="msg">账号 <code>${escapeHtml(id)}</code>${
+    target.username ? `（用户名 ${escapeHtml(String(target.username))}）` : ""
+  } 的重置链接：</p>
+  <p class="msg" style="word-break:break-all;background:#fff8e8;border:1px dashed #d8c9a8;border-radius:10px;padding:10px 12px;font-size:13px">
+    <a href="${escapeHtml(link)}">${escapeHtml(link)}</a></p>
+  <p class="msg"><b>30 分钟内有效</b>，且只能给这个人。发给他之后，他自己打开设新密码。</p>
+  <p class="msg">对方设好后，该账号所有旧登录会失效。</p>
+  <p style="margin-top:14px"><a href="/accounts-admin${tokenQuery}">← 返回账号列表</a></p>
+</div>`,
+            );
+          }
+        }
+      }
+    }
+
+    if (action === "reset_pass") {
+      /*
+       * 重置登录密码（业主 2026-11-02：忘了密码，后台得救得回来）。
+       *
+       * 三条规矩：
+       *   ① 只给 main 令牌，员工令牌不碰密码；
+       *   ② **密码不走 URL**：flash 是拼在 query string 上的，会把明文密码写进
+       *      浏览器历史和访问日志。所以这里直接渲染结果页，不做 303 重定向；
+       *   ③ 重置后踢掉该账号所有登录会话 —— 要重置密码，多半就是不知道谁还在用这个号。
+       */
+      if (who.role !== "main") {
+        flash.push("err:重置密码需要主令牌");
+      } else {
+        const target = await env.DB.prepare(
+          "SELECT id, username, name FROM accounts WHERE id = ?",
+        )
+          .bind(id)
+          .first();
+        if (!target) {
+          flash.push(`err:找不到账号 ${id}`);
+        } else {
+          const password = suggestPassword();
+          const salt = randomHex(16);
+          const hash = await pbkdf2Hex(password, salt);
+          const changedAt = Date.now();
+          await env.DB.batch([
+            env.DB.prepare(
+              "UPDATE accounts SET salt = ?, hash = ?, updated_at = ? WHERE id = ?",
+            ).bind(salt, hash, changedAt, id),
+            env.DB.prepare("DELETE FROM account_sessions WHERE account_id = ?").bind(id),
+          ]);
+          await adminAudit(env, who.name, "pass_reset", id, "管理员重置了登录密码，旧会话已全部失效");
+          return adminPage(
+            "密码已重置",
+            `<div class="card">
+  <p class="msg">账号 <code>${escapeHtml(id)}</code>${
+    target.username ? `（用户名 ${escapeHtml(String(target.username))}）` : ""
+  } 的新密码：</p>
+  <p class="msg" style="font-size:26px;font-weight:700;letter-spacing:.08em;text-align:center;
+     background:#fff8e8;border:1px dashed #d8c9a8;border-radius:10px;padding:12px 16px;">
+    <code>${escapeHtml(password)}</code></p>
+  <p class="msg"><b>这串只显示这一次</b>，刷新就没了 —— 先记下来再离开本页。</p>
+  <p class="msg">该账号原来的登录状态已经全部失效，需要用新密码重新登录。</p>
+  <p style="margin-top:14px"><a href="/accounts-admin${tokenQuery}">← 返回账号列表</a></p>
+</div>`,
+          );
+        }
+      }
+    }
+
     return new Response(null, {
       status: 303,
       headers: {
@@ -1280,6 +1517,8 @@ async function accountsAdminInner(request, env) {
     room_set: "改了房号",
     room_clear: "清空了房号",
     id_set: "改了数字 ID",
+    pass_reset: "重置了密码",
+    pass_reset_link: "生成了重置链接",
   };
   let recent = [];
   try {
@@ -1293,14 +1532,20 @@ async function accountsAdminInner(request, env) {
     // 审计表还没建（老库）：这块整体不显示，不挡住列表
   }
 
+  /*
+   * 搜索（业主诉求：用户连 8 位 ID 都可能记不住，管理员得能按用户名/昵称找人）。
+   * 三个字段一起模糊匹配，输入什么都能命中：53720018 / shanzi / 好香的熊猫。
+   */
+  const keyword = (url.searchParams.get("q") ?? "").trim().slice(0, 40);
+  const where = keyword ? " WHERE a.id LIKE ? OR lower(a.username) LIKE ? OR lower(a.name) LIKE ?" : "";
+  const like = `%${keyword.toLowerCase()}%`;
+  const bindArgs = keyword ? [like, like, like] : [];
+  const baseSql =
+    "SELECT a.id, a.username, a.name, a.room_code, a.room_changes, a.created_at, " +
+    "p.last_seen, p.room_code AS live_room FROM accounts a " +
+    `LEFT JOIN account_presence p ON p.account_id = a.id${where} ORDER BY a.created_at DESC LIMIT 200`;
   const rows =
-    (
-      await env.DB.prepare(
-        "SELECT a.id, a.username, a.name, a.room_code, a.room_changes, a.created_at, " +
-          "p.last_seen, p.room_code AS live_room FROM accounts a " +
-          "LEFT JOIN account_presence p ON p.account_id = a.id ORDER BY a.created_at DESC LIMIT 200",
-      ).all()
-    ).results ?? [];
+    (await env.DB.prepare(baseSql).bind(...bindArgs).all()).results ?? [];
 
   const now = Date.now();
   /** Worker 默认按 UTC 渲染时间，必须显式指定北京时间（业主指出过差 8 小时的问题）。 */
@@ -1308,6 +1553,14 @@ async function accountsAdminInner(request, env) {
     new Date(Number(ms)).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false, ...opts });
   const fmt = (ms) => (ms ? beijing(ms, {}) : "—");
   const online = (last) => last && now - Number(last) < 3 * 60_000;
+
+  const searchBar = `<form method="get" class="searchbar" style="margin:0 0 12px">
+  <input type="text" name="q" value="${escapeHtml(keyword)}" placeholder="搜数字 ID / 用户名 / 昵称"
+         style="flex:1 1 260px;border:1px solid #d6cfc2;border-radius:999px;padding:8px 16px;font-size:14px;background:#fff">
+  <button style="border:1px solid #d6cfc2;border-radius:999px;padding:8px 18px;background:#fff;cursor:pointer">搜索</button>
+  ${keyword ? `<a href="/accounts-admin${tokenQuery}" style="font-size:13px">清除</a>` : ""}
+</form>
+${keyword && rows.length === 0 ? `<p class="a-empty">没有匹配「${escapeHtml(keyword)}」的账号。</p>` : ""}`;
 
   const body = rows.length
     ? `<table class="a-table">
@@ -1349,6 +1602,16 @@ async function accountsAdminInner(request, env) {
         <input type="hidden" name="id" value="${escapeHtml(row.id)}" />
         <input class="a-input" name="newid" maxlength="8" inputmode="numeric" placeholder="新 8 位 ID" />
         <button class="a-danger">改数字 ID</button>
+      </form>
+      <form method="post" class="a-idform">
+        <input type="hidden" name="action" value="reset_pass" />
+        <input type="hidden" name="id" value="${escapeHtml(row.id)}" />
+        <button class="a-ghost" title="生成一个随机密码，并让该账号的旧登录全部失效">重置密码</button>
+      </form>
+      <form method="post" class="a-idform">
+        <input type="hidden" name="action" value="reset_link" />
+        <input type="hidden" name="id" value="${escapeHtml(row.id)}" />
+        <button class="a-ghost" title="生成一条 30 分钟有效的链接，发给对方自己设密码">重置链接</button>
       </form>`
           : `<span class="a-empty">改数字 ID 需要业主令牌</span>`
       }
@@ -1422,7 +1685,7 @@ async function accountsAdminInner(request, env) {
   .a-recent-time { color: #8a8175; font-variant-numeric: tabular-nums; white-space: nowrap; }
 </style>
 <p class="a-summary">共 ${rows.length} 个账号 · 以 ${escapeHtml(who.name)}（${who.role === "main" ? "业主" : "员工"}）身份查看 · <b>密码不在此页展示（数据库里只有不可逆哈希）</b></p>
-${flashHtml}
+${flashHtml}${searchBar}
 ${recentHtml}
 ${body}`;
 
@@ -1707,6 +1970,18 @@ function randomHex(bytes) {
 }
 
 /**
+ * 生成给人念的随机密码：10 位，去掉 0/O/1/l/I 这些看错的字符。
+ * 仅用于管理员重置；用户拿到后应当在设置里改成自己记得的。
+ */
+function suggestPassword() {
+  const alphabet = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const bytes = crypto.getRandomValues(new Uint8Array(10));
+  let out = "";
+  for (const byte of bytes) out += alphabet[byte % alphabet.length];
+  return out;
+}
+
+/**
  * 生成密码哈希：`pbkdf2$<迭代次数>$<hex>`。
  *
  * 为什么把迭代次数写进串里：Workers 免费计划有 CPU 时间上限，万一 12 万次在线上
@@ -1875,14 +2150,24 @@ function clampName(value) {
   return String(value ?? "").trim().slice(0, 24);
 }
 
+/**
+ * 密码强度规则：注册与"改密码"共用一套，避免两处标准漂移。
+ * 返回 null = 合格；否则返回给客户端的错误码。
+ */
+function passwordProblem(password) {
+  // 8–64 位，且至少 4 种不同字符（挡掉 aaaaaaaa / 12341234 这类）
+  if (password.length < 8 || password.length > 64) return "password-weak";
+  if (new Set(password).size < 4) return "password-weak";
+  return null;
+}
+
 async function accountRegister(request, env) {
   const body = await request.json().catch(() => null);
   const username = String(body?.username ?? "").trim();
   const password = String(body?.password ?? "");
   if (!ACCOUNT_USERNAME_RE.test(username)) return accountJson(request, { error: "username-invalid" }, 400);
-  if (password.length < 8 || password.length > 64 || new Set(password).size < 4) {
-    return accountJson(request, { error: "password-weak" }, 400);
-  }
+  const weak = passwordProblem(password);
+  if (weak) return accountJson(request, { error: weak }, 400);
   const taken = await env.DB.prepare("SELECT 1 AS x FROM accounts WHERE lower(username) = lower(?)")
     .bind(username)
     .first();
@@ -1934,6 +2219,51 @@ async function accountLogout(request, env) {
   return accountJson(request, { ok: true }, 200, {
     "Set-Cookie": sessionCookie(request, "", 0),
   });
+}
+
+/**
+ * 改自己的密码（网页端与桌面客户端共用同一个接口）。
+ *
+ * 三条规矩：
+ *   ① **必须验旧密码**，只认当前会话，不认"知道账号 ID"；
+ *   ② 新密码走和注册同一套强度规则（passwordProblem），不另立标准；
+ *   ③ 成功后踢掉**其它**会话、保留当前这条 —— 改密码往往意味着怀疑别人还登着。
+ */
+async function accountChangePassword(request, env) {
+  const me = await currentAccount(request, env);
+  if (!me) return accountJson(request, { error: "not-logged-in" }, 401);
+  const body = await request.json().catch(() => null);
+  const current = String(body?.current ?? "");
+  const next = String(body?.next ?? "");
+
+  const weak = passwordProblem(next);
+  if (weak) return accountJson(request, { error: weak }, 400);
+  if (current && current === next) return accountJson(request, { error: "same-password" }, 400);
+
+  const row = await env.DB.prepare("SELECT salt, hash FROM accounts WHERE id = ?")
+    .bind(me.id)
+    .first();
+  if (!row) return accountJson(request, { error: "not-found" }, 404);
+  if (!(await verifyPassword(current, row.salt, row.hash))) {
+    // 与登录同口径：不区分"旧密码错"与"账号不存在"
+    return accountJson(request, { error: "bad-credentials" }, 401);
+  }
+
+  const salt = randomHex(16);
+  const hash = await pbkdf2Hex(next, salt);
+  await env.DB.prepare("UPDATE accounts SET salt = ?, hash = ?, updated_at = ? WHERE id = ?")
+    .bind(salt, hash, Date.now(), me.id)
+    .run();
+
+  const header = request.headers.get("Authorization") ?? "";
+  const bearer = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
+  const keep = bearer || readCookie(request, SESSION_COOKIE);
+  if (keep) {
+    await env.DB.prepare("DELETE FROM account_sessions WHERE account_id = ? AND token <> ?")
+      .bind(me.id, keep)
+      .run();
+  }
+  return accountJson(request, { ok: true }, 200);
 }
 
 /**
@@ -2704,6 +3034,7 @@ async function handleAccount(request, env, url) {
     if (path === "/register" && request.method === "POST") return await accountRegister(request, env);
     if (path === "/login" && request.method === "POST") return await accountLogin(request, env);
     if (path === "/logout" && request.method === "POST") return await accountLogout(request, env);
+    if (path === "/password" && request.method === "POST") return await accountChangePassword(request, env);
     if (path === "/me" && request.method === "GET") {
       return accountJson(request, { account: toProfile(await currentAccount(request, env)) }, 200);
     }

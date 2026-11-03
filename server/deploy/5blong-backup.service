@@ -1,0 +1,19 @@
+[Unit]
+Description=5blong 数据库每日备份
+Documentation=https://github.com/HeXiang96/5blong
+# 数据库在本机，不需要等网络；但要等 api 起来之后（避免备份时正好在建表）
+After=5blong-api.service
+Requires=5blong-api.service
+
+[Service]
+Type=oneshot
+User=root
+# 脚本内部自己做 integrity_check，失败会以非 0 退出，journal 里能看到
+ExecStart=/opt/5blong/server/deploy/backup.sh
+# 备份是纯 IO，别抢接口的 CPU
+Nice=10
+IOSchedulingClass=idle
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=5blong-backup

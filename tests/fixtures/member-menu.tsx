@@ -14,9 +14,13 @@ import "../../src/client/voice/pen-life.css";
 import "../../src/client/voice/pen-fence.css";
 import "../../src/client/voice/pen-tv.css";
 import "../../src/client/voice/pen-themes.css";
+import "../../src/client/voice/skin-paper.css";
 
 const params = new URLSearchParams(location.search);
 document.documentElement.dataset.theme = params.get("theme") ?? "light";
+// ?skin=paper：v2.0「纸与朱砂」试穿（只影响外观，不参与构建）
+const skin = params.get("skin");
+if (skin) document.documentElement.dataset.skin = skin;
 /*
  * ?desktop=1：让 isTauriRuntime() 为真，走"桌面客户端"那条分支
  * （共享菜单里才有 指定应用 / 老系统回退 这些行，业主截图正是这一屏）。
@@ -101,13 +105,49 @@ function Fixture() {
   const reportPen = (id: string, x: number, lane: number) => {
     poseStore.current[id] = { x, lane };
   };
+  /*
+   * ?n=8：凑一屋子人（宣传片取景、多人布局验收都要用）。
+   * 默认 2 人 = 原有行为。**第 1 位必须固定 id="guest"**——speak / muted / fed
+   * 这些参数都是按 "guest" 定位的，动了这一位会连带把老用例弄哑。
+   */
+  const crowdSize = Math.max(2, Math.min(13, Number(params.get("n")) || 2));
+  const EXTRA_PEOPLE = [
+    { name: "夜里看江南", color: "#7ab8d9" },
+    { name: "元气的鲸头鹳", color: "#e0a13a" },
+    { name: "认真的水獭", color: "#8bc07a" },
+    { name: "低调的仓鼠", color: "#b783d9" },
+    { name: "鱼儿", color: "#5aa9d6" },
+    { name: "UNICORN", color: "#d97ab0" },
+    { name: "暴躁的柯基", color: "#e0764f" },
+    { name: "摸鱼的猫", color: "#7a9bd9" },
+    { name: "半糖去冰", color: "#c9a227" },
+    { name: "阿巴阿巴", color: "#6fbfa8" },
+    { name: "小满", color: "#d98a8a" },
+  ];
+  const crowd = Array.from({ length: Math.max(0, crowdSize - 2) }, (_, index) => {
+    const person = EXTRA_PEOPLE[index % EXTRA_PEOPLE.length]!;
+    return {
+      id: `guest-${index + 2}`,
+      personId: `10000000${index + 3}9`,
+      sessionId: `guest-${index + 2}`,
+      name: person.name,
+      avatar: "",
+      color: person.color,
+      muted: false,
+      hasMic: true,
+      isHost: false,
+      local: false,
+      accountId: String(53720018 + index + 1),
+    };
+  });
   const props: ComponentProps<typeof RoomView> = {
     status: "connected",
     members: [
       { id: "self", personId: "1000000001", sessionId: "local", name: "本机房主", avatar: "", color: "#f2704f", muted: false, hasMic: true, isHost: host, local: true },
       { id: "guest", personId: "1000000002", sessionId: "guest", name: "测试成员", avatar: "", color: "#e05f8a", muted: false, hasMic: true, isHost: !host, local: false, serverMuted: params.get("muted") === "1", accountId: "53720018" },
+      ...crowd,
     ],
-    speaking: params.get("speak") ? ["guest"] : [], messages: [], invite: { code: "123456", hostId: "self", roomKey: "fixture" }, notice: null,
+    speaking: params.get("speak") ? ["guest", ...crowd.slice(0, 1).map((item) => item.id)] : [], messages: [], invite: { code: "123456", hostId: "self", roomKey: "fixture" }, notice: null,
     chatOpen, unread: 0, displayNames: new Map(), isHost: host, maxMembers: 13,
     onCopyCode: async () => {
       record("copy-code");

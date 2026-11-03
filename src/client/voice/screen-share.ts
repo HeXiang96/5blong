@@ -29,7 +29,9 @@ export const SFU_BASE = (() => {
   if (import.meta.env.DEV) return "/sfu";
   const host = typeof location !== "undefined" ? location.hostname : "";
   if (host === "tauri.localhost" || host.endsWith(".tauri.localhost")) {
-    return "https://5blong.pages.dev/sfu";
+    // 桌面端打自己服务器上的 /sfu 代理（由它补 Bearer 密钥再转给 Cloudflare）。
+    // 好处是 SFU 的长期密钥不下发前端，转发路径也归我们控制。
+    return "https://5blong.site/sfu";
   }
   return "/sfu";
 })();
@@ -576,7 +578,7 @@ export async function applyScreenSenderParams(
 
 const ICE_SERVERS: RTCIceServer[] = [
   // Cloudflare 自家 STUN 足够（SFU 本身就是公网可达的，无需打洞）
-  { urls: "stun:stun.cloudflare.com:3478" },
+  { urls: "stun:5blong.site:3478" },
 ];
 
 /** 等待 ICE 候选收集完成（带超时：SFU 不需要完整候选表，0.8s 内有多少用多少）。 */

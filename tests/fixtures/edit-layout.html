@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>好友编辑态排版 · 静态验收</title>
+    <!--
+      只验排版，不跑 React：用真实 class 结构 + 真实样式表，
+      确认「备注名 / 移除好友」两个编辑态里按钮不再被压成竖排。
+
+      用法（dev server 起在 8787）：
+        /tests/fixtures/edit-layout.html
+        /tests/fixtures/edit-layout.html?theme=dark
+    -->
+    <link rel="stylesheet" href="../../src/client/voice/styles.css" />
+    <link rel="stylesheet" href="../../src/client/voice/account.css" />
+    <link rel="stylesheet" href="../../src/client/voice/pen-themes.css" />
+    <style>
+      body {
+        margin: 0;
+        padding: 24px;
+        background: #efe3cc;
+        font-family: system-ui, sans-serif;
+      }
+      .shell {
+        width: 336px; /* 抽屉真实宽度 */
+        padding: 10px;
+        border-radius: 16px;
+        background: #fdf8ee;
+        border: 1px solid rgba(120, 78, 34, 0.28);
+      }
+      .label {
+        margin: 14px 4px 4px;
+        font-size: 10.5px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        color: #8a7355;
+      }
+      .fake-avatar {
+        width: 34px;
+        height: 34px;
+        flex: 0 0 auto;
+        border-radius: 50%;
+        background: #b783d9;
+        color: #fff;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 12px;
+      }
+      /*
+       * 外壳要跟着主题走，否则暗色下拍出来是"浅底 + 浅字"，看着像对比度坏了
+       * —— 那是这个验收页的锅，不是应用的问题（真实抽屉是 .vx-friends，有自己的底色）。
+       */
+      html[data-theme="dark"] body,
+      html[data-theme="light"][data-daypart="night"] body,
+      html[data-scene="halloween"] body {
+        background: #14100c;
+      }
+      html[data-theme="dark"] .shell,
+      html[data-theme="light"][data-daypart="night"] .shell,
+      html[data-scene="halloween"] .shell {
+        background: #2a2118;
+        border-color: rgba(255, 226, 170, 0.24);
+      }
+      html[data-scene="snow"]:not([data-daypart="night"]) body {
+        background: #dfe9f3;
+      }
+      html[data-scene="snow"]:not([data-daypart="night"]) .shell {
+        background: #f4f9ff;
+        border-color: rgba(74, 112, 152, 0.26);
+      }
+      html[data-scene="spring"]:not([data-daypart="night"]) .shell {
+        background: #fffaf3;
+        border-color: rgba(178, 60, 40, 0.28);
+      }
+      html[data-scene="spring"]:not([data-daypart="night"]) body {
+        background: #f2e3d2;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <div class="label">备注名编辑态</div>
+
+      <!-- ① 备注名：输入框拿满第一行，按钮在第二行右对齐 -->
+      <div class="vx-friend-row vx-friend-row-off vx-friend-row-edit">
+        <span class="vx-friend-dot" aria-hidden></span>
+        <div class="fake-avatar">莫</div>
+        <div class="vx-friend-main">
+          <input class="vx-friend-edit" value="" placeholder="莫无z" />
+          <span class="vx-friend-sub">备注只你自己看得见 · Enter 保存</span>
+        </div>
+        <div class="vx-friend-edit-acts">
+          <button type="button" class="vx-btn vx-btn-small vx-btn-primary">保存</button>
+          <button type="button" class="vx-btn vx-btn-small vx-btn-quiet">取消</button>
+        </div>
+      </div>
+
+      <div class="label">移除好友确认态</div>
+
+      <!-- ② 移除确认：说明文字两行，按钮在下方右对齐 -->
+      <div class="vx-friend-row vx-friend-row-off vx-friend-row-edit">
+        <span class="vx-friend-dot" aria-hidden></span>
+        <div class="fake-avatar">莫</div>
+        <div class="vx-friend-main">
+          <b>移除 莫无z？</b>
+          <span class="vx-friend-sub">双方列表里都会消失，24 小时内他不能再加你</span>
+        </div>
+        <div class="vx-friend-edit-acts">
+          <button type="button" class="vx-btn vx-btn-small vx-friend-danger">移除</button>
+          <button type="button" class="vx-btn vx-btn-small vx-btn-quiet">取消</button>
+        </div>
+      </div>
+
+      <div class="label">对照组：正常行（不应被改动）</div>
+
+      <div class="vx-friend-row vx-friend-row-off">
+        <span class="vx-friend-dot" aria-hidden></span>
+        <div class="fake-avatar">莫</div>
+        <div class="vx-friend-main">
+          <b>莫无z</b>
+          <span class="vx-friend-sub">离线</span>
+        </div>
+        <button type="button" class="vx-friend-more" aria-label="更多操作">⋯</button>
+      </div>
+    </div>
+
+    <script>
+      // 主题切换走和主应用同一套 data-theme / data-daypart
+      const params = new URLSearchParams(location.search);
+      document.documentElement.dataset.theme = params.get("theme") ?? "light";
+      if (params.get("daypart")) document.documentElement.dataset.daypart = params.get("daypart");
+      if (params.get("scene")) document.documentElement.dataset.scene = params.get("scene");
+    </script>
+  </body>
+</html>

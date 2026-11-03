@@ -41,7 +41,7 @@ const RETRY_DELAYS = [1_000, 2_000, 4_000, 8_000, 15_000, 30_000];
 const HEARTBEAT_MS = 25_000;
 
 /** 与 `engine.ts` 的信令线路保持一致（同一域名、同一转发通路）。 */
-const INBOX_HOST = "5blong.pages.dev";
+const INBOX_HOST = "5blong.site";
 
 export type InboxHandlers = {
   /** 收到"有邀请"提示：调用方应立刻拉一次 `/invites`。 */

@@ -1925,3 +1925,73 @@ html[data-scene="spring"][data-daypart="night"] .vx-banner:not(.vx-banner-error)
   border-color: rgba(255, 180, 140, 0.24);
   color: #fbe9dd;
 }
+
+/* ===========================================================================
+   编辑态（备注名 / 移除确认）的排版（2026-10-28 业主实拍）
+   ---------------------------------------------------------------------------
+   原来两个按钮跟输入框挤在同一条 flex 行里：`.vx-btn` 没写 white-space:nowrap，
+   被压窄后中文逐字换行——「保存」「取消」「移除」全变成竖排两列，看着像坏了。
+   现在：输入框和文字拿满第一行，按钮整体换到第二行、靠右对齐。
+   =========================================================================== */
+.vx-friend-row-edit {
+  flex-wrap: wrap;
+  /* 编辑态内容变高，头像和状态点贴顶比居中好看 */
+  align-items: flex-start;
+}
+.vx-friend-row-edit .vx-friend-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  /*
+   * 必须显式改回纵向。
+   * 上面 10-27 那次「名字和状态同一行」的优化把 `.vx-friend-row-on/-off .vx-friend-main`
+   * 设成了 row，编辑态会被一起带走 —— 输入框和「备注只你自己看得见」并排，
+   * 输入框只剩一百多像素（2026-10-28 静态验收图里能看见）。
+   */
+  flex-direction: column;
+  align-items: stretch;
+  gap: 3px;
+}
+.vx-friend-edit-acts {
+  flex: 0 0 100%;
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 5px;
+}
+.vx-friend-edit-acts .vx-btn {
+  flex: 0 0 auto;
+  /* 只要这一条在，文字就不可能被压成竖排 */
+  white-space: nowrap;
+}
+/* 移除确认里的说明比备注名长，允许折行但别顶到按钮上 */
+.vx-friend-row-edit .vx-friend-sub {
+  line-height: 1.45;
+}
+
+/* 备注名输入框在自己的场景里也要像"这个场景的东西"
+   （基础样式是暖木色描边，摆在冷蓝白的雪原/紫黑的万圣里很跳） */
+html[data-scene="snow"]:not([data-daypart="night"]) .vx-friend-edit {
+  box-shadow:
+    0 1px 2px rgba(24, 45, 68, 0.1) inset,
+    0 0 0 2px rgba(126, 169, 204, 0.42);
+}
+html[data-scene="snow"][data-daypart="night"] .vx-friend-edit {
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.3) inset,
+    0 0 0 2px rgba(150, 190, 230, 0.4);
+}
+html[data-scene="halloween"] .vx-friend-edit {
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.35) inset,
+    0 0 0 2px rgba(255, 169, 77, 0.4);
+}
+html[data-scene="spring"]:not([data-daypart="night"]) .vx-friend-edit {
+  box-shadow:
+    0 1px 2px rgba(90, 30, 16, 0.1) inset,
+    0 0 0 2px rgba(200, 137, 47, 0.42);
+}
+html[data-scene="spring"][data-daypart="night"] .vx-friend-edit {
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.3) inset,
+    0 0 0 2px rgba(255, 180, 140, 0.38);
+}

@@ -1,0 +1,36 @@
+[Unit]
+Description=5blong API (账号/好友/邀请/TURN 凭据)
+Documentation=https://github.com/HeXiang96/5blong
+After=network.target
+# 数据库在本地盘，不需要等网络；但 nginx 依赖它，所以先起本服务
+Before=nginx.service
+
+[Service]
+Type=simple
+User=5blong
+Group=5blong
+WorkingDirectory=/opt/5blong/server
+EnvironmentFile=/etc/5blong/env
+ExecStart=/usr/bin/node src/index.mjs
+
+# 崩了立刻重启：登录接口挂掉比进程反复重启更糟
+Restart=always
+RestartSec=3
+# 反复崩溃时别无限刷（5 分钟内超 10 次就停下，等人来看）
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+# 基本加固：它不需要写系统目录，只需要自己的数据库目录
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/data/5blong
+
+# 日志走 journald：journalctl -u 5blong-api -f
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=5blong-api
+
+[Install]
+WantedBy=multi-user.target

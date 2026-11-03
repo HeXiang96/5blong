@@ -1,0 +1,202 @@
+/* ===========================================================================
+   v2.0「纸与朱砂」· 试穿层（2026-11-01）
+   ---------------------------------------------------------------------------
+   用途：**只给验收看**，不参与正式构建（只有 tests/fixtures 引用它）。
+
+   为什么要单独一层：现有 styles.css 里约 600 处颜色是绕开 --vx-* 令牌硬写的，
+   直接换令牌会得到"一半新一半旧"的样子。这一层先用高特异性把关键界面压过来，
+   用来判断气质对不对；真要落地必须先做令牌化（见下文"落地前提"）。
+
+   设计口径（业主 2026-11-01 已定方向）：
+   - 主强调用**墨绿**，朱红只留给危险/删除 —— 红不兼职工；
+   - 去掉木纹/钉子/重投影，靠留白和字重撑质感；
+   - 猪圈、草地、天空、猪本身**一点不动**。
+   =========================================================================== */
+
+/*
+ * 令牌块必须比"时段变体"更具体：
+ * styles.css 里 `html[data-theme="light"][data-daypart="morning"]` 是 (0,2,1)，
+ * 只写 `html[data-skin="paper"]` 是 (0,1,1)，会被清晨/傍晚/夜晚的暖色改写
+ * —— 表现就是"主按钮变回棕色"（2026-11-01 实测踩到）。
+ */
+html[data-skin="paper"],
+html[data-skin="paper"][data-theme] {
+  --vx-bg: #f7f5f0;
+  --vx-bg-2: #ffffff;
+  --vx-surface: #ffffff;
+  --vx-surface-2: #efebe3;
+  --vx-line: rgba(30, 27, 24, 0.12);
+  --vx-text: #1e1b18;
+  --vx-text-dim: #6b6560;
+  --vx-text-faint: #9a9288;
+  --vx-accent: #2e4b3c;
+  --vx-accent-soft: rgba(46, 75, 60, 0.1);
+  --vx-accent-strong: #3d6350;
+  --vx-danger: #c0392b;
+  --vx-live: #3f7a56;
+  --vx-live-soft: rgba(63, 122, 86, 0.12);
+  --vx-warn: #b07d18;
+  --vx-shadow: 0 8px 28px rgba(30, 27, 24, 0.07);
+  --vx-radius: 14px;
+  --vx-radius-sm: 9px;
+  --vx-scrim: rgba(24, 20, 16, 0.42);
+  --vx-muted-bg: #e7e2d8;
+}
+
+/* 频道卡片：白纸 + 一道极细的墨线，不要木色渐变 */
+html[data-skin="paper"] .vx-channel {
+  background: var(--vx-surface);
+  border: 1px solid var(--vx-line);
+  box-shadow: var(--vx-shadow);
+}
+
+/* 房间码输入：原来是暖白底 + 木棕字，压成纸白 + 炭黑 */
+html[data-skin="paper"] .vx-code-input {
+  background: #ffffff;
+  color: var(--vx-text);
+  border: 1px solid rgba(30, 27, 24, 0.16);
+  box-shadow: none;
+}
+
+html[data-skin="paper"] .vx-code-input::placeholder {
+  color: var(--vx-text-faint);
+}
+
+html[data-skin="paper"] .vx-code-input:focus {
+  border-color: var(--vx-accent);
+  box-shadow: 0 0 0 3px var(--vx-accent-soft);
+}
+
+html[data-skin="paper"] .vx-btn {
+  background: #ffffff;
+  border-color: rgba(30, 27, 24, 0.16);
+  color: var(--vx-text);
+}
+
+html[data-skin="paper"] .vx-btn:hover:not(:disabled) {
+  background: var(--vx-surface-2);
+}
+
+/* 主按钮：墨绿；幽灵按钮：纸白 + 墨线 */
+html[data-skin="paper"] .vx-btn-primary {
+  background: var(--vx-accent);
+  color: #f7f5f0;
+}
+
+html[data-skin="paper"] .vx-btn-primary:hover:not(:disabled) {
+  background: var(--vx-accent-strong);
+}
+
+/* 默认按钮的"危险"语义留给真危险，朱红只在这里出现 */
+html[data-skin="paper"] .vx-btn-danger,
+html[data-skin="paper"] .vx-friend-danger {
+  background: var(--vx-danger);
+  border-color: transparent;
+  color: #fff;
+}
+
+/* 公告牌：从"钉在墙上的木板"改成"一张便签纸" */
+html[data-skin="paper"] .vx-landing-board-face {
+  background: #fffdf8;
+  border: 1px solid var(--vx-line);
+  box-shadow: var(--vx-shadow);
+  border-radius: 10px;
+}
+
+html[data-skin="paper"] .vx-landing-board-post {
+  display: none;
+}
+
+/* 好友抽屉：纸白面板 + 细线分隔 */
+html[data-skin="paper"] .vx-friends {
+  background: var(--vx-surface);
+  border: 1px solid var(--vx-line);
+  box-shadow: 0 12px 40px rgba(30, 27, 24, 0.1);
+}
+
+html[data-skin="paper"] .vx-friend-row {
+  border-bottom-color: rgba(30, 27, 24, 0.07);
+}
+
+html[data-skin="paper"] .vx-friend-row:hover {
+  background: var(--vx-surface-2);
+}
+
+html[data-skin="paper"] .vx-friend-edit {
+  background: #ffffff;
+  color: var(--vx-text);
+  box-shadow: 0 0 0 2px rgba(46, 75, 60, 0.35);
+}
+
+/* 房内顶部铭牌：木牌 -> 纸牌（只换皮，位置尺寸不动） */
+html[data-skin="paper"] .vx-room-plate,
+html[data-skin="paper"] .vx-plate {
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid var(--vx-line);
+  color: var(--vx-text);
+  box-shadow: 0 4px 16px rgba(30, 27, 24, 0.08);
+}
+
+/* ---------------------------------------------------------------------------
+   房内：顶部招牌 + 底部控制条
+   两者都在 pen-fence.css 里用木色渐变硬写的，令牌管不到，必须点名覆盖。
+   --------------------------------------------------------------------------- */
+html[data-skin="paper"][data-theme] .vx-signboard,
+html[data-skin="paper"][data-theme] .vx-controls-tray {
+  background: rgba(255, 255, 255, 0.96);
+  border-color: rgba(30, 27, 24, 0.14);
+  box-shadow: 0 6px 22px rgba(30, 27, 24, 0.1);
+}
+
+/* 招牌上的挂绳/钉子：纸牌不需要 */
+html[data-skin="paper"][data-theme] .vx-signboard::before,
+html[data-skin="paper"][data-theme] .vx-signboard::after {
+  opacity: 0;
+}
+
+/* 控制条里的文字与图标 */
+html[data-skin="paper"][data-theme] .vx-ctl,
+html[data-skin="paper"][data-theme] .vx-signboard,
+html[data-skin="paper"][data-theme] .vx-signboard * {
+  color: var(--vx-text);
+}
+
+/* ---------------------------------------------------------------------------
+   好友抽屉的文字：原来是暖棕色硬编码，白底上会发黄
+   --------------------------------------------------------------------------- */
+html[data-skin="paper"][data-theme] .vx-friend-main b {
+  color: var(--vx-text);
+}
+
+html[data-skin="paper"][data-theme] .vx-friend-sub,
+html[data-skin="paper"][data-theme] .vx-friends-foot {
+  color: var(--vx-text-dim);
+}
+
+html[data-skin="paper"][data-theme] .vx-friends-tab {
+  color: var(--vx-text-dim);
+}
+
+html[data-skin="paper"][data-theme] .vx-friends-tab-on {
+  color: var(--vx-text);
+  background: var(--vx-surface-2);
+}
+
+html[data-skin="paper"][data-theme] .vx-friends-section h4 {
+  color: var(--vx-text-faint);
+}
+
+/* ---------------------------------------------------------------------------
+   救两处被上面 `*` 通配压掉的颜色：
+   - 招牌里的「复制邀请」是主按钮，字必须在墨绿上看得见；
+   - 控制条里的「结束房间/离开」是危险动作，红就是红。
+   --------------------------------------------------------------------------- */
+html[data-skin="paper"][data-theme] .vx-signboard .vx-btn-primary,
+html[data-skin="paper"][data-theme] .vx-signboard .vx-btn-primary * {
+  color: #f7f5f0;
+}
+
+html[data-skin="paper"][data-theme] .vx-ctl-danger,
+html[data-skin="paper"][data-theme] .vx-ctl-danger * {
+  color: var(--vx-danger);
+}

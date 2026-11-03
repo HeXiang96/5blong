@@ -19,7 +19,7 @@ export function buildInviteText(
    */
   const pass = options.pass?.trim();
   lines.push(pass ? `房间 ${code} · 临时密码 ${pass}` : `房间 ${code}`);
-  lines.push(`https://5blong.pages.dev/#c=${code}`);
+  lines.push(`https://5blong.site/#c=${code}`);
   lines.push("点开就能进，免注册、免装客户端");
   return lines.join("\n");
 }
