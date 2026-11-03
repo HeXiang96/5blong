@@ -4462,3 +4462,18 @@ html[data-scene="spring"] .vx-channel .vx-btn-primary:hover:not(:disabled) {
 .vx-crash b { display: block; font-size: 16px; margin-bottom: 4px; }
 .vx-crash p { margin: 0 0 12px; color: var(--vx-text-dim, #7a6449); word-break: break-word; }
 .vx-crash-actions { display: flex; gap: 8px; justify-content: center; }
+
+/* 首页左下角的版本角标：网页版也让人一眼看到"现在是哪一版"（2026-11-03）。
+   fixed 定位只在首页组件里渲染，进房后不会跟着显示。 */
+.vx-version-corner {
+  position: fixed;
+  left: 14px;
+  bottom: 10px;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--vx-text-dim);
+  opacity: 0.6;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+  user-select: none;
+}

@@ -412,6 +412,10 @@ export function LandingView({
         </div>
       </header>
 
+      {appVersion ? (
+        <span className="vx-version-corner" title="网页版当前部署的版本">v{appVersion}</span>
+      ) : null}
+
       <main className="vx-landing-main">
         <div className="vx-landing-mascot" aria-hidden="true">
           <img src={landingPigUrl} alt="" width={512} height={512} draggable={false} />
