@@ -1016,6 +1016,7 @@ npm run feedback:admin list 20   # 终端查看最近反馈（url / list / rm �
 <!-- AUTO-LOG:START -->
 ### 近期提交（自动生成）
 
+- `01db1fd` docs: 新增语音链路故障交接记录（2026-11-03 晚）（11-03 22:01）
 - `2ef6540` release: v1.9.19（11-03 21:59）
 - `97a9bd0` feat(signal): 删除公共云信令兜底，只保留自建香港线路（11-03 21:56）
 - `536bd7e` docs: 修正上报看门狗那段（定时器已整条去掉，改由心跳驱动）（11-03 21:43）
@@ -1026,7 +1027,6 @@ npm run feedback:admin list 20   # 终端查看最近反馈（url / list / rm �
 - `a7edf34` feat(voice): 自建媒体协商（SDP/ICE 走数据通道）+ ICE 探针（11-03 21:29）
 - `4320de3` fix(voice): 兜底补拨与凭据重拨遵守发起方向，防止两边互相抢答（11-03 21:06）
 - `e633766` fix(telemetry): 上报加心跳看门狗，避免定时器静默死掉后后台空白（11-03 21:04）
-- `ac89dc9` fix(signal): 断开时用 WeakMap 取回 id，避免在线房号残留（11-03 20:01）
 <!-- AUTO-LOG:END -->
 
 ## 怎么用
