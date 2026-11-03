@@ -102,10 +102,20 @@ export function startPeerServer() {
   const keepFresh = setInterval(flush, 20_000);
   keepFresh.unref?.();
 
+  /*
+   * client → id 的对照表（2026-11-03 修"幽灵房间"）。
+   *
+   * 断开时 `client.getId()` 可能已经取不到值，于是 `liveHosts` 里那条永远删不掉，
+   * 面板就会一直显示已经关掉的房号（实测 702621 在房主离开后还挂在上面）。
+   * 连上的时候把 id 记在 client 对象上（WeakMap，不阻止回收），断开时直接取。
+   */
+  const clientIds = new WeakMap();
+
   server.on("connection", (client) => {
     try {
       const id = String(client.getId?.() ?? "");
       if (id.startsWith("5b-h-")) {
+        clientIds.set(client, id);
         liveHosts.set(id, Date.now());
         scheduleFlush();
       }
@@ -115,7 +125,7 @@ export function startPeerServer() {
   });
   server.on("disconnect", (client) => {
     try {
-      const id = String(client.getId?.() ?? "");
+      const id = clientIds.get(client) ?? String(client.getId?.() ?? "");
       if (id.startsWith("5b-h-") && liveHosts.delete(id)) scheduleFlush();
     } catch {
       /* 同上 */
