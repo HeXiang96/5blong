@@ -873,3 +873,53 @@ describe("房间快照上报的看门狗（2026-11-03 上报静默停了 25 分�
     expect(posts.filter((u) => u.includes("/api/rooms/snapshot"))).toHaveLength(0);
   });
 });
+
+describe("兜底补拨的发起方向（2026-11-03 两边同时拨 → 双方都停在 new）", () => {
+  /*
+   * 约定是 myId < peerId 的一侧负责发起。建链路径遵守了，但兜底补拨没有检查，
+   * 于是两边每 3 秒都向对方拨一次、互相抢答，calls 表被来回覆盖，
+   * 最后两边手里都是"没人应答"的那条（iceConnectionState 永远 new）。
+   */
+  it("不会朝『不该我拨』的人发起", async () => {
+    const { host } = await startHost();
+    // id 比房主小（5b-g < 5b-h）：按约定该由对方拨，房主不该主动拨
+    const smaller = "5b-g-guardtest";
+    (host as any).members.set(smaller, {
+      id: smaller,
+      name: "小号",
+      local: false,
+      muted: false,
+      hasMic: true,
+    });
+
+    const dialed: string[] = [];
+    (host as any).callPeer = (id: string) => {
+      dialed.push(id);
+    };
+    (host as any).ensureCalls();
+
+    expect(dialed).not.toContain(smaller);
+  });
+
+  it("该我拨的人照常补拨（护栏不能把正常补拨也堵死）", async () => {
+    const { host } = await startHost();
+    const myId = (host as any).myId as string;
+    // 比房主 id 更大：该由房主发起
+    const greater = `${myId}9`;
+    (host as any).members.set(greater, {
+      id: greater,
+      name: "大号",
+      local: false,
+      muted: false,
+      hasMic: true,
+    });
+
+    const dialed: string[] = [];
+    (host as any).callPeer = (id: string) => {
+      dialed.push(id);
+    };
+    (host as any).ensureCalls();
+
+    expect(dialed).toContain(greater);
+  });
+});

@@ -3324,6 +3324,16 @@ export class VoiceMesh {
         }
         continue;
       }
+      /*
+       * 只有"该我发起"的一侧才补拨（myId < peerId）。
+       *
+       * 这条约定在建链时（callPeers）是遵守的，但兜底补拨以前**没有检查**
+       * ——于是两边每 3 秒都向对方拨一次，互相抢答：各自收到对方来电后按约定
+       * 关掉一条、保留一条，calls 表在这一两秒里被来回覆盖，最后两边手里
+       * 剩下的都是"没人应答"的那条，iceConnectionState 永远停在 new。
+       * 2026-11-03 实测：Bink↔爱睡的锦鲤 两边都 new，重拨 3 次全部失败。
+       */
+      if (!this.shouldCall(member.id)) continue;
       if (dialed >= 1) continue;
       /*
        * 自愈次数到顶就停手：这条腿已经连续失败 3 次，后台再偷偷拨只会
@@ -3355,6 +3365,11 @@ export class VoiceMesh {
     this.resetLinkRetries();
     for (const member of this.members.values()) {
       if (member.local) continue;
+      /*
+       * 只拆自己该发起的腿：反向的腿由对方重建（对方同样收到了凭据升级）。
+       * 两边都拆、两边都拨，就会重现"互相抢答 → 双方都停在 new"的死局。
+       */
+      if (!this.shouldCall(member.id)) continue;
       this.dropMedia(member.id);
       this.roomLinkState.set(member.id, "connecting");
       this.events.mediaState(member.id, "connecting");
