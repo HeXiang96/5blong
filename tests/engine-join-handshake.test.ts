@@ -503,7 +503,7 @@ describe("VoiceMesh 加入握手", () => {
     expect(guestPeers.length).toBe(2);
   });
 
-  it("房主不在线（信令回 peer-unavailable）→ 立刻把原因说清楚，不空等超时", async () => {
+  it("房主不在线（信令回 peer-unavailable）→ 留出等待间隔后把原因说清楚，不空等 12 秒超时", async () => {
     // 没有任何房主注册过这个码：peer.connect 会立刻收到 peer-unavailable。
     const holder = makeEvents();
     const guest = new VoiceMesh(holder.events as any);
@@ -515,18 +515,20 @@ describe("VoiceMesh 加入握手", () => {
       defaultSettings(),
       false,
     );
-    await waitFor(() => lastStatus(holder) === "error");
+    // 2026-11-03 起：两次重拨之间要留 1.2s / 3s 的间隔（房主可能正在重连信令），
+    // 所以这里等的是"最终报错"，不再要求毫秒级立刻报。
+    await waitFor(() => lastStatus(holder) === "error", 9000);
 
     // 这条断言是本次修复的核心：以前 peer-unavailable 被 openPeer 的 settled
     // 守卫吞掉，只能等 12s×3 才知道"房主不在线"（表现为长时间无任何提示）。
     expect(lastStatus(holder)).toBe("error");
     expect(holder.statuses.at(-1)?.detail).toContain("房主不在线");
 
-    // 重拨仍然要做满 3 次（换 ID 可能换到更通的后端），但每次都是毫秒级：
-    // 远快于「250ms 超时 × 3」的旧路径。
+    // 重拨仍然要做满 3 次（换 ID 可能换到更通的后端），但总耗时要远小于
+    // 「12s 超时 × 3」的旧路径。
     const guestPeers = mocks.peers.filter((p) => p.id.startsWith("5b-g-"));
     expect(guestPeers).toHaveLength(3);
-    expect(Date.now() - startedAt).toBeLessThan(200);
+    expect(Date.now() - startedAt).toBeLessThan(9000);
   });
 });
 

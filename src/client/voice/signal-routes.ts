@@ -35,3 +35,23 @@ export const SIGNAL_ROUTES: SignalRoute[] = import.meta.env.DEV
       { host: "5blong.site", port: 443, secure: true, key: "peerjs", label: "own-hk" },
       { host: "0.peerjs.com", port: 443, secure: true, key: "peerjs", label: "peerjs-cloud" },
     ];
+
+/**
+ * 从 `start` 起按 `attempt` 轮换线路（越界自动绕回）。
+ *
+ * 为什么抽成纯函数：**必须支持"从中间某条开始"**。
+ * 原实现每次重拨都从 `SIGNAL_ROUTES[0]` 起，于是跨注册表的情况永远试不到第二条线路——
+ * 2026-11-03 实测：房主兜底到了公共云，访客死磕自建香港，重拨三次都在同一张表上找，
+ * 最终报"房主不在线"，而对方明明建了房、别人也进得去。
+ *
+ * `routes` 可注入，便于把轮换规则钉在单测里（生产只有一条线路的 DEV 构建测不出来）。
+ */
+export function routeAt(
+  start: number,
+  attempt: number,
+  routes: SignalRoute[] = SIGNAL_ROUTES,
+): SignalRoute {
+  const total = routes.length;
+  const index = (((start + attempt) % total) + total) % total;
+  return routes[index]!;
+}

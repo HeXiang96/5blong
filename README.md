@@ -102,7 +102,7 @@
 
 > **本节专为后续维护者（含 AI）而写**：交代"共享屏幕为什么卡、改了什么、怎么验证、别踩哪些坑"。  
 > 这一轮**只动共享链路，语音一行未碰**（语音零影响是硬约束）；四批次全部落地，  
-> `npm run check` 全绿（typecheck + <!-- AUTO:TESTS -->376<!-- /AUTO:TESTS --> 单测 + 构建）。  
+> `npm run check` 全绿（typecheck + <!-- AUTO:TESTS -->380<!-- /AUTO:TESTS --> 单测 + 构建）。  
 > 完整方案与逐条推理见 [SCREENSHARE-OPT-PLAN.md](./docs/archive/SCREENSHARE-OPT-PLAN.md)（已归档）；  
 > 早期 v1~v3 草稿 [SCREENSHARE-PERF-PLAN.md](./docs/archive/SCREENSHARE-PERF-PLAN.md) 已被其取代（仅存档）。
 
@@ -320,6 +320,39 @@ TURN key 与 SFU 的 appId/secret **是两套**，分别创建：
 - 主令牌在 `.dev-secrets.json` 的 `feedbackToken`
 
 ---
+
+## 最近更新（2026-11-03 · 待发下一个 patch）：进不了别人的房，提示"房主不在线"
+
+### 🐞 对方明明建了房，却告诉我"房主不在线，邀请可能已失效"
+
+这句话来自信令服务器：它**在注册表里找不到 `5b-h-<房号>` 这个 ID**，
+和打洞、中继、NAT 全都无关。两类成因：
+
+```
+① 对方的客户端连的是**另一张注册表**（≤1.9.11 的老客户端仍指向 Cloudflare）
+   → 他在 pages.dev 上建房，你在 5blong.site 上找，永远找不到。
+② 对方在，但信令刚掉：标签页被切到后台时心跳被浏览器节流，
+   服务端先把 ID 回收；他界面上一切正常，因为他压根不知道。
+```
+
+**修法**（本轮）：
+
+- 访客侧不再"1~2 秒内连拨三次就判死"：两次重拨之间留 **1.2s / 3s**，
+  期间显示"还没找到房主，正在自动重试…"，给房主重连的时间窗；
+- **服务端判死时间 60s → 180s**（`alive_timeout`，2026-11-03 已上线）：
+  客户端心跳 5s 一次跑在主线程，标签页切后台会被浏览器压到约 1 分钟一次，
+  正好卡在 60s 生死线上；被判死后服务端就把房号从注册表摘掉，别人加就是
+  "房主不在线"，而房主界面一切正常。实测：同一个人同房号 25 分钟重新注册 6 次。
+- 房主侧信令掉线时**自己会看到提示**（"信令掉线，正在自动恢复——这期间别人进不来"），
+  不再出现"我明明建了房却没人进得来"；
+- **凭据晚到自愈**（2026-11-03 晚补，这次"都在房里却互相听不到"的根因）：
+  开局 /ice 超时的客户端以纯 STUN 起步，那时建的语音腿没有中继候选，
+  凭据晚几秒到手也用不上（PeerJS 建语音连接那一刻才读 ICE 配置）。
+  中继日志实锤：兰州的出口只有 STUN 探测、一次带凭据的分配都没有。
+  现在 ICE 配置"从无到有"时引擎自动拆掉旧腿重拨（`onIceUpgrade`），
+  新腿自动带上中继。
+- 顺手修掉一个隐患：`reconnect()` 成功后 PeerJS 会再发一次 `open`，
+  原来每次都重挂 `connection/call/disconnected` 监听，重连几次就变成 2 份、4 份。
 
 ## 最近更新（2026-11-03 · 待发下一个 patch）：两个"看起来像网络问题"的代码 bug
 
@@ -588,7 +621,7 @@ SFU 多档（simulcast）也有；但房主有硬编时只发**一档**，SFU �
 
 - 新增 `tests/game-room-code.test.ts`：6 位能进、老 4 位能进、5 位/7 位/字母不算码、首尾空白归一、邀请链接往返解析。
 - 新增视觉夹具 `tests/fixtures/game-join.html?code=<房号>&fill=1`：手输 6 位 / 链接带入 / 填完游戏 ID 三种状态可直接截图目检。
-- 全量用例 <!-- AUTO:TESTS -->376<!-- /AUTO:TESTS --> 项通过；`typecheck`、`build:web:pages`、`docs:check` 全绿。
+- 全量用例 <!-- AUTO:TESTS -->380<!-- /AUTO:TESTS --> 项通过；`typecheck`、`build:web:pages`、`docs:check` 全绿。
 
 ### 三、已知未修（单独排期，不在这版）
 
@@ -1121,7 +1154,7 @@ npm install                 # 安装依赖
 npm run dev                 # 本地开发服务器（网页）
 npm run tauri dev           # 桌面端开发模式（自动起 dev 服务器 + Tauri 窗口）
 npm run typecheck           # 类型检查
-npm test                    # 单元测试（<!-- AUTO:TESTS -->376<!-- /AUTO:TESTS --> 项，由 docs:sync 注入）
+npm test                    # 单元测试（<!-- AUTO:TESTS -->380<!-- /AUTO:TESTS --> 项，由 docs:sync 注入）
 npm run build:web:pages     # 构建静态网页到 dist-web
 npm run tauri build         # 本地出桌面安装包（更新签名需要环境变量，一般直接用 CI）
 npm run deploy:pages        # 手动部署网页到 Cloudflare Pages（复用本机 wrangler 凭据）
@@ -1217,7 +1250,7 @@ npm run signal:setup        # 绑定 Pages → 信令 Worker（service binding S
 - `.github/workflows/`：`release.yml`（云出包，`app-v*` 标签触发）、
   `readme-log.yml`（自动更新 README 提交列表，`[skip ci]`）
 - `tests/`：协议 / 握手 / 准入、屏幕共享（含调谐器与硬编预检）、猪圈、说话检测、定时器、
-  ICE、反馈、会话统计、音量上限、blake3 等，当前合计 <!-- AUTO:TESTS -->376<!-- /AUTO:TESTS --> 项
+  ICE、反馈、会话统计、音量上限、blake3 等，当前合计 <!-- AUTO:TESTS -->380<!-- /AUTO:TESTS --> 项
 - `scripts/`：`deploy-pages.mjs`（部署）、`publish-desktop.mjs`（桌面端更新源发布）、
   `pages-status.mjs`、`bump-version.mjs`（发版一键化）、`readme-log.mjs`（AUTO-LOG，含畸形自愈）、
   `docs-sync.mjs` / `check-docs.mjs`（文档数字注入与校验）、`lib/blake3.mjs`

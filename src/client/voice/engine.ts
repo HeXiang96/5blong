@@ -82,8 +82,8 @@ import type { AudioProcessing, VoiceSettings } from "./settings";
 // 音量上限（值导入）：UI、持久化、引擎共用一份，见 settings.ts 的说明
 import { MIC_VOLUME_MAX, PEER_VOLUME_MAX } from "./settings";
 import { bindSpeaker, openMic, resumeAudio } from "./devices";
-import { ensureIceServers, iceHasTurn, iceServers } from "./ice";
-import { SIGNAL_ROUTES } from "./signal-routes";
+import { ensureIceServers, iceHasTurn, iceServers, onIceUpgrade } from "./ice";
+import { SIGNAL_ROUTES, routeAt } from "./signal-routes";
 import { oneWayStep } from "./one-way";
 import { latestChangelog } from "./changelog";
 import { isTauriRuntime } from "./loopback";
@@ -544,6 +544,27 @@ export class VoiceMesh {
    * 与 reconnectAttempt 区分：后者用于进房成功之后的断线重连。
    */
   private dialAttempts = 0;
+  /**
+   * 订阅「中继凭据从无到有」。
+   *
+   * 开局 /ice 超时的客户端以纯 STUN 起步——那时建的语音腿没有中继候选，
+   * 两边都在 NAT 后就永远连不上（2026-11-03 兰州实测：STUN 探测有、
+   * 中继分配一次都没有）。PeerJS 在 peer.call() 那一刻才读 ICE 配置，
+   * 所以凭据到手后拆掉旧腿重拨，新腿自动带上中继。
+   */
+  private readonly iceUpgradeOff: () => void = onIceUpgrade(() => this.onIceUpgrade());
+  /**
+   * 当前优选的**信令线路**下标（0 = 自建香港，1 = 公共云）。
+   *
+   * 两条线路是**两张互不相通的全局注册表**：房主在 A 表、访客在 B 表，
+   * 访客就会得到 `peer-unavailable`（界面文案"房主不在线"），哪怕对方就好好
+   * 待在房间里。2026-11-03 实测：武汉（校园网）与兰州（校园网）都被兜底到了
+   * 公共云，而房主在自建香港，于是"他能进、我进不去"。
+   * 现在遇到这种情况会换一条线路再找（见 onLatePeerError）。
+   */
+  private signalRouteIndex = 0;
+  /** 这一次实际连上的线路标签（诊断用：跨线路问题是靠它定位的）。 */
+  private activeRouteLabel = "";
   /** 房间是否已上锁（仅房主有意义）。 */
   private locked = false;
   /**
@@ -1262,6 +1283,7 @@ export class VoiceMesh {
   destroy(): void {
     if (this.destroyed) return;
     this.destroyed = true;
+    this.iceUpgradeOff();
     // 关房立刻把号放回池子（服务端也有 90 秒兜底过期）
     this.stopHoldRenewal();
     if (this.heldCode) void this.options.releaseHold?.(this.roomHoldToken);
@@ -1354,6 +1376,12 @@ export class VoiceMesh {
    */
   private async openPeerWithRetry(nextId: () => string): Promise<string> {
     let last = SIGNAL_RETRY;
+    const total = SIGNAL_ROUTES.length;
+    /*
+     * 从当前优选线路起步，逐次向后轮换（而不是永远从第一条开始）。
+     * 永远从 0 开始的话，"目标在另一张注册表上"这种情况永远试不到第二条线路。
+     */
+    const start = this.signalRouteIndex % total;
     for (let attempt = 0; attempt < SIGNAL_RETRY_ATTEMPTS; attempt += 1) {
       if (this.destroyed) return "已离开房间";
       if (attempt > 0) {
@@ -1363,10 +1391,13 @@ export class VoiceMesh {
         );
         if (this.destroyed) return "已离开房间";
       }
-      // 逐次换线路：前几次借我们的域名，最后一次直连公共云
-      const route = SIGNAL_ROUTES[Math.min(attempt, SIGNAL_ROUTES.length - 1)]!;
+      // 逐次换线路：先自己的域名，连不上再退公共云
+      const route = routeAt(start, attempt);
       const outcome = await this.openPeer(nextId(), route);
-      if (outcome !== SIGNAL_RETRY) return outcome;
+      if (outcome !== SIGNAL_RETRY) {
+        if (outcome === "open") this.activeRouteLabel = route.label;
+        return outcome;
+      }
       last = outcome;
     }
     return last;
@@ -1422,7 +1453,20 @@ export class VoiceMesh {
         finish("连接信令服务器超时，请检查网络后重试");
       });
 
+      /*
+       * 只挂一次：`reconnect()` 成功后 PeerJS 会再发一次 "open"，
+       * 每次都重挂监听会让 connection/call/disconnected 变成 2 份、4 份……
+       * （同一份 offer 被处理多次，表现为重复进圈、重连风暴）。
+       */
+      let listenersBound = false;
       peer.on("open", () => {
+        if (listenersBound) {
+          // 信令恢复：把房主界面从"重连中"放回"已连接"。
+          if (this.hosting) this.events.status("connected");
+          finish("open");
+          return;
+        }
+        listenersBound = true;
         peer.on("connection", (conn) => this.onIncomingConnection(conn));
         peer.on("call", (call) => this.onIncomingCall(call));
         peer.on("disconnected", () => {
@@ -1431,6 +1475,18 @@ export class VoiceMesh {
             peer.reconnect();
           } catch {
             /* noop */
+          }
+          /*
+           * 房主必须知道"我的房号此刻是失效的"（2026-11-03 业主实测）：
+           * 信令一掉，服务器就把 `5b-h-<房号>` 从注册表里摘掉，别人加进来会被
+           * 明确告知"房主不在线"——而房主界面上一切正常，于是他坚称"我明明建了房"。
+           * 标签页被切到后台时最容易发生（心跳被浏览器节流）。
+           */
+          if (this.hosting) {
+            this.events.status(
+              "reconnecting",
+              "信令掉线，正在自动恢复——这期间别人进不来；请保持本页在前台",
+            );
           }
         });
         finish("open");
@@ -1506,13 +1562,39 @@ export class VoiceMesh {
     if (this.destroyed || this.joined || !this.hostId) return;
     // 消息里没带 ID（个别版本不填）时不敢下判断：宁可按老路走超时，也不误杀。
     if (!message.includes(this.hostId)) return;
+    /*
+     * 先换一条信令线路再找（2026-11-03 定位）。
+     *
+     * `peer-unavailable` 只说"这张注册表里没有他"，不代表人不在。
+     * 自建香港与公共云是两张表：房主兜底到了公共云、而你连的是香港时，
+     * 就会得到这句话——而他明明建了房、别人也进得去。
+     * 换线路重试是唯一的出路（不能再死磕同一条）。
+     */
+    if (SIGNAL_ROUTES.length > 1) {
+      this.signalRouteIndex = (this.signalRouteIndex + 1) % SIGNAL_ROUTES.length;
+    }
     if (this.dialAttempts >= MAX_DIAL_ATTEMPTS - 1) {
       this.clearWelcomeDeadline();
-      this.events.status("error", "房主不在线，邀请可能已失效");
+      this.events.status(
+        "error",
+        "房主不在线，邀请可能已失效（如果对方刚建好房、或窗口被切到后台，请让 TA 把 5blong 切回前台；也可能是对方客户端版本过旧，仍连在旧服务器上）",
+      );
       return;
     }
-    // 在 peer 自己的事件回调里销毁 peer 不安全，挪到下一个 tick。
-    this.timers.after(0, () => {
+    /*
+     * 重拨之间必须留间隔（2026-11-03）。
+     *
+     * 信令服务器上"查无此人"有两类原因：房主真的退了，**或者他的信令刚掉、
+     * 正在自动重连**（标签页被浏览器节流时极常见：心跳被压到一分钟一次，
+     * 服务端先把 ID 回收，客户端回到前台才 reconnect）。
+     * 原实现三次重拨之间没有任何间隔，1~2 秒内打完就报"房主不在线"——
+     * 用户看到的就是"我确定他建了房，你却说房主不在线"。
+     * 现在给两次等待（1.2s / 3s），把"等对方回来"这件事真的做出来。
+     */
+    const delay = this.dialAttempts === 0 ? 1_200 : 3_000;
+    this.events.status("connecting", "还没找到房主，正在自动重试…");
+    // 在 peer 自己的事件回调里销毁 peer 不安全，挪到定时器里。
+    this.timers.after(delay, () => {
       if (this.destroyed || this.joined) return;
       void this.redialWithFreshPeer();
     });
@@ -3226,6 +3308,34 @@ export class VoiceMesh {
   }
 
   /**
+   * 中继凭据从无到有：把开局时建坏的语音腿拆掉重拨。
+   *
+   * 开局 /ice 超时的客户端以纯 STUN 起步，那时建的腿没有中继候选，
+   * 两边都在 NAT 后就永远连不上（2026-11-03 兰州实测：中继日志里只有
+   * 他的 STUN 探测、一次带凭据的分配都没有）。PeerJS 在 peer.call()
+   * 那一刻才读 ICE 配置，所以拆掉重拨的新腿自动带上中继——这是
+   * "开局凭据晚到"这类问题的唯一自愈方式。
+   */
+  private onIceUpgrade(): void {
+    if (this.destroyed || !this.me || !this.joined) return;
+    this.pushRoomEvent("error", "中继凭据已就绪，正在重拨语音链路…");
+    this.resetLinkRetries();
+    for (const member of this.members.values()) {
+      if (member.local) continue;
+      this.dropMedia(member.id);
+      this.roomLinkState.set(member.id, "connecting");
+      this.events.mediaState(member.id, "connecting");
+    }
+    // 共享画面腿同样可能开局没拿到中继，收掉让补拨按新配置重建
+    this.closeScreenCalls();
+    if (this.screenShareState?.sharerId === this.myId && this.screenStream) {
+      this.startScreenCalls();
+    }
+    // 补拨巡检每 3 秒拨一条，几秒内全部重建
+    this.ensureCalls();
+  }
+
+  /**
    * 语音流监看：连着但没数据时自动重拨，免得用户退房重进。
    *
    * 只对"曾经收到过音频"的腿生效——纯收听者（没麦克风）本来就只有 0 字节，
@@ -3328,6 +3438,12 @@ export class VoiceMesh {
         memberCount: this.members.size,
         code: this.code,
         joined: this.joined,
+        /*
+         * 信令线路：自建香港（own-hk）与公共云（peerjs-cloud）是**两张注册表**，
+         * "同一个房号彼此看不见"绝大多数就是两边落在了不同线路上。
+         * 排障时先看这个字段，比猜网络快得多。
+         */
+        signalRoute: this.activeRouteLabel || SIGNAL_ROUTES[this.signalRouteIndex]?.label || "?",
       },
       audio: {
         ctxState: this.ctx?.state ?? "none",

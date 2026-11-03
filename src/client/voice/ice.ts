@@ -102,6 +102,34 @@ export function iceHasTurn(): boolean {
   return current !== FALLBACK;
 }
 
+/**
+ * 订阅「凭据从无到有」事件（纯 STUN → 带 TURN）。返回退订函数。
+ *
+ * 为什么需要（2026-11-03 线上实测）：进房那一次 /ice 若超时，客户端就以
+ * 纯 STUN 开局——此时建的语音腿**永远没有中继候选**，背景重试哪怕 1 秒后
+ * 拿到了凭据，也已经建好的腿用不上。好在这条坑有解：PeerJS 是在
+ * `peer.call()` 那一刻才真正读 ICE 配置，所以凭据到手后把旧腿拆掉重拨，
+ * 新腿就自动带上中继。引擎订阅这个事件来做那次重拨。
+ */
+const upgradeListeners = new Set<() => void>();
+
+export function onIceUpgrade(cb: () => void): () => void {
+  upgradeListeners.add(cb);
+  return () => {
+    upgradeListeners.delete(cb);
+  };
+}
+
+function fireIceUpgrade(): void {
+  for (const cb of [...upgradeListeners]) {
+    try {
+      cb();
+    } catch {
+      /* 单个订阅者出错不影响其他 */
+    }
+  }
+}
+
 /** 结构校验：只认"至少一条、urls 非空且全是非空字符串"的数组。 */
 function validIceServers(value: unknown): value is RTCIceServer[] {
   if (!Array.isArray(value) || value.length === 0) return false;
@@ -142,10 +170,13 @@ export function refreshIceServers(): Promise<void> {
       }
       // 静态 STUN 放前面：TURN 只在打洞失败时才被 ICE 选中，顺序不影响正确性，
       // 但先列 STUN 让"能直连就直连"的意图在配置上一眼可见。
+      const hadTurn = current !== FALLBACK;
       current = [...FALLBACK, ...data.iceServers];
       expiresAt = Date.now() + CACHE_MS;
       // 成功一次就把退避重置，下次失效（12 小时后）重新从 1 秒起步
       retryCount = 0;
+      // 凭据从无到有：通知引擎重拨开局时建坏的语音腿（见 onIceUpgrade 说明）
+      if (!hadTurn) fireIceUpgrade();
     } catch {
       /* 网络不可达 / 超时 / 非 JSON —— 退回纯 STUN，并按退避继续重试 */
       scheduleRetry();
