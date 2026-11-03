@@ -146,6 +146,24 @@
   }
   .step > * { position: relative; z-index: 1; }
 
+  /* ---------------------------------------------------------------- 能做的事 */
+  .features { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+  @media (max-width: 1000px) { .features { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 560px) { .features { grid-template-columns: 1fr; } }
+  .feat {
+    background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+    padding: 18px 18px 20px;
+  }
+  .feat h3 {
+    margin: 0 0 6px; font-size: 15px; letter-spacing: -.01em;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .feat h3::before {
+    content: ""; width: 7px; height: 7px; border-radius: 50%;
+    background: var(--brand); flex: 0 0 auto;
+  }
+  .feat p { margin: 0; font-size: 13.5px; color: var(--ink-2); line-height: 1.55; }
+
   /* ---------------------------------------------------------------- 平台 */
   .platforms { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
   @media (max-width: 860px) { .platforms { grid-template-columns: 1fr; } }
@@ -255,6 +273,25 @@
           <p>开麦聊天、一起听歌、共享屏幕看电影。谁说话头像会亮。</p>
           <span class="deco"></span>
         </article>
+      </div>
+    </div>
+  </section>
+
+  <section id="features" style="padding-top: 8px;">
+    <div class="wrap">
+      <div class="sec-head">
+        <h2>能做的事</h2>
+        <p>不多，但都是天天会用的。</p>
+      </div>
+      <div class="features">
+        <article class="feat"><h3>语音</h3><p>64kbps 起步，自动降噪。谁在说话，头像会亮。</p></article>
+        <article class="feat"><h3>共享屏幕</h3><p>一起看电影、看游戏。人少走直连，人多自动换转发。</p></article>
+        <article class="feat"><h3>开黑圈</h3><p>5v5 分队，队内语音分开，对面听不到你们。</p></article>
+        <article class="feat"><h3>好友</h3><p>看谁在线、在哪个房，一键把人叫过来。</p></article>
+        <article class="feat"><h3>私密房</h3><p>房号配临时密码。换密码不踢人，关掉就只剩链接能进。</p></article>
+        <article class="feat"><h3>主题</h3><p>雪原、万圣夜、春节，早晚还各有一套配色。</p></article>
+        <article class="feat"><h3>猪圈</h3><p>点一下有反应，还能喂。待久了会自己走动。</p></article>
+        <article class="feat"><h3>今晚小结</h3><p>离开时告诉你聊了多久、几个人、开了几轮麦。</p></article>
       </div>
     </div>
   </section>

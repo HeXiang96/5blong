@@ -3,12 +3,15 @@ import { createPortal } from "react-dom";
 
 import {
   Film,
+  Globe,
   Hash,
   Home,
   Headphones,
   KeyRound,
+  Link2,
   Lock,
   Mail,
+  RefreshCw,
   Stethoscope,
   Target,
   UserRound,
@@ -34,6 +37,9 @@ const ICONS: Record<WhatsNewIcon, typeof Target> = {
   users: Users,
   mail: Mail,
   hash: Hash,
+  globe: Globe,
+  link: Link2,
+  refresh: RefreshCw,
 };
 
 /**
