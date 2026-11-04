@@ -1,0 +1,1339 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>语音房内 · 梗王对局（演示夹具）</title>
+<!--
+  ============================================================================
+  测试夹具 / 演示：语音房内嵌 1v1 卡牌对局（不参与构建，不引用 src）
+  ----------------------------------------------------------------------------
+  演示流程：
+    1) 房间界面 → 点右侧的猪 → 成员卡菜单（照现有界面做的壳）
+    2) 菜单里点「梗王对局」→ 对方收到邀请卡片 → 点「接受」
+    3) 房间整体压暗（略黑），两只猪分站左右，发牌，开始回合制对打
+  入口参数：
+    #menu  直接停在成员卡菜单
+    #duel  直接跳到对局
+  ============================================================================
+-->
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  :root {
+    --cream: #fdf4e4;
+    --grass: #d8e8b2;
+    --grass-deep: #c3da97;
+    --wood: #b98a5a;
+    --wood-dark: #8d6238;
+    --ink: #4b3a28;
+    --panel: rgba(18, 22, 34, 0.94);
+    --line: rgba(160, 200, 240, 0.18);
+    --text: #eef4ff;
+    --dim: rgba(210, 226, 250, 0.62);
+    --gold: #ffd700;
+    --red: #ff4d6d;
+    --p1: #ff8a5c;
+    --p2: #4be3d2;
+  }
+  html, body { height: 100%; overflow: hidden; }
+  body {
+    font-family: "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
+    background: var(--cream); color: var(--ink); user-select: none;
+  }
+
+  /* ================= 房间场景（浅色原野，照现有界面） ================= */
+  #room { position: fixed; inset: 0; overflow: hidden; background: linear-gradient(180deg, #fdf6e8 0%, #fbf1dc 46%, #f2edcf 62%, #e7f0c8 100%); }
+  #sun { position: absolute; right: 9%; top: 8%; width: 110px; height: 110px; border-radius: 50%;
+    background: radial-gradient(circle at 40% 38%, #fff7cf, #ffe07a 58%, rgba(255,214,90,0.35) 78%, transparent 82%);
+    filter: blur(1px); animation: sunpulse 6s ease-in-out infinite; }
+  @keyframes sunpulse { 50% { transform: scale(1.05); opacity: 0.92; } }
+  .cloud { position: absolute; background: #fff; border-radius: 999px; opacity: 0.85; filter: blur(0.4px); }
+  .cloud::before, .cloud::after { content: ""; position: absolute; background: #fff; border-radius: 50%; }
+  .cloud.c1 { width: 120px; height: 34px; right: 14%; top: 16%; }
+  .cloud.c1::before { width: 52px; height: 52px; left: 16px; top: -22px; }
+  .cloud.c1::after { width: 38px; height: 38px; left: 62px; top: -14px; }
+  .cloud.c2 { width: 86px; height: 26px; right: 30%; top: 26%; opacity: 0.6; }
+  .cloud.c2::before { width: 40px; height: 40px; left: 12px; top: -18px; }
+
+  .hill { position: absolute; border-radius: 50% 50% 0 0 / 100% 100% 0 0; }
+  .hill.h1 { left: -14%; right: -14%; bottom: 18%; height: 46%; background: #eaf2cf; }
+  .hill.h2 { left: 4%; right: -30%; bottom: 8%; height: 38%; background: var(--grass); }
+  .hill.h3 { left: -30%; right: 18%; bottom: 4%; height: 30%; background: var(--grass-deep); opacity: 0.85; }
+  #grassline { position: absolute; left: 0; right: 0; bottom: 0; height: 26%; background: linear-gradient(180deg, var(--grass-deep), #b6d187); }
+  #grassline::before { content: ""; position: absolute; left: 0; right: 0; top: -6px; height: 12px; background: radial-gradient(ellipse at center, rgba(195,218,151,0.9), transparent 70%); }
+
+  /* 篝火 */
+  #fire { position: absolute; left: 50%; bottom: 21%; transform: translateX(-50%); text-align: center; }
+  #fire .flame { font-size: 42px; filter: drop-shadow(0 6px 14px rgba(255,150,40,0.55)); animation: flick 1.4s ease-in-out infinite; display: block; }
+  @keyframes flick { 50% { transform: scale(1.08) translateY(-2px); opacity: 0.92; } }
+  #fire .logs { width: 68px; height: 12px; margin: -6px auto 0; border-radius: 6px; background: #9a7248; box-shadow: 0 3px 0 #7d5a36, 0 0 0 6px rgba(150,140,120,0.35); }
+
+  /* 猪 */
+  .pig { position: absolute; bottom: 19%; z-index: 30; width: 96px; text-align: center;
+    transition: left 1.1s cubic-bezier(.34,1.2,.4,1), right 1.1s cubic-bezier(.34,1.2,.4,1), transform 0.3s; }
+  #pigA { left: 9%; }
+  #pigB { right: 9%; cursor: pointer; }
+  .pig .bubble { position: relative; display: grid; place-items: center; width: 78px; height: 74px; margin: 0 auto;
+    border-radius: 46% 46% 44% 44%; background: radial-gradient(circle at 42% 34%, #ffd3e0, #f7a8bf 62%, #e58ba6);
+    box-shadow: 0 8px 18px rgba(160,120,120,0.28), inset 0 -6px 12px rgba(255,255,255,0.35); font-size: 40px; }
+  .pig .bubble::before, .pig .bubble::after { content: ""; position: absolute; top: 16px; width: 12px; height: 14px; border-radius: 50%; background: #fff; opacity: 0.35; }
+  .pig .bubble::before { left: 14px; } .pig .bubble::after { right: 14px; }
+  .pig .name { display: inline-block; margin-top: -8px; padding: 2px 10px; border-radius: 999px; background: rgba(255,255,255,0.92);
+    font-size: 11px; font-weight: 800; color: #6b5238; border: 1px solid rgba(190,160,120,0.5); white-space: nowrap; position: relative; z-index: 2; }
+  .pig .badge { position: absolute; right: 6px; top: 4px; font-size: 9px; padding: 0 5px; border-radius: 999px; background: rgba(80,60,40,0.6); color: #ffe9c8; }
+  .pig.hover .bubble { transform: translateY(-4px) scale(1.04); }
+  .pig.dim { opacity: 0.35; }
+  .pig.speaking::after { content: ""; position: absolute; left: 50%; transform: translateX(-50%); bottom: -10px; width: 40px; height: 8px; border-radius: 50%; background: rgba(120,180,90,0.45); animation: ring 1.2s ease-out infinite; }
+  @keyframes ring { 0% { transform: translateX(-50%) scale(0.7); opacity: 0.8; } 100% { transform: translateX(-50%) scale(1.5); opacity: 0; } }
+
+  /* 顶栏 / 底栏（房间外壳） */
+  #topbar { position: absolute; left: 50%; top: 14px; transform: translateX(-50%); z-index: 35;
+    display: flex; align-items: center; gap: 10px; padding: 7px 14px; border-radius: 14px;
+    background: linear-gradient(180deg, #e8d3ae, #d9bd92); border: 1px solid #c9a877;
+    box-shadow: 0 6px 16px rgba(120,90,50,0.25); font-size: 12px; color: #5b4630; white-space: nowrap; }
+  #topbar .logo { font-weight: 900; letter-spacing: 0.5px; color: #7a5a34; }
+  #topbar .dot { width: 7px; height: 7px; border-radius: 50%; background: #4fbf6a; box-shadow: 0 0 6px #4fbf6a; }
+  #topbar .sep { width: 1px; height: 16px; background: rgba(140,110,70,0.35); }
+  #topbar .tbtn { padding: 3px 10px; border-radius: 8px; background: #f6e7cb; border: 1px solid #c9a877; font-size: 11.5px; font-weight: 700; color: #6b5238; }
+  #quickPlay { position: absolute; left: 18px; bottom: 18px; z-index: 36;
+    display: flex; align-items: center; gap: 6px; padding: 9px 14px; border-radius: 12px;
+    background: linear-gradient(135deg, #ffd98a, #f0b45a); border: 1px solid #d9a15a;
+    font-size: 12.5px; font-weight: 900; color: #4b3418; cursor: pointer;
+    box-shadow: 0 8px 20px rgba(150,110,50,0.3); transition: transform 0.12s, opacity 0.3s; }
+  #quickPlay:active { transform: translateY(1px); }
+  body.dueling #quickPlay { opacity: 0; pointer-events: none; }
+  #heroPowerBtn {
+    pointer-events: auto; display: flex; align-items: center; gap: 9px;
+    height: 44px; padding: 0 14px 0 8px; border-radius: 12px; cursor: pointer;
+    background: linear-gradient(180deg, #f4f9ff, #dcebfa);
+    border: 1.5px solid #8fb8e0; color: #24405c;
+    box-shadow: 0 2px 0 rgba(90, 130, 170, 0.35), inset 0 1px 0 #fff;
+    white-space: nowrap; transition: box-shadow 0.15s, transform 0.1s, filter 0.15s;
+  }
+  #heroPowerBtn .hp-gem {
+    width: 28px; height: 28px; flex: 0 0 auto; border-radius: 50%;
+    display: grid; place-items: center;
+    font-size: 13px; font-weight: 900; font-family: ui-monospace, Consolas, monospace;
+    color: #fff; background: radial-gradient(circle at 36% 30%, #8fd0ff, #2f6fd0 70%);
+    border: 1.5px solid rgba(255, 255, 255, 0.8);
+    box-shadow: 0 2px 6px rgba(30, 70, 130, 0.35);
+  }
+  #heroPowerBtn .hp-body { display: flex; flex-direction: column; align-items: flex-start; line-height: 1.2; }
+  #heroPowerBtn .hp-name { font-size: 12.5px; font-weight: 900; color: #1f3a55; letter-spacing: 0.2px; }
+  #heroPowerBtn .hp-desc { font-size: 9.5px; font-weight: 700; color: #5b7b99; margin-top: 2px; }
+  #heroPowerBtn:hover:not(:disabled) { box-shadow: 0 0 0 2px rgba(120, 180, 255, 0.45), 0 2px 0 rgba(90, 130, 170, 0.35), inset 0 1px 0 #fff; }
+  #heroPowerBtn:active:not(:disabled) { transform: translateY(1px); }
+  #heroPowerBtn.on { border-color: #6ea8e8; }
+  #heroPowerBtn:disabled { cursor: default; filter: grayscale(0.35); opacity: 0.8; }
+  #heroPowerBtn:disabled .hp-desc { color: #8fa3b6; }
+  #bottombar { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 35;
+    display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: 16px;
+    background: linear-gradient(180deg, #e8d3ae, #d3b689); border: 1px solid #c9a877;
+    box-shadow: 0 8px 20px rgba(120,90,50,0.28); }
+  #bottombar .bb { display: flex; align-items: center; gap: 5px; padding: 7px 12px; border-radius: 11px; background: #fbf1de;
+    border: 1px solid #cdae82; font-size: 12px; font-weight: 700; color: #6b5238; }
+  #bottombar .bb.warn { color: #b4472f; border-color: #dda78f; background: #fdece4; }
+  #bottombar { transition: opacity 0.4s, transform 0.4s; }
+  body.dueling #bottombar { opacity: 0; transform: translateX(-50%) translateY(14px); pointer-events: none; }
+
+  /* ================= 成员卡菜单（照现有界面） ================= */
+  #memberCard { position: absolute; right: clamp(150px, 18%, 240px); top: 62px; transform: translateY(-8px) scale(0.96); z-index: 60;
+    width: 254px; max-height: calc(100vh - 60px); overflow: auto; border-radius: 16px; padding: 12px;
+    background: #fffdf8; border: 1px solid #e7d9c4; box-shadow: 0 18px 40px rgba(90,70,45,0.28);
+    opacity: 0; pointer-events: none; transition: opacity 0.18s, transform 0.18s; }
+  #memberCard.open { opacity: 1; pointer-events: auto; transform: translateY(0) scale(1); }
+  #memberCard::-webkit-scrollbar { width: 0; }
+  .mc-head { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 800; color: #4b3a28; margin-bottom: 8px; }
+  .mc-head .ico { font-size: 15px; }
+  .mc-slider { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .mc-slider .track { flex: 1; height: 4px; border-radius: 3px; background: #ecdcc2; position: relative; }
+  .mc-slider .track::after { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 100%; border-radius: 3px; background: #e0a86a; }
+  .mc-slider .knob { position: absolute; right: -2px; top: 50%; transform: translateY(-50%); width: 11px; height: 11px; border-radius: 50%; background: #fff; border: 2px solid #d59a5a; }
+  .mc-slider .val { font-size: 11px; color: #8a7659; }
+  .mc-wide { display: block; width: 100%; padding: 8px; margin-bottom: 7px; border-radius: 10px; background: #fff; border: 1px solid #e7d9c4;
+    font-size: 12px; font-weight: 700; color: #5b4630; }
+  .mc-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin: 9px 0; }
+  .mc-act { padding: 7px 2px 5px; border-radius: 10px; background: #fff; border: 1px solid #ece0cd; text-align: center; font-size: 10px; color: #6b5238; line-height: 1.35; }
+  .mc-act .e { display: block; font-size: 16px; margin-bottom: 1px; }
+  .mc-note { font-size: 10.5px; color: #a08d72; margin: 6px 0; }
+  .mc-duel { display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; padding: 10px; margin: 8px 0 6px;
+    border: none; border-radius: 11px; font-size: 13px; font-weight: 900; color: #fff; letter-spacing: 1px;
+    background: linear-gradient(135deg, #ff8fb0, #f2607f); box-shadow: 0 6px 16px rgba(242,96,127,0.35); cursor: pointer; }
+  .mc-duel:active { transform: translateY(1px); }
+  .mc-danger { color: #c9483a; border-color: #eec4bc; }
+
+  /* ================= 邀请卡（对方视角） ================= */
+  #invite { position: absolute; right: 26px; top: 74px; z-index: 70; width: 246px; border-radius: 14px; padding: 12px 14px;
+    background: rgba(255,253,248,0.98); border: 1px solid #e7d9c4; box-shadow: 0 16px 34px rgba(90,70,45,0.26);
+    opacity: 0; transform: translateY(-8px); pointer-events: none; transition: opacity 0.2s, transform 0.2s; }
+  #invite.show { opacity: 1; transform: translateY(0); pointer-events: auto; }
+  #invite .who { font-size: 12.5px; font-weight: 800; color: #4b3a28; margin-bottom: 3px; }
+  #invite .desc { font-size: 11.5px; color: #8a7659; line-height: 1.55; margin-bottom: 10px; }
+  #invite .row { display: flex; gap: 8px; }
+  #invite .row button { flex: 1; padding: 8px; border-radius: 9px; font-size: 12px; font-weight: 800; border: 1px solid #e0d0b6; background: #fff; color: #6b5238; }
+  #invite .row .ok { background: linear-gradient(135deg, #8fd694, #5cbb6c); color: #14301a; border: none; }
+  #invite .left { font-size: 10px; color: #b4a48c; text-align: center; margin-top: 7px; }
+
+  /* ================= 压暗层 ================= */
+  #dim { position: absolute; inset: 0; z-index: 20; background: radial-gradient(circle at 50% 58%, rgba(24,18,30,0.22), rgba(14,10,18,0.46));
+    backdrop-filter: blur(1.5px) saturate(0.86); opacity: 0; pointer-events: none; transition: opacity 0.6s; }
+  body.dueling #dim { opacity: 1; }
+  /* 对局中篝火压暗并去掉发光：否则那圈 drop-shadow 会糊在卡面上 */
+  #fire { transition: opacity 0.5s; }
+  body.dueling #fire { opacity: 0.18; }
+  body.dueling #fire .flame { filter: none; animation: none; }
+
+  /* ================= 对局 HUD ================= */
+  #duel { position: absolute; inset: 0; z-index: 40; pointer-events: none; opacity: 0; transition: opacity 0.5s; }
+  body.dueling #duel { opacity: 1; pointer-events: auto; }
+  #duel .clickable { pointer-events: auto; }
+
+  /* 血量条（贴在猪头顶） */
+  .hud { position: absolute; z-index: 41; width: 124px; text-align: center; pointer-events: auto; transition: left 1.1s cubic-bezier(.34,1.2,.4,1), right 1.1s cubic-bezier(.34,1.2,.4,1); }
+  #hudL { left: calc(9% + 48px); transform: translateX(-50%); bottom: 33%; }
+  #hudR { right: calc(9% + 48px); transform: translateX(50%); bottom: 33%; }
+  .hud .nm { font-size: 11px; font-weight: 800; color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,0.6); margin-bottom: 3px; }
+  .hud .hpbar { height: 12px; border-radius: 7px; background: rgba(10,8,14,0.6); border: 1px solid rgba(255,255,255,0.25); overflow: hidden; }
+  .hud .hpfill { height: 100%; width: 100%; transition: width 0.3s; }
+  #hudL .hpfill { background: linear-gradient(90deg, #ff6a3d, #ffa07a); }
+  #hudR .hpfill { background: linear-gradient(90deg, #4be3d2, #2bb5a6); }
+  .hud .num { font-size: 11px; font-weight: 900; color: #fff; margin-top: 2px; text-shadow: 0 1px 3px rgba(0,0,0,0.65); font-family: ui-monospace, Consolas, monospace; }
+  .hud.targetable { cursor: crosshair; }
+
+  /* 随从场：两排站在篝火两侧 */
+  .heroZone {
+    position: absolute; bottom: 16%; width: 108px; height: 132px; z-index: 42;
+    border-radius: 28px; pointer-events: none; transition: box-shadow 0.15s, background 0.15s;
+  }
+  #zoneMe { left: calc(9% - 6px); }
+  #zoneFoe { right: calc(9% - 6px); }
+  .heroZone.is-target {
+    pointer-events: auto; cursor: crosshair;
+    background: radial-gradient(circle at 50% 55%, rgba(224, 85, 109, 0.18), transparent 70%);
+    box-shadow: 0 0 0 3px rgba(224, 85, 109, 0.85), 0 0 26px rgba(224, 85, 109, 0.5);
+    animation: targetPulse 1.1s ease-in-out infinite;
+  }
+  @keyframes targetPulse { 50% { box-shadow: 0 0 0 5px rgba(224, 85, 109, 0.55), 0 0 34px rgba(224, 85, 109, 0.65); } }
+
+  #laneL, #laneR { position: absolute; bottom: 37%; z-index: 31; pointer-events: auto; display: flex; gap: 11px; align-items: flex-end; max-width: 24%; flex-wrap: wrap-reverse; }
+  #laneL::after, #laneR::after { content: ""; position: absolute; left: 4px; right: 4px; bottom: -7px; height: 10px; border-radius: 50%; background: radial-gradient(ellipse at center, rgba(70,60,50,0.28), transparent 70%); z-index: -1; }
+  #laneL { left: 20%; }
+  #laneR { right: 20%; flex-direction: row-reverse; }
+  .mini {
+    position: relative; width: 62px; height: 78px; border-radius: 10px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    background: linear-gradient(180deg, #fffdf7, #f7ead4);
+    border: 2px solid var(--rar, #b29368);
+    box-shadow: 0 6px 12px rgba(70, 50, 24, 0.26), inset 0 1px 0 #fff;
+    color: #3a2b1c; transition: transform 0.12s, box-shadow 0.12s;
+  }
+  .mini .mname {
+    font-size: 8.5px; font-weight: 800; line-height: 1.2; text-align: center;
+    max-height: 20px; overflow: hidden; padding: 0 3px;
+  }
+  .mini .micon { font-size: 21px; margin-top: 3px; }
+  .mini .matk, .mini .mhp {
+    position: absolute; bottom: -6px; width: 20px; height: 20px; border-radius: 50%;
+    display: grid; place-items: center; font-size: 10.5px; font-weight: 900;
+    font-family: ui-monospace, Consolas, monospace; color: #fff;
+    border: 2px solid #fff9ec; box-shadow: 0 2px 4px rgba(0, 0, 0, 0.25);
+  }
+  .mini .matk { left: -6px; background: linear-gradient(180deg, #f7b352, #e08a1e); }
+  .mini .mhp { right: -6px; background: linear-gradient(180deg, #86d38f, #4ea85e); }
+  .mini.taunt { border-color: #7d8ba0; }
+  .mini.taunt::after { content: "🛡"; position: absolute; top: 0; right: 2px; font-size: 9px; }
+  .mini.frozen { filter: saturate(0.4); }
+  .mini.frozen::before { content: "🔒"; position: absolute; top: 0; left: 2px; font-size: 9px; }
+  .mini.canAttack { box-shadow: 0 0 0 2px rgba(255, 209, 102, 0.8), 0 6px 12px rgba(70, 50, 24, 0.26); cursor: pointer; }
+  .mini.targetable { outline: 3px solid #e0556d; outline-offset: 2px; cursor: crosshair; }
+  .mini.selected { outline: 3px solid var(--gold); outline-offset: 2px; transform: translateY(-4px); }
+
+  /* 手牌抽屉 */
+  #handWrap { position: absolute; left: 0; right: 0; bottom: 80px; z-index: 45; display: flex; justify-content: safe center;
+    padding: 0 8px; pointer-events: none; }
+  #hand { display: flex; gap: 6px; align-items: flex-end; justify-content: center;
+    pointer-events: auto; overflow: visible; padding-top: 18px; }
+  /* 扇形叠放：牌多时自动收拢，悬停那张立起来置顶 */
+  #hand .card { z-index: 1; transform: rotate(var(--rot, 0deg)); transform-origin: 50% 118%; }
+  #hand .card:hover { z-index: 60; transform: translateY(-26px) scale(1.04);
+    box-shadow: 0 20px 34px rgba(50, 34, 14, 0.34), 0 0 0 2px rgba(255, 209, 102, 0.55); }
+  #hand .card.selected { z-index: 61; transform: translateY(-30px) scale(1.04);
+    box-shadow: 0 0 0 2.5px var(--gold), 0 22px 36px rgba(50, 34, 14, 0.36); }
+  #hand.is-locked .card:hover { transform: rotate(var(--rot, 0deg)); }
+  /* ========== 卡牌 ========== */
+  .card {
+    position: relative; flex: 0 0 auto;
+    width: 100px; height: 152px;
+    display: flex; flex-direction: column;
+    border-radius: 12px; cursor: pointer; overflow: hidden;
+    background: linear-gradient(180deg, #fffdf7, #f7ead4);
+    border: 2px solid var(--rar, #b29368);
+    box-shadow: 0 8px 18px rgba(70, 50, 24, 0.26), inset 0 1px 0 #fff;
+    color: #3a2b1c;
+    transition: transform 0.14s cubic-bezier(.2,.9,.3,1.25), box-shadow 0.14s;
+  }
+  .card::before {
+    content: ""; position: absolute; top: 0; left: 0; right: 0; height: 4px;
+    background: var(--type, #b29368); opacity: 0.9;
+  }
+  .card .cost {
+    position: absolute; top: 0; left: 0; width: 28px; height: 28px;
+    display: grid; place-items: center;
+    border-radius: 12px 0 12px 0;
+    font-size: 12.5px; font-weight: 900; font-family: ui-monospace, Consolas, monospace;
+    color: #fff; background: linear-gradient(180deg, #63b0ee, #2f6fd0);
+    border-right: 1px solid rgba(255,255,255,0.5);
+    border-bottom: 1px solid rgba(255,255,255,0.5);
+    box-shadow: 0 2px 5px rgba(20,40,80,0.25);
+  }
+  .card .cname {
+    margin: 31px 7px 3px; min-height: 26px; max-height: 26px; overflow: hidden;
+    font-size: 10.5px; font-weight: 800; line-height: 1.25; text-align: center;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  }
+  .card .ctxt {
+    flex: 1 1 auto; margin: 0 7px; overflow: hidden;
+    font-size: 9px; line-height: 1.4; text-align: center; color: #6b5638;
+    display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical;
+  }
+  .card .ctxt b { color: #c0392b; font-weight: 900; }
+  .card .cfoot {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 3px 8px 7px; min-height: 22px;
+    font-size: 8.5px; color: #9a8566; letter-spacing: 0.3px;
+  }
+  .card .crar { font-weight: 900; color: var(--rar, #b29368); }
+  .card .stat {
+    min-width: 23px; height: 19px; border-radius: 10px; padding: 0 5px;
+    display: grid; place-items: center;
+    font-size: 11px; font-weight: 900; color: #fff;
+    font-family: ui-monospace, Consolas, monospace;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.45), 0 1px 3px rgba(0,0,0,0.22);
+  }
+  .card .stat.atk { background: linear-gradient(180deg, #f7b352, #e08a1e); }
+  .card .stat.hp { background: linear-gradient(180deg, #86d38f, #4ea85e); }
+  .card:hover { transform: translateY(-10px); box-shadow: 0 16px 26px rgba(60,42,18,0.3); }
+  .card.selected {
+    transform: translateY(-16px) scale(1.02);
+    box-shadow: 0 0 0 2.5px var(--gold), 0 18px 30px rgba(60,42,18,0.34);
+  }
+  .card.unaffordable { filter: saturate(0.32) brightness(0.99); }
+  .card.unaffordable::after {
+    content: ""; position: absolute; inset: 0; pointer-events: none;
+    background: linear-gradient(180deg, rgba(126, 116, 98, 0.16), rgba(126, 116, 98, 0.1));
+  }
+  .card.unaffordable .cost { background: linear-gradient(180deg, #e08a8a, #b23b32); }
+  .card.unaffordable .cname { color: #6b5b48; }
+
+  /* 对局控制条 */
+  #duelbar { position: absolute; left: 50%; bottom: 30px; transform: translateX(-50%); z-index: 46; display: flex; align-items: center; gap: 8px; }
+  #duelbar .chip { pointer-events: auto; white-space: nowrap; font-size: 11px; color: var(--dim); background: rgba(12,16,26,0.8); border: 1px solid var(--line);
+    border-radius: 999px; padding: 4px 10px; }
+  #endTurn { pointer-events: auto; white-space: nowrap; padding: 9px 20px; border-radius: 11px; border: 1px solid rgba(255,215,0,0.55);
+    background: linear-gradient(180deg, #ffd970, #d9a100); color: #241a00; font-size: 13px; font-weight: 900; letter-spacing: 1px;
+    box-shadow: 0 6px 18px rgba(255,190,0,0.25); cursor: pointer; }
+  #endTurn:disabled { opacity: 0.35; filter: grayscale(0.6); cursor: default; box-shadow: none; }
+  #quitDuel { pointer-events: auto; white-space: nowrap; padding: 8px 12px; border-radius: 10px; font-size: 11.5px; font-weight: 700;
+    background: rgba(12,16,26,0.8); border: 1px solid var(--line); color: var(--dim); cursor: pointer; }
+
+  /* 战报 */
+  #log { position: absolute; left: 18px; top: 60px; z-index: 44; width: 220px; display: flex; flex-direction: column; gap: 3px; pointer-events: none; }
+  #log div { font-size: 10.5px; color: rgba(232,242,255,0.9); text-shadow: 0 1px 3px rgba(0,0,0,0.8);
+    background: rgba(10,14,22,0.3); border-radius: 5px; padding: 2px 7px; opacity: 0; animation: fadein 0.3s forwards;
+    align-self: flex-start; }
+  #log div.dmg { color: #ffb3c0; } #log div.sys { color: #ffe08a; }
+  @keyframes fadein { to { opacity: 1; } }
+
+  /* toast / 提示 */
+  #toast { position: absolute; left: 50%; top: 64px; transform: translateX(-50%) translateY(-6px); z-index: 80;
+    background: rgba(14,18,28,0.92); color: #eef4ff; border: 1px solid var(--line); border-radius: 999px;
+    padding: 7px 16px; font-size: 12px; opacity: 0; pointer-events: none; transition: opacity 0.2s, transform 0.2s; }
+  #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  #hint { position: absolute; left: 50%; top: 62px; transform: translateX(-50%); z-index: 44; font-size: 11px;
+    color: rgba(255,248,235,0.95); background: rgba(30,22,16,0.42); border: 1px solid rgba(255,235,200,0.22);
+    padding: 4px 12px; border-radius: 999px; white-space: nowrap; opacity: 0; transition: opacity 0.3s; }
+  body.dueling #hint { opacity: 1; }
+
+
+
+  /* ========== 悬停大卡 / 关键词 ========== */
+  #tip {
+    position: fixed; z-index: 78; width: 216px; padding: 12px 13px; border-radius: 13px;
+    background: linear-gradient(180deg, #fffdf7, #f7ecd8);
+    border: 2px solid rgba(178,146,104,0.62); color: #43301b;
+    box-shadow: 0 20px 40px rgba(70,50,30,0.34);
+    opacity: 0; pointer-events: none; transition: opacity 0.12s;
+  }
+  #tip.show { opacity: 1; }
+  #tip .tname { font-size: 14px; font-weight: 900; line-height: 1.25; margin-bottom: 3px; }
+  #tip .tmeta { font-size: 10px; color: #8a7455; margin-bottom: 7px; display: flex; gap: 8px; align-items: center; }
+  #tip .tmeta .pill { padding: 1px 7px; border-radius: 999px; background: rgba(178,146,104,0.16); color: #7a6242; font-weight: 700; }
+  #tip .teff { font-size: 12px; line-height: 1.65; color: #4a3826; }
+  #tip .teff b { color: #b4472e; font-weight: 900; }
+  #tip .tfl { margin-top: 8px; padding-top: 7px; border-top: 1px dashed rgba(160,130,90,0.45);
+    font-size: 10.5px; line-height: 1.6; color: #8a7455; font-style: italic; }
+  #tip .tfl::before { content: "「"; }
+  #tip .tfl::after { content: "」"; }
+
+  #glossary {
+    position: fixed; z-index: 78; right: 22px; bottom: 78px; width: 236px; padding: 13px 15px;
+    border-radius: 13px; background: rgba(14,18,28,0.95); border: 1px solid var(--line);
+    color: var(--text); box-shadow: 0 18px 36px rgba(0,0,0,0.5);
+    display: none; font-size: 11px; line-height: 1.9;
+  }
+  #glossary.show { display: block; }
+  #glossary .gtitle { font-size: 12.5px; font-weight: 900; color: var(--gold); margin-bottom: 5px; }
+  #glossary .grow b { color: #9fd0ff; margin-right: 6px; }
+
+  #glossaryBtn { pointer-events: auto; width: 30px; height: 30px; border-radius: 50%; cursor: pointer;
+    background: rgba(12,16,26,0.82); border: 1px solid var(--line); color: var(--dim);
+    font-size: 13px; font-weight: 900; }
+  #glossaryBtn.on { color: var(--gold); border-color: rgba(255,215,0,0.5); }
+
+  .card .ctxt b { color: #b4472e; font-weight: 900; }
+
+  /* ========== 浅色卡面（适配语音房的暖色场景） ========== */
+  .card {
+    background: linear-gradient(180deg, #fffdf7, #f7ecd7);
+    border: 2px solid rgba(178, 146, 104, 0.55);
+    color: #3f2f1e;
+    box-shadow: 0 6px 14px rgba(96, 72, 42, 0.22);
+  }
+  .card .cname { color: #43301b; font-size: 10.5px; letter-spacing: 0.2px; }
+  .card .ctxt { color: #6b5638; font-size: 9px; line-height: 1.42;
+    display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+  .card .cstats .at { color: #b4472e; }
+  .card .cstats .hp { color: #2f7a45; }
+  .card .cstats span[style] { color: #a08d72 !important; }
+  .card.r-ur { border-color: #e0556d; }
+  .card.r-ssr { border-color: #d9a92a; }
+  .card.r-sr { border-color: #9a6ee0; }
+  .card.r-r { border-color: #4a9fd0; }
+  .card.t-pig { background: linear-gradient(180deg, #fff7f9, #f8e7ee); }
+  .card.t-aim { background: linear-gradient(180deg, #f7fbff, #e8f1fa); }
+  .card.t-power { background: linear-gradient(180deg, #fbf8ff, #efe8fb); }
+  .card.t-drama { background: linear-gradient(180deg, #f6fdf8, #e6f5ea); }
+  .card.t-hot { background: linear-gradient(180deg, #fffaf2, #fbeedb); }
+  .card.t-show { background: linear-gradient(180deg, #fffdf2, #f8f0d8); }
+  .card.t-gun { background: linear-gradient(180deg, #f5fdfe, #e2f4f6); }
+  /* 法力不足：只降饱和，不透明，避免叠牌时透字 */
+  .card.selected { border-color: var(--gold); box-shadow: 0 0 0 2px rgba(255,215,0,0.55), 0 12px 22px rgba(96,72,42,0.3); }
+
+  .mini {
+    background: linear-gradient(180deg, #fffdf7, #f4e8d3);
+    border: 2px solid rgba(150, 120, 80, 0.45);
+    color: #43301b;
+    box-shadow: 0 6px 12px rgba(96, 72, 42, 0.22);
+  }
+  .mini .mname { color: #4a351f; }
+  .mini .matk { color: #b4472e; }
+  .mini .mhp { color: #2f7a45; }
+  .mini.taunt { border-color: #9aa6b8; background: linear-gradient(180deg, #ffffff, #eef2f7); }
+  .mini.canAttack { border-color: #d9a92a; box-shadow: 0 0 10px rgba(217,169,42,0.45); }
+  .mini.selected { border-color: var(--gold); }
+  .mini.targetable { outline: 3px solid #e0556d; outline-offset: 2px; }
+
+  .hud .nm { font-size: 10.5px; font-weight: 800; color: rgba(255, 248, 236, 0.92);
+    text-shadow: 0 1px 3px rgba(40, 24, 8, 0.55); margin-bottom: 3px; }
+
+  /* 结算 */
+  #endCard { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%) scale(0.92); z-index: 75;
+    width: min(88vw, 380px); border-radius: 16px; padding: 22px; text-align: center;
+    background: var(--panel); border: 1px solid var(--line); box-shadow: 0 24px 60px rgba(0,0,0,0.55);
+    opacity: 0; pointer-events: none; transition: opacity 0.25s, transform 0.25s; }
+  #endCard.show { opacity: 1; transform: translate(-50%, -50%) scale(1); pointer-events: auto; }
+  #endTitle { font-size: 30px; font-weight: 900; letter-spacing: 5px; color: var(--gold); margin-bottom: 6px; }
+  #endSub { font-size: 12.5px; color: var(--dim); line-height: 1.7; margin-bottom: 16px; }
+  #endCard button { padding: 11px; width: 100%; border-radius: 11px; border: none; font-size: 14px; font-weight: 900; letter-spacing: 2px;
+    color: #08101a; background: linear-gradient(120deg, var(--p2), #9be9ff); cursor: pointer; }
+
+  /* 开场倒计时 */
+  #countdown { position: absolute; left: 50%; top: 46%; transform: translate(-50%, -50%); z-index: 74;
+    font-size: 76px; font-weight: 900; color: #fff; text-shadow: 0 6px 26px rgba(0,0,0,0.6); opacity: 0; pointer-events: none; }
+  #countdown.show { animation: cd 1s ease-out; }
+  @keyframes cd { 0% { opacity: 0; transform: translate(-50%, -50%) scale(0.6); } 30% { opacity: 1; transform: translate(-50%, -50%) scale(1.1); } 100% { opacity: 0; transform: translate(-50%, -50%) scale(1.3); } }
+
+  @media (max-width: 720px) {
+    #memberCard { width: 232px; }
+    .card { width: 72px; height: 102px; }
+    .card .cname { font-size: 8.6px; } .card .ctxt { font-size: 7.6px; }
+    #hudL, #hudR { width: 108px; }
+    .pig .bubble { width: 64px; height: 62px; font-size: 32px; }
+    #log { width: 150px; }
+  }
+</style>
+</head>
+<body>
+
+<div id="room">
+  <div id="sun"></div>
+  <div class="cloud c1"></div>
+  <div class="cloud c2"></div>
+  <div class="hill h1"></div>
+  <div class="hill h2"></div>
+  <div class="hill h3"></div>
+  <div id="grassline"></div>
+  <div id="fire"><span class="flame">🔥</span><div class="logs"></div></div>
+
+  <!-- 猪：左=我，右=对方（点了开菜单） -->
+  <div class="pig speaking" id="pigA">
+    <div class="bubble">🐷</div>
+    <div class="name">夜里看江南</div>
+  </div>
+  <div class="pig" id="pigB">
+    <div class="bubble">🐷</div>
+    <div class="name">测试员3</div>
+    <div class="badge">房主</div>
+  </div>
+
+  <!-- 房间外壳 -->
+  <div id="topbar">
+    <span class="logo">5blong</span>
+    <span class="sep"></span>
+    <span>中二公告</span>
+    <span class="dot"></span>
+    <span>已连接 2/13</span>
+    <span class="sep"></span>
+    <span class="tbtn">好友</span>
+    <span class="tbtn">复制邀请</span>
+    <span class="tbtn">⚙</span>
+  </div>
+
+  <div id="bottombar">
+    <div class="bb warn">🔇 已静音</div>
+    <div class="bb">🖥 分享</div>
+    <div class="bb">🎧 闭听</div>
+    <div class="bb">💬 聊天</div>
+    <div class="bb warn">✖ 结束房间</div>
+  </div>
+
+  <!-- 成员卡菜单 -->
+  <div id="memberCard">
+    <div class="mc-head"><span class="ico">🔊</span>测试员3</div>
+    <div class="mc-slider">
+      <div class="track"><div class="knob"></div></div>
+      <span class="val">100%</span>
+    </div>
+    <button class="mc-wide">🔇 本地静音 TA</button>
+    <button class="mc-wide">👥 已是好友</button>
+    <div class="mc-grid">
+      <div class="mc-act"><span class="e">👉</span>戳一戳</div>
+      <div class="mc-act"><span class="e">👋</span>打招呼</div>
+      <div class="mc-act"><span class="e">🍖</span>投喂</div>
+      <div class="mc-act"><span class="e">🤚</span>摸一摸</div>
+      <div class="mc-act"><span class="e">😆</span>挠痒痒</div>
+      <div class="mc-act"><span class="e">🤗</span>抱一抱</div>
+      <div class="mc-act"><span class="e">🔔</span>吓一跳</div>
+      <div class="mc-act"><span class="e">🎉</span>撒个花</div>
+      <div class="mc-act"><span class="e">🎈</span>吊起来</div>
+      <div class="mc-act"><span class="e">🍻</span>请客</div>
+      <div class="mc-act"><span class="e">😘</span>亲一亲</div>
+      <div class="mc-act"><span class="e">🥂</span>醺酒</div>
+    </div>
+    <div class="mc-note">你已投喂了 0 次</div>
+    <button class="mc-wide mc-danger">🚫 禁言（关麦）</button>
+    <button class="mc-wide mc-danger">🚪 踢出房间</button>
+
+    <!-- 新增入口 -->
+    <button class="mc-duel" id="btnDuel">🎴 发起梗王对局</button>
+  </div>
+
+  <!-- 邀请卡（模拟对方屏幕） -->
+  <div id="invite">
+    <div class="who">测试员3 邀请你进行「梗王对局」</div>
+    <div class="desc">回合制卡牌 1v1 · 约 5 分钟<br>房间画面会变暗，随时可以退出</div>
+    <div class="row">
+      <button id="btnDecline">拒绝</button>
+      <button class="ok" id="btnAccept">接受</button>
+    </div>
+    <div class="left" id="inviteLeft">30 秒后自动取消</div>
+  </div>
+
+  <!-- 压暗 + 对局 -->
+  <div id="dim"></div>
+
+  <div id="duel">
+    <div class="hud" id="hudL" data-hero="0">
+      <div class="nm">夜里看江南</div>
+      <div class="hpbar"><div class="hpfill" id="hpL"></div></div>
+      <div class="num" id="hpLn">30</div>
+    </div>
+    <div class="hud" id="hudR" data-hero="1">
+      <div class="nm">测试员3</div>
+      <div class="hpbar"><div class="hpfill" id="hpR"></div></div>
+      <div class="num" id="hpRn">30</div>
+    </div>
+
+    <div class="heroZone" id="zoneMe" data-hero="0"></div>
+    <div class="heroZone" id="zoneFoe" data-hero="1"></div>
+
+    <div id="laneL"></div>
+    <div id="laneR"></div>
+    <div id="log"></div>
+
+    <div id="hint">点手牌 → 点目标 · 点自己随从 → 点对方发起攻击</div>
+
+    <div id="handWrap"><div id="hand"></div></div>
+    <div id="duelbar">
+      <button class="chip" id="quitDuel">退出对局</button>
+      <button id="glossaryBtn" title="关键词说明">?</button>
+      <button id="heroPowerBtn" title="英雄技能：每回合限用一次">
+        <span class="hp-gem" id="hpCost">2</span>
+        <span class="hp-body">
+          <span class="hp-name" id="heroPowerName">那无敌了</span>
+          <span class="hp-desc" id="hpDesc">回复 2 点生命 · 每回合 1 次</span>
+        </span>
+      </button>
+      <div class="chip" id="turnChip">准备中</div>
+      <button id="endTurn">结束回合</button>
+    </div>
+
+    <div id="tip"></div>
+    <div id="glossary">
+      <div class="gtitle">关键词</div>
+      <div class="grow"><b>嘲讽</b>对手必须先打这个随从</div>
+      <div class="grow"><b>战吼</b>随从上场时立刻触发一次</div>
+      <div class="grow"><b>封号</b>该随从下回合无法攻击</div>
+      <div class="grow"><b>沉默</b>去掉嘲讽和所有增益</div>
+      <div class="grow"><b>疲劳</b>牌库抽空后，每次抽牌多掉 1 点血</div>
+      <div class="grow"><b>法力</b>每回合 +1，上限 10；当回合用不完作废</div>
+    </div>
+
+    <div id="countdown">3</div>
+
+    <div id="endCard">
+      <div id="endTitle">胜 利</div>
+      <div id="endSub"></div>
+      <button id="btnBackRoom">回到语音房</button>
+    </div>
+  </div>
+
+  <button id="quickPlay">🎴 本地测试 · 人机一局</button>
+
+  <div id="toast"></div>
+</div>
+
+<script>
+"use strict";
+/* =====================================================================
+   本地测试开关（正式版只改这一行）
+     OPPONENT_MODE = "ai"   → 本地人机，一个人也能测（当前）
+     OPPONENT_MODE = "p2p"  → 真实对手，走房间数据通道；人机入口自动隐藏
+   ===================================================================== */
+const OPPONENT_MODE = "ai";
+
+/* ============================================================
+   一、卡牌数据（与独立版一致：14 + 14，等预算配平）
+   ============================================================ */
+const CARD_DB = {
+  d1: { name: "打不中下包的！", f: "马枪是技术，甩锅是艺术。", cost: 1, kind: "spell", t: "aim", r: "r", target: "enemy", dmg: 2,
+        txt: "造成 2 点伤害。", cast: (p, t) => dealDamage(t, 2, p) },
+  d2: { name: "是子弹飘了", f: "兄弟我真瞄得很准，是子弹的问题。", cost: 2, kind: "spell", t: "aim", r: "ssr", target: "enemy", dmg: 3,
+        txt: "造成 3 点伤害。", cast: (p, t) => dealDamage(t, 3, p) },
+  d3: { name: "瞄准教父", f: "暂停不教战术，只教换准心。", cost: 1, kind: "spell", t: "aim", r: "ur", target: "friendlyMinion",
+        txt: "使一个友方随从<br>获得 +2 攻击力。", cast: (p, t) => { const m = findMinion(t.uid); if (m) { m.atk += 2; log(`${m.name} +2 攻`, "sys"); } } },
+  d4: { name: "我是你们加起来的两倍", f: "说完这句，KMD 已经在笑了。", cost: 3, kind: "spell", t: "aim", r: "ssr", target: "enemy", dmg: 2,
+        txt: "造成 2 点伤害。<br>场上共有 2 个随从时改为 5 点。", cast: (p, t) => dealDamage(t, p.board.length + opp(p).board.length >= 2 ? 5 : 2, p) },
+  d5: { name: "权限上分", f: "只要有外挂，这把就不该结算。", cost: 3, kind: "spell", t: "power", r: "ssr", target: "enemyMinion",
+        txt: "封号：一个敌方随从<br>下回合不能攻击。", cast: (p, t) => { const m = findMinion(t.uid); if (m) { m.frozen = true; log(`${m.name} 被封号`, "sys"); } } },
+  d6: { name: "愤怒喵！愤怒喵！", f: "猪瘟启动，队友开始戴耳机。", cost: 3, kind: "spell", t: "pig", r: "ur", target: "enemy", dmg: 3,
+        txt: "造成 3 点伤害。<br>下张技能牌 +2 伤害。", cast: (p, t) => { dealDamage(t, 3, p); p.spellBonus += 2; } },
+  d7: { name: "十字准心五杀地狱归来", f: "状态不好？换准心就完事。", cost: 4, kind: "spell", t: "aim", r: "r", target: "enemy", dmg: 5,
+        txt: "造成 5 点伤害。<br>击杀随从则抽 1 张。", cast: (p, t) => { if (dealDamage(t, 5, p)) drawCards(p, 1); } },
+  d8: { name: "猪瘟红温狂叫一整局", f: "七分钟一次，一次看个爽。", cost: 5, kind: "spell", t: "pig", r: "ssr", target: "none",
+        txt: "对所有敌方随从<br>造成 3 点伤害。", cast: (p) => { opp(p).board.slice().forEach((m) => dealDamage({ type: "minion", uid: m.uid }, 3, p)); } },
+  d9: { name: "连杀笨奶21条命", f: "渔力全开，最后彦哥喊了爹。", cost: 6, kind: "spell", t: "pig", r: "ssr", target: "enemy", dmg: 8,
+        txt: "造成 8 点伤害。", cast: (p, t) => dealDamage(t, 8, p) },
+  d10: { name: "哈哈，那无敌了", f: "万能回复：可攻可守可摆烂。", cost: 2, kind: "spell", t: "show", r: "ur", target: "none",
+        txt: "恢复 5 点生命。", cast: (p) => healHero(p, 5) },
+  d11: { name: "奶妈yuko", f: "yu 大姐发一把，不给就喊妈妈。", cost: 2, kind: "minion", t: "show", r: "sr", atk: 1, hp: 4, taunt: true, icon: "🥛", txt: "嘲讽（1/4）" },
+  d12: { name: "KMD", f: "养猪 man，负责带飞和预言。", cost: 3, kind: "minion", t: "gun", r: "sr", atk: 3, hp: 2, icon: "🎧",
+        txt: "战吼：造成 1 点伤害。", battlecry: (p) => randomHit(p, 1) },
+  d13: { name: "伊森", f: "宫斗杯更衣室唯一正常人。", cost: 4, kind: "minion", t: "drama", r: "sr", atk: 2, hp: 6, taunt: true, icon: "🛡", txt: "嘲讽（2/6）" },
+  d14: { name: "康康", f: "没人忍得住边吃晚饭边看他直播。", cost: 5, kind: "minion", t: "gun", r: "ur", atk: 4, hp: 4, icon: "🎯",
+        txt: "战吼：造成 2 点伤害。", battlecry: (p) => randomHit(p, 2) },
+
+  r1: { name: "你在干嘛！跟个锁似得！", f: "枪男最高级别的赞美，就一个字：锁。", cost: 2, kind: "spell", t: "gun", r: "ssr", target: "enemy", dmg: 3,
+        txt: "造成 3 点伤害。", cast: (p, t) => dealDamage(t, 3, p) },
+  r2: { name: "单排杀太多被封号", f: "太强，也是一种错。", cost: 5, kind: "spell", t: "gun", r: "r", target: "enemy", dmg: 7,
+        txt: "造成 7 点伤害。<br>自己受到 2 点伤害。", cast: (p, t) => { dealDamage(t, 7, p); dealDamage({ type: "hero", side: p.idx }, 2, null); } },
+  r3: { name: "我想举手都得叫主人", f: "权限对照组，懂的都懂。", cost: 3, kind: "spell", t: "power", r: "ssr", target: "enemyMinion",
+        txt: "沉默一个随从，<br>然后抽一张牌。", cast: (p, t) => { const m = findMinion(t.uid); if (m) { m.taunt = false; m.atk = Math.min(m.atk, m.baseAtk); } drawCards(p, 1); } },
+  r4: { name: "劝降感言 + 投降", f: "先发表感言，再点投降，斯凯一票否决。", cost: 4, kind: "spell", t: "gun", r: "sr", target: "none",
+        txt: "对手下回合<br>法力水晶 -2。", cast: (p) => { opp(p).manaPenalty += 2; log("对面法力被压 2 点", "sys"); } },
+  r5: { name: "你们送太多隐藏分低", f: "道理都对，可惜对面是演员。", cost: 3, kind: "spell", t: "drama", r: "sr", target: "none",
+        txt: "敌方所有随从<br>攻击力 -1。", cast: (p) => { opp(p).board.forEach((m) => { m.atk = Math.max(0, m.atk - 1); }); } },
+  r6: { name: "以前打职业8人一间房", f: "上铺的袜子掉我床上，真的很难受。", cost: 3, kind: "spell", t: "hot", r: "r", target: "none",
+        txt: "恢复 6 点生命。", cast: (p) => healHero(p, 6) },
+  r7: { name: "奶神转会传闻", f: "下一站是哪儿？兄弟们先别问。", cost: 3, kind: "spell", t: "drama", r: "sr", target: "none",
+        txt: "抽 2 张牌。", cast: (p) => drawCards(p, 2) },
+  r8: { name: "22年互认为对方是傻呗", f: "从对线到兄弟。", cost: 1, kind: "spell", t: "drama", r: "sr", target: "none",
+        txt: "双方英雄<br>各受 3 点伤害。", cast: (p) => { dealDamage({ type: "hero", side: opp(p).idx }, 3, p); dealDamage({ type: "hero", side: p.idx }, 3, null); } },
+  r9: { name: "打完比赛快要玉玉", f: "更衣室气氛组上线。", cost: 2, kind: "spell", t: "pig", r: "sr", target: "none",
+        txt: "恢复 3 点生命，<br>抽 1 张牌。", cast: (p) => { healHero(p, 3); drawCards(p, 1); } },
+  r10: { name: "忍辱负重拿下彦处", f: "先忍，后杀。", cost: 6, kind: "spell", t: "gun", r: "sr", target: "enemy", dmg: 6,
+        txt: "造成 6 点伤害，<br>回复 3 点生命。", cast: (p, t) => { dealDamage(t, 6, p); healHero(p, 3); } },
+  r11: { name: "喊妈妈（对yuko）", f: "为了把枪，脸可以不要。", cost: 1, kind: "spell", t: "show", r: "sr", target: "friendlyMinion",
+        txt: "使一个友方随从<br>获得 +1/+2。", cast: (p, t) => { const m = findMinion(t.uid); if (m) { m.atk += 1; m.hp += 2; m.maxHp += 2; } } },
+  r12: { name: "勾檀", f: "1 辞 = 6 蛋，性价比之神。", cost: 2, kind: "minion", t: "show", r: "sr", atk: 2, hp: 2, icon: "🍳",
+        txt: "战吼：抽一张牌。", battlecry: (p) => drawCards(p, 1) },
+  r13: { name: "龟龟", f: "真选手，看不下去教练组整活。", cost: 3, kind: "minion", t: "drama", r: "sr", atk: 2, hp: 4, taunt: true, icon: "🐢", txt: "嘲讽（2/4）" },
+  r14: { name: "babyblue", f: "东彦哥哥？叫我爸爸。", cost: 4, kind: "minion", t: "show", r: "ssr", atk: 3, hp: 5, icon: "🧊", txt: "—" },
+};
+const DECKS = {
+  0: ["d1","d2","d3","d4","d5","d6","d7","d8","d9","d10","d11","d12","d13","d14"],
+  1: ["r1","r2","r3","r4","r5","r6","r7","r8","r9","r10","r11","r12","r13","r14"],
+};
+const HERO_META = [
+  { name: "夜里看江南", icon: "🐷", tag: "爆发型" },
+  { name: "测试员3", icon: "🐷", tag: "续航型" },
+];
+const HERO_POWERS = {
+  0: { name: "那无敌了", cost: 2, txt: "回复 2 点", exec: (p) => healHero(p, 2) },
+  1: { name: "跟个锁似得", cost: 2, txt: "敌方英雄 1 点", exec: (p) => dealDamage({ type: "hero", side: 1 - p.idx }, 1, null) },
+};
+
+/* ============================================================
+   二、状态
+   ============================================================ */
+const MAX_HP = 30, HAND_MAX = 8, BOARD_MAX = 5, MANA_MAX = 10;
+let S = null, uidSeq = 1;
+const $ = (s) => document.querySelector(s);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const shuffle = (a) => { for (let i = a.length - 1; i > 0; i--) { const j = (Math.random() * (i + 1)) | 0; [a[i], a[j]] = [a[j], a[i]]; } return a; };
+const cur = () => S.players[S.cur];
+const opp = (p) => S.players[1 - p.idx];
+
+function log(msg, cls) {
+  const box = $("#log");
+  const d = document.createElement("div");
+  if (cls) d.className = cls;
+  d.textContent = msg;
+  box.prepend(d);
+  while (box.children.length > 5) box.lastChild.remove();
+}
+let toastTimer = null;
+function toast(msg) {
+  const el = $("#toast");
+  el.textContent = msg;
+  el.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove("show"), 1400);
+}
+function findMinion(uid) {
+  for (const p of S.players) { const m = p.board.find((x) => x.uid === uid); if (m) return m; }
+  return null;
+}
+function findMinionWithSide(uid) {
+  for (const p of S.players) { const m = p.board.find((x) => x.uid === uid); if (m) return { m, side: p.idx }; }
+  return null;
+}
+
+/* ============================================================
+   三、规则
+   ============================================================ */
+function mkPlayer(idx, deckIds) {
+  return { idx, hp: MAX_HP, maxHp: MAX_HP, mana: 0, maxMana: 0, deck: shuffle(deckIds.slice()),
+           hand: [], board: [], fatigue: 0, heroPowerUsed: false, spellBonus: 0, manaPenalty: 0 };
+}
+function drawCards(p, n) {
+  for (let k = 0; k < n; k++) {
+    if (!p.deck.length) { p.fatigue += 1; heroDamage(p.idx, p.fatigue); continue; }
+    const id = p.deck.pop();
+    if (p.hand.length >= HAND_MAX) continue;
+    p.hand.push(id);
+  }
+}
+function summon(p, id) {
+  const c = CARD_DB[id];
+  if (p.board.length >= BOARD_MAX) return false;
+  const m = { uid: uidSeq++, id, name: c.name, atk: c.atk, baseAtk: c.atk, hp: c.hp, maxHp: c.hp,
+              taunt: !!c.taunt, icon: c.icon || "🃏", owner: p.idx, canAttack: false, frozen: false };
+  p.board.push(m);
+  log(`${HERO_META[p.idx].name} 上场：${c.name}`, "sys");
+  if (c.battlecry) c.battlecry(p, m);
+  return true;
+}
+function dealDamage(target, n, src) {
+  if (S && S.bonus) n += S.bonus;
+  if (target.type === "hero") { heroDamage(target.side, n); return false; }
+  const m = findMinion(target.uid);
+  if (!m) return false;
+  m.hp -= n;
+  log(`${m.name} -${n}`, "dmg");
+  const killed = m.hp <= 0;
+  cleanup(); rerender();
+  return killed;
+}
+function heroDamage(side, n) {
+  S.players[side].hp -= n;
+  log(`${HERO_META[side].name} -${n}`, "dmg");
+  checkEnd(); rerender();
+}
+function healHero(p, n) {
+  const before = p.hp;
+  p.hp = Math.min(p.maxHp, p.hp + n);
+  log(`${HERO_META[p.idx].name} +${p.hp - before}`, "sys");
+  rerender();
+}
+function cleanup() {
+  for (const p of S.players) {
+    p.board = p.board.filter((m) => {
+      if (m.hp <= 0) { log(`${m.name} 倒下`, "sys"); return false; }
+      return true;
+    });
+  }
+}
+function checkEnd() {
+  if (!S || S.over) return;
+  if (S.players.some((p) => p.hp <= 0)) {
+    S.over = true; S.busy = true;
+    const winner = S.players.find((p) => p.hp > 0);
+    endDuel(winner ? winner.idx : -1);
+  }
+}
+function randomHit(p, n) {
+  const e = opp(p);
+  if (e.board.length) { const m = e.board[(Math.random() * e.board.length) | 0]; dealDamage({ type: "minion", uid: m.uid }, n, p); }
+  else dealDamage({ type: "hero", side: e.idx }, n, p);
+}
+function canPlay(p, i) {
+  const c = CARD_DB[p.hand[i]];
+  if (!c || c.cost > p.mana) return false;
+  if (c.kind === "minion" && p.board.length >= BOARD_MAX) return false;
+  return true;
+}
+function playCard(p, i, target) {
+  const id = p.hand[i]; const c = CARD_DB[id];
+  if (!c || c.cost > p.mana) return false;
+  if (c.kind === "minion" && p.board.length >= BOARD_MAX) { toast("随从满了"); return false; }
+  p.mana -= c.cost;
+  p.hand.splice(i, 1);
+  if (c.kind === "minion") summon(p, id);
+  else {
+    S.bonus = p.spellBonus; p.spellBonus = 0;
+    log(`${HERO_META[p.idx].name} 打出「${c.name}」`, "sys");
+    c.cast(p, target);
+    S.bonus = 0;
+  }
+  cleanup(); rerender();
+  return true;
+}
+function attack(uid, target) {
+  const f = findMinionWithSide(uid);
+  if (!f) return false;
+  const a = f.m;
+  if (!a.canAttack || a.atk <= 0) { toast("这个随从这回合动不了"); return false; }
+  const enemyIdx = 1 - a.owner;
+  if (target.type === "hero") {
+    if (S.players[enemyIdx].board.some((m) => m.taunt)) { toast("必须先打嘲讽"); return false; }
+    a.canAttack = false;
+    log(`${a.name} 冲脸 ${a.atk}`, "dmg");
+    heroDamage(target.side, a.atk);
+  } else {
+    const t = findMinion(target.uid);
+    if (!t) return false;
+    const ts = findMinionWithSide(target.uid).side;
+    if (ts === a.owner) return false;
+    if (S.players[enemyIdx].board.some((m) => m.taunt) && !t.taunt) { toast("必须先打嘲讽"); return false; }
+    a.canAttack = false;
+    t.hp -= a.atk; a.hp -= t.atk;
+    log(`${a.name} 撞 ${t.name}`, "dmg");
+  }
+  cleanup(); rerender();
+  return true;
+}
+function useHeroPower(p) {
+  const hp = HERO_POWERS[p.idx];
+  if (p.heroPowerUsed || p.mana < hp.cost) return false;
+  p.mana -= hp.cost; p.heroPowerUsed = true; S.bonus = 0;
+  log(`${HERO_META[p.idx].name} 用技能「${hp.name}」`, "sys");
+  hp.exec(p); cleanup(); rerender();
+  return true;
+}
+
+/* ============================================================
+   四、房间 → 菜单 → 邀请 → 对局
+   ============================================================ */
+const roomState = { stage: "room", inviteTimer: null };
+
+function openMenu() {
+  if (document.body.classList.contains("dueling")) return;
+  roomState.stage = "menu";
+  $("#memberCard").classList.add("open");
+}
+function closeMenu() {
+  $("#memberCard").classList.remove("open");
+  if (roomState.stage === "menu") roomState.stage = "room";
+}
+function sendInvite() {
+  closeMenu();
+  roomState.stage = "inviting";
+  $("#invite").classList.add("show");
+  toast("已向 测试员3 发出梗王对局邀请");
+  let left = 30;
+  $("#inviteLeft").textContent = `30 秒后自动取消`;
+  clearInterval(roomState.inviteTimer);
+  roomState.inviteTimer = setInterval(() => {
+    left -= 1;
+    $("#inviteLeft").textContent = `${left} 秒后自动取消`;
+    if (left <= 0) { clearInterval(roomState.inviteTimer); declineInvite(true); }
+  }, 1000);
+}
+function declineInvite(auto) {
+  clearInterval(roomState.inviteTimer);
+  $("#invite").classList.remove("show");
+  roomState.stage = "room";
+  toast(auto ? "邀请已超时" : "对方拒绝了，场面一度很尴尬");
+}
+async function acceptInvite() {
+  clearInterval(roomState.inviteTimer);
+  $("#invite").classList.remove("show");
+  roomState.stage = "accepted";
+  toast("对方接受了，3 秒后开始");
+  await countdown(3);
+  startDuel();
+}
+function countdown(n) {
+  return new Promise((resolve) => {
+    const el = $("#countdown");
+    let i = n;
+    const tick = () => {
+      el.textContent = String(i);
+      el.classList.remove("show"); void el.offsetWidth; el.classList.add("show");
+      if (i <= 1) { setTimeout(resolve, 800); return; }
+      i -= 1;
+      setTimeout(tick, 800);
+    };
+    tick();
+  });
+}
+
+function startDuel() {
+  document.body.classList.add("dueling");
+  $("#memberCard").classList.remove("open");
+  $("#pigB").classList.remove("hover");
+  S = { mode: "ai", over: false, busy: false, cur: 0, pending: null, bonus: 0,
+        players: [mkPlayer(0, DECKS[0]), mkPlayer(1, DECKS[1])] };
+  uidSeq = 1;
+  S.players.forEach((p) => drawCards(p, 3));
+  log("对局开始：起手 3 张", "sys");
+  beginTurn();
+}
+
+function backToRoom() {
+  document.body.classList.remove("dueling");
+  $("#endCard").classList.remove("show");
+  $("#log").innerHTML = "";
+  $("#hand").innerHTML = "";
+  $("#laneL").innerHTML = ""; $("#laneR").innerHTML = "";
+  S = null;
+  roomState.stage = "room";
+  toast("回到语音房");
+}
+
+/* ---------- 回合 ---------- */
+function beginTurn() {
+  if (!S || S.over) return;
+  const p = cur();
+  S.pending = null; S.busy = false;
+  p.maxMana = Math.min(MANA_MAX, p.maxMana + 1);
+  const m = p.maxMana - p.manaPenalty;
+  p.manaPenalty = 0;
+  p.mana = Math.max(0, m);
+  p.heroPowerUsed = false;
+  p.spellBonus = 0;
+  p.board.forEach((mn) => {
+    if (mn.frozen) { mn.frozen = false; mn.canAttack = false; }
+    else mn.canAttack = true;
+  });
+  drawCards(p, 1);
+  log(`—— ${HERO_META[p.idx].name} 的回合 ——`, "sys");
+  rerender();
+  if (S.cur === 1) { S.busy = true; setTimeout(aiAct, 700); }
+}
+function endTurn() {
+  if (!S || S.over || S.busy) return;
+  S.pending = null;
+  S.cur = 1 - S.cur;
+  beginTurn();
+}
+function endDuel(winner) {
+  const t = $("#endTitle"), s = $("#endSub");
+  t.textContent = winner === 0 ? "胜 利" : "败 北";
+  s.innerHTML = winner === 0
+    ? "哈哈，那无敌了！<br>这一把算你的，弹幕别刷运气。"
+    : "开不出枪阿！！<br>下一把记得先站场再算斩杀，别一上来就梭哈。";
+  $("#endCard").classList.add("show");
+}
+
+/* ============================================================
+   五、渲染
+   ============================================================ */
+function isMyTurn() { return S && !S.over && !S.busy && S.cur === 0; }
+
+function isTargetable(t) {
+  if (!S || !S.pending || !isMyTurn()) return false;
+  const p = cur();
+  if (S.pending.type === "card") {
+    const c = CARD_DB[p.hand[S.pending.idx]];
+    if (!c || !c.target || c.target === "none") return false;
+    if (t.type === "hero") return t.side !== p.idx && (c.target === "enemy" || c.target === "any");
+    const info = findMinionWithSide(t.uid);
+    if (!info) return false;
+    const mine = info.side === p.idx;
+    if (c.target === "enemyMinion") return !mine;
+    if (c.target === "friendlyMinion") return mine;
+    if (c.target === "anyMinion") return true;
+    if (c.target === "enemy") return !mine;
+    return false;
+  }
+  if (S.pending.type === "attack") {
+    const a = findMinion(S.pending.uid);
+    if (!a) return false;
+    if (t.type === "hero") return t.side !== a.owner;
+    const info = findMinionWithSide(t.uid);
+    return !!info && info.side !== a.owner;
+  }
+  return false;
+}
+
+function cardHTML(id, i, p) {
+  const c = CARD_DB[id];
+  const RAR = { n: "#a08d72", r: "#4a9fd0", sr: "#8f6ad8", ssr: "#c99a12", ur: "#cf4d63" };
+  const TYPE = { pig: "#ef7fa6", aim: "#5aa6e8", power: "#9a7ce8", drama: "#5ec98a", hot: "#ee9a4d", show: "#e0b83c", gun: "#45c3d0" };
+  const TNAME = { pig: "猪系", aim: "瞄准系", power: "权限系", drama: "宫斗系", hot: "暴论系", show: "整活系", gun: "枪男系" };
+  const RN = { n: "N", r: "R", sr: "SR", ssr: "SSR", ur: "UR" };
+  const cls = ["card"];
+  if (S.pending && S.pending.type === "card" && S.pending.idx === i) cls.push("selected");
+  if (c.cost > p.mana) cls.push("unaffordable");
+  const boldTxt = c.txt.replace(/(\d+)/g, "<b>$1</b>");
+  const foot = c.kind === "minion"
+    ? `<span class="stat atk">${c.atk}</span><span class="crar">${RN[c.r]}</span><span class="stat hp">${c.hp}</span>`
+    : `<span>${TNAME[c.t]}</span><span class="crar">${RN[c.r]}</span>`;
+  return `<div class="${cls.join(" ")}" data-idx="${i}" data-card="${id}"
+    style="--rar:${RAR[c.r]};--type:${TYPE[c.t]}">
+    <div class="cost">${c.cost}</div>
+    <div class="cname">${c.name}</div>
+    <div class="ctxt">${boldTxt}</div>
+    <div class="cfoot">${foot}</div>
+  </div>`;
+}
+
+function minionHTML(m, mine) {
+  const cls = ["mini"];
+  if (mine && m.canAttack && isMyTurn()) cls.push("canAttack");
+  if (m.taunt) cls.push("taunt");
+  if (m.frozen) cls.push("frozen");
+  if (S.pending && S.pending.type === "attack" && S.pending.uid === m.uid) cls.push("selected");
+  if (isTargetable({ type: "minion", uid: m.uid })) cls.push("targetable");
+  const RAR = { n: "#a08d72", r: "#4a9fd0", sr: "#8f6ad8", ssr: "#c99a12", ur: "#cf4d63" };
+  const mc = CARD_DB[m.id] || {};
+  return `<div class="${cls.join(" ")}" data-uid="${m.uid}" style="--rar:${RAR[mc.r] || "#a08d72"}">${m.icon}
+    <div class="mname">${m.name}</div><div class="matk">${m.atk}</div><div class="mhp">${m.hp}</div></div>`;
+}
+
+function rerender() {
+  if (!S) return;
+  const me = S.players[0], foe = S.players[1];
+
+  $("#hpLn").textContent = Math.max(0, me.hp);
+  $("#hpRn").textContent = Math.max(0, foe.hp);
+  $("#hpL").style.width = Math.max(0, me.hp / me.maxHp * 100) + "%";
+  $("#hpR").style.width = Math.max(0, foe.hp / foe.maxHp * 100) + "%";
+  const tMe = isTargetable({ type: "hero", side: 0 });
+  const tFoe = isTargetable({ type: "hero", side: 1 });
+  $("#hudL").classList.toggle("targetable", tMe);
+  $("#hudR").classList.toggle("targetable", tFoe);
+  ["#zoneMe", "#zoneFoe"].forEach((sel, i) => {
+    const z = document.querySelector(sel);
+    if (z) z.classList.toggle("is-target", i === 0 ? tMe : tFoe);
+  });
+
+  $("#laneL").innerHTML = me.board.map((m) => minionHTML(m, true)).join("");
+  $("#laneR").innerHTML = foe.board.map((m) => minionHTML(m, false)).join("");
+
+  $("#hand").innerHTML = me.hand.map((id, i) => cardHTML(id, i, me)).join("");
+
+  $("#turnChip").textContent = S.over ? "对局结束"
+    : `${HERO_META[S.cur].name} 出牌中 · 法力 ${cur().mana}/${cur().maxMana} · 手牌 ${foe.hand.length}`;
+  $("#endTurn").disabled = !isMyTurn();
+  const meP = S.players[0];
+  const hpDef = HERO_POWERS[0];
+  const hpReady = isMyTurn() && !meP.heroPowerUsed && meP.mana >= hpDef.cost;
+  const hpBtn = $("#heroPowerBtn");
+  hpBtn.disabled = !hpReady;
+  hpBtn.classList.toggle("on", hpReady);
+  $("#hpCost").textContent = hpDef.cost;
+  $("#heroPowerName").textContent = hpDef.name;
+  const hpUsed = me.heroPowerUsed;
+  const hpPoor = me.mana < hpDef.cost;
+  $("#hpDesc").textContent = hpUsed ? "本回合已用过" : (hpPoor ? `${hpDef.txt} · 法力不足` : `${hpDef.txt} · 每回合 1 次`);
+  hpBtn.title = `英雄技能「${hpDef.name}」：消耗 ${hpDef.cost} 点法力，${hpDef.txt}；每回合限一次`;
+
+  document.querySelectorAll("[data-uid]").forEach((el) => {
+    el.classList.toggle("targetable", isTargetable({ type: "minion", uid: +el.dataset.uid }));
+  });
+
+  layoutHand();
+}
+
+/* ============================================================
+   六、交互
+   ============================================================ */
+// 这张牌现在有没有可点的目标
+function hasValidTarget(p, target) {
+  const foe = S.players[1 - p.idx];
+  const enemyMinions = foe.board.length > 0;
+  const friendMinions = p.board.length > 0;
+  if (target === "enemy") return enemyMinions || foe.hp > 0;
+  if (target === "enemyMinion") return enemyMinions;
+  if (target === "friendlyMinion") return friendMinions;
+  if (target === "anyMinion") return enemyMinions || friendMinions;
+  if (target === "any") return true;
+  return true;
+}
+
+// 手牌堆叠：≤4 张平铺；5 张起像一叠牌一样叠住，只露出费用与一截卡名
+function layoutHand() {
+  const handEl = document.getElementById("hand");
+  if (!handEl) return;
+  const cards = [...handEl.querySelectorAll(".card")];
+  const n = cards.length;
+  if (!n) return;
+
+  const cardW = cards[0].offsetWidth || 100;
+  const gap = 6;
+  const fullStep = cardW + gap;
+
+  // 露出宽度（步进）：牌越多叠得越紧
+  let step = fullStep;
+  if (n === 5) step = 90;
+  else if (n === 6) step = 78;
+  else if (n === 7) step = 66;
+  else if (n >= 8) step = 58;
+
+  // 窄窗口再压一档
+  const avail = (handEl.clientWidth || 900) - 40;
+  if (cardW + (n - 1) * step > avail) {
+    step = Math.max(cardW * 0.26, (avail - cardW) / (n - 1));
+  }
+
+  cards.forEach((el, i) => {
+    el.style.marginLeft = i === 0 ? "0px" : (step - fullStep) + "px";
+    el.style.setProperty("--rot", "0deg");
+    el.style.transformOrigin = "50% 118%";
+    el.style.position = "relative";
+    el.style.top = "0px";
+    el.style.zIndex = String(i + 1);
+  });
+}
+window.addEventListener("resize", () => { if (S) layoutHand(); });
+
+function onCardClick(i) {
+  if (!isMyTurn()) return;
+  const p = cur();
+  const c = CARD_DB[p.hand[i]];
+  if (!c) return;
+  if (c.cost > p.mana) { toast("法力不够"); return; }
+  if (S.pending && S.pending.type === "card" && S.pending.idx === i) { S.pending = null; rerender(); return; }
+  if (!c.target || c.target === "none") { S.pending = null; playCard(p, i, null); return; }
+  if (!hasValidTarget(p, c.target)) { toast("现在没有合法目标，先站个随从"); return; }
+  S.pending = { type: "card", idx: i };
+  rerender();
+  toast("选个目标");
+}
+function onTarget(t) {
+  if (!isMyTurn() || !S.pending) return;
+  if (!isTargetable(t)) { toast("这个目标不行"); return; }
+  if (S.pending.type === "card") {
+    const i = S.pending.idx; S.pending = null;
+    playCard(S.players[0], i, t);
+  } else {
+    const uid = S.pending.uid; S.pending = null;
+    attack(uid, t);
+  }
+}
+function onMinionClick(uid) {
+  if (!isMyTurn()) return;
+  const info = findMinionWithSide(uid);
+  if (!info) return;
+  if (S.pending && S.pending.type === "card") { onTarget({ type: "minion", uid }); return; }
+  if (S.pending && S.pending.type === "attack" && info.side !== 0) { onTarget({ type: "minion", uid }); return; }
+  if (info.side !== 0) { toast("先点自己的随从"); return; }
+  if (!info.m.canAttack) { toast(info.m.frozen ? "还在封号" : "刚上场，动不了"); return; }
+  S.pending = { type: "attack", uid };
+  rerender();
+  toast("选攻击目标");
+}
+
+document.addEventListener("click", (e) => {
+  // 房间层
+  const pigB = e.target.closest("#pigB");
+  if (pigB) { openMenu(); return; }
+  if (e.target.closest("#btnDuel")) { sendInvite(); return; }
+  if (e.target.closest("#btnAccept")) { acceptInvite(); return; }
+  if (e.target.closest("#btnDecline")) { declineInvite(false); return; }
+  if (e.target.closest("#quitDuel")) { backToRoom(); return; }
+  if (e.target.closest("#btnBackRoom")) { backToRoom(); return; }
+  if (e.target.closest("#endTurn")) { if (isMyTurn()) endTurn(); return; }
+  if (e.target.closest("#heroPowerBtn")) {
+    if (isMyTurn()) { if (!useHeroPower(S.players[0])) toast("技能用过了 / 法力不够"); }
+    return;
+  }
+  if (e.target.closest("#quickPlay")) { quickStart(); return; }
+  if (e.target.closest("#memberCard")) return;
+
+  if (!S) { closeMenu(); return; }
+
+  const cardEl = e.target.closest("#hand [data-card]");
+  if (cardEl) { onCardClick(+cardEl.dataset.idx); return; }
+  const miniEl = e.target.closest("[data-uid]");
+  if (miniEl) { onMinionClick(+miniEl.dataset.uid); return; }
+  const heroEl = e.target.closest("[data-hero]");
+  if (heroEl) {
+    if (S.pending) onTarget({ type: "hero", side: +heroEl.dataset.hero });
+    else if (isMyTurn()) toast("先选一张牌或一个随从");
+    return;
+  }
+  if (e.target.closest("#pigB") || e.target.closest("#pigA")) return;
+  if (S.pending) { S.pending = null; rerender(); }
+});
+document.addEventListener("dblclick", (e) => { if (e.target.closest("#hudL")) { if (isMyTurn()) useHeroPower(S.players[0]); } });
+
+/* ---------- 悬停大卡 ---------- */
+const RARITY_TXT = { n: "N", r: "R", sr: "SR", ssr: "SSR", ur: "UR" };
+const TYPE_TXT = { pig: "猪系", aim: "瞄准系", power: "权限系", drama: "宫斗系", hot: "暴论系", show: "整活系", gun: "枪男系" };
+
+function showTip(el, id) {
+  const c = CARD_DB[id];
+  if (!c) return;
+  const tip = $("#tip");
+  const eff = c.txt.replace(/(\d+)/g, "<b>$1</b>");
+  const stat = c.kind === "minion" ? `<span class="pill">${c.atk} 攻 / ${c.hp} 血</span>` : `<span class="pill">技能</span>`;
+  tip.innerHTML = `
+    <div class="tname">${c.name}</div>
+    <div class="tmeta">${stat}<span>${TYPE_TXT[c.t]}</span><span>${RARITY_TXT[c.r]}</span><span>${c.cost} 费</span></div>
+    <div class="teff">${eff}</div>
+    <div class="tfl">${c.f || ""}</div>`;
+  tip.classList.add("show");
+  const r = el.getBoundingClientRect();
+  const w = tip.offsetWidth, h = tip.offsetHeight;
+  let left = r.left + r.width / 2 - w / 2;
+  left = Math.max(10, Math.min(window.innerWidth - w - 10, left));
+  let top = r.top - h - 12;
+  if (top < 10) top = r.bottom + 12;
+  tip.style.left = left + "px";
+  tip.style.top = top + "px";
+}
+function hideTip() { $("#tip").classList.remove("show"); }
+
+document.addEventListener("pointerover", (e) => {
+  const el = e.target.closest("#hand .card");
+  if (el) showTip(el, el.dataset.card);
+});
+document.addEventListener("pointerout", (e) => {
+  if (e.target.closest("#hand .card")) hideTip();
+});
+
+$("#glossaryBtn").addEventListener("click", (e) => {
+  e.stopPropagation();
+  const g = $("#glossary");
+  const on = g.classList.toggle("show");
+  $("#glossaryBtn").classList.toggle("on", on);
+});
+
+$("#pigB").addEventListener("mouseenter", () => $("#pigB").classList.add("hover"));
+$("#pigB").addEventListener("mouseleave", () => $("#pigB").classList.remove("hover"));
+
+/* ============================================================
+   七、AI（贪心：斩杀 > 站场 > 解场 > 交换）
+   ============================================================ */
+async function aiAct() {
+  if (OPPONENT_MODE !== "ai") return;
+  if (!S || S.over) return;
+  const me = S.players[1], foe = S.players[0];
+  S.busy = true;
+
+  let guard = 0;
+  while (guard++ < 8 && !S.over) {
+    const lethal = me.hand.map((id, i) => ({ id, i, c: CARD_DB[id] }))
+      .filter((x) => canPlay(me, x.i) && x.c.dmg > 0).sort((a, b) => b.c.dmg - a.c.dmg)[0];
+    if (!lethal) break;
+    if (foe.hp > lethal.c.dmg + 2) break;
+    playCard(me, lethal.i, { type: "hero", side: 0 });
+    await sleep(480);
+  }
+  guard = 0;
+  while (guard++ < 5 && !S.over) {
+    const mins = me.hand.map((id, i) => ({ id, i, c: CARD_DB[id] }))
+      .filter((x) => canPlay(me, x.i) && x.c.kind === "minion").sort((a, b) => b.c.cost - a.c.cost);
+    if (!mins.length || me.board.length >= BOARD_MAX) break;
+    playCard(me, mins[0].i, null);
+    await sleep(480);
+  }
+  guard = 0;
+  while (guard++ < 5 && !S.over) {
+    const list = me.hand.map((id, i) => ({ id, i, c: CARD_DB[id] })).filter((x) => canPlay(me, x.i));
+    if (!list.length) break;
+    let pick = null, target = null;
+    if (me.hp <= 12) { const heal = list.find((x) => /恢复/.test(x.c.txt) && !x.c.dmg); if (heal) pick = heal; }
+    if (!pick && foe.board.length >= 2) { const aoe = list.find((x) => /全体/.test(x.c.txt)); if (aoe) pick = aoe; }
+    if (!pick) {
+      for (const cand of list.filter((x) => x.c.dmg > 0)) {
+        const kill = foe.board.filter((m) => m.hp <= cand.c.dmg).sort((a, b) => b.atk - a.atk)[0];
+        if (kill && kill.atk >= 3) { pick = cand; target = { type: "minion", uid: kill.uid }; break; }
+      }
+    }
+    if (!pick && me.hand.length <= 3) { const util = list.find((x) => /抽/.test(x.c.txt) || /法力/.test(x.c.txt)); if (util) pick = util; }
+    if (!pick) break;
+    playCard(me, pick.i, target);
+    await sleep(480);
+  }
+  for (const m of me.board.slice()) {
+    if (!S || S.over) return;
+    if (!m.canAttack || m.atk <= 0) continue;
+    const taunts = foe.board.filter((x) => x.taunt);
+    const killable = foe.board.filter((x) => x.hp <= m.atk).sort((a, b) => b.atk - a.atk)[0];
+    let t;
+    if (taunts.length) t = { type: "minion", uid: taunts.sort((a, b) => a.hp - b.hp)[0].uid };
+    else if (killable && killable.atk < m.hp) t = { type: "minion", uid: killable.uid };
+    else t = { type: "hero", side: 0 };
+    attack(m.uid, t);
+    await sleep(430);
+  }
+  if (!S || S.over) return;
+  if (!me.heroPowerUsed && me.mana >= 2) { useHeroPower(me); await sleep(320); }
+  S.busy = false;
+  if (!S.over) endTurn();
+}
+
+/* ============================================================
+   八、演示入口
+   ============================================================ */
+function quickStart() {
+  closeMenu();
+  $("#invite").classList.remove("show");
+  startDuel();
+  toast("人机试玩：对面是贪心 AI，先站场再算斩杀");
+}
+if (OPPONENT_MODE !== "ai") {
+  const qp = document.getElementById("quickPlay");
+  if (qp) qp.remove();
+}
+if (location.hash === "#menu") openMenu();
+if (location.hash === "#duel") { document.body.classList.add("dueling"); startDuel(); }
+// 视觉验收用：直接进中局（双方各带随从）
+if (location.hash === "#mid") {
+  document.body.classList.add("dueling");
+  startDuel();
+  ["d12", "d11", "d13"].forEach((id) => summon(S.players[0], id));
+  ["r13", "r12"].forEach((id) => summon(S.players[1], id));
+  S.players.forEach((p) => p.board.forEach((m) => { m.canAttack = true; }));
+  S.players[0].hand = ["d2", "d6", "d8", "d14", "d4"];
+  S.players[1].hp = 21;
+  rerender();
+}
+</script>
+</body>
+</html>

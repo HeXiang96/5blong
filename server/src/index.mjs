@@ -21,6 +21,7 @@ import { createRoomsHarness } from "./rooms.mjs";
 import { createSfuRouter, sfuStatus } from "./sfu.mjs";
 import { createInboxHub } from "./inbox.mjs";
 import { createFeedbackHandler } from "./feedback.mjs";
+import { createDuelRouter } from "./duel.mjs";
 import { corsHeaders } from "./http.mjs";
 
 const db = getDatabase();
@@ -83,6 +84,9 @@ app.get("/ice", createIceHandler());
 app.all("/feedback", createFeedbackHandler(db));
 
 app.use("/api/account", createApiRouter(db, inbox));
+
+/* 梗王对局信使：/api/duel/invite、/poll、/leave（docs/DUEL-NET-PLAN.md 方案 A） */
+app.use("/api/duel", createDuelRouter(db));
 
 /* 开黑圈：/game/entitle、/game/verify、/game-admin（后台页） */
 app.use(createGameRouter(db));

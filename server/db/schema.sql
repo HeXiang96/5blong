@@ -255,3 +255,33 @@ CREATE INDEX IF NOT EXISTS idx_rooms_ip ON rooms (ip_hash, last_seen DESC);
 CREATE INDEX IF NOT EXISTS idx_rooms_seen ON rooms (last_seen DESC);
 CREATE INDEX IF NOT EXISTS idx_sessions_code ON room_sessions (code, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_sessions_created ON room_sessions (created_at DESC);
+
+-- ---------------------------------------------------------------------------
+-- 房间内「梗王对局」的信使表（docs/DUEL-NET-PLAN.md 方案 A）
+-- 服务器只做收发，不懂规则：房主上传快照，访客上传意图，双方各 1.2s 轮询。
+-- host_left / guest_left 解决「人还在房间里但退出了对局」的通知问题；
+-- host_seen_at / guest_seen_at 是轮询心跳，用于判「对方是不是直接关了页面」。
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS duel_sessions (
+  id TEXT PRIMARY KEY,
+  room_code TEXT NOT NULL,
+  host_id TEXT NOT NULL,
+  host_name TEXT NOT NULL,
+  guest_id TEXT NOT NULL,
+  guest_name TEXT NOT NULL,
+  phase TEXT NOT NULL DEFAULT 'invite',
+  version INTEGER NOT NULL DEFAULT 0,
+  state TEXT,
+  action TEXT,
+  action_seq INTEGER NOT NULL DEFAULT 0,
+  host_seen_at INTEGER NOT NULL DEFAULT 0,
+  guest_seen_at INTEGER NOT NULL DEFAULT 0,
+  host_left INTEGER NOT NULL DEFAULT 0,
+  guest_left INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_duel_guest ON duel_sessions (guest_id, phase, updated_at);
+CREATE INDEX IF NOT EXISTS idx_duel_host ON duel_sessions (host_id, phase, updated_at);
+CREATE INDEX IF NOT EXISTS idx_duel_updated ON duel_sessions (updated_at);

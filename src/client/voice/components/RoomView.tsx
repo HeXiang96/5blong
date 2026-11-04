@@ -204,6 +204,7 @@ export function RoomView({
   onRenewGuestPass,
   onCloseGuestPass,
   onCopyPassInvite,
+  onStartDuel,
 }: {
   status: EngineStatus;
   members: Member[];
@@ -335,6 +336,8 @@ export function RoomView({
   onCloseGuestPass?: () => void;
   /** 复制"房间号 + 临时密码"文案 */
   onCopyPassInvite?: () => Promise<boolean>;
+  /** 发起一局梗王对局（房间内覆盖层，不动语音链路） */
+  onStartDuel?: (target: { id: string; name: string }) => void;
 }) {
   const self = members.find((member) => member.local) ?? null;
   const muted = self?.muted ?? true;
@@ -963,6 +966,24 @@ export function RoomView({
                   ))}
                 </div>
                 <p className="vx-member-menu-hint">你已经投喂了 {audioMenu.feedCount} 次</p>
+
+                {onStartDuel && !audioMenu.self ? (
+                  <>
+                    <div className="vx-menu-divider" />
+                    <button
+                      type="button"
+                      className="vx-menu-btn"
+                      onClick={() => {
+                        const target = { id: audioMenu.personId, name: audioMenu.name };
+                        closeAudioMenu();
+                        onStartDuel(target);
+                      }}
+                      title="和这位成员开一局回合制卡牌：房间会变暗，语音照常"
+                    >
+                      <Sparkles size={14} /> 梗王对局
+                    </button>
+                  </>
+                ) : null}
 
                 {/*
                   全房热闹（2026-10-22 从底栏挪进来）：蹦迪/烟花是**全房动作**，
@@ -1968,6 +1989,7 @@ export function RoomView({
           </button>
         </form>
       </aside>
+
     </div>
   );
 }

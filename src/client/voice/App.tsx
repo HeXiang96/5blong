@@ -9,6 +9,8 @@ import { ensureRoomKey, migrateRoomKey, normalizeFixedRoomCode } from "./my-room
 import { useVoice } from "./use-voice";
 import { ConfirmView, LandingView, SessionSummaryCard } from "./components/pages";
 import { RoomView } from "./components/RoomView";
+import { DuelOverlay } from "../duel/DuelOverlay";
+import { useDuel } from "../duel/duel-net";
 import { FeedbackDialog } from "./components/FeedbackDialog";
 import { OnboardingDialog } from "./components/OnboardingDialog";
 import { WhatsNewDialog } from "./components/WhatsNewDialog";
@@ -75,6 +77,19 @@ export function App() {
   const seenRequests = useRef<Set<string>>(new Set());
 
   const voice = useVoice();
+
+  /*
+   * 梗王对局（docs/DUEL-NET-PLAN.md 方案 A）：ECS 信使 + 房主权威。
+   * 进房间就开始轮询（收到邀请 / 对局状态都靠它），语音链路零接触。
+   */
+  const duel = useDuel(voice.roomCode, voice.members.find((m) => m.local)?.name ?? "我");
+
+  const duelSession = duel.session;
+
+  /* 网络层的一次性提示（对方接受/退出/掉线）走房间统一的 notice 条 */
+  useEffect(() => {
+    if (duel.notice) voice.setNotice({ kind: "info", text: duel.notice });
+  }, [duel.notice]);
 
   /*
    * 固定房号「我的房间 235417」**只属于登录账号**（业主 2026-10-26 口径）：
@@ -805,11 +820,43 @@ export function App() {
         onSetShareFallbackDuck={voice.setShareFallbackDuck}
         shareLatency={voice.shareLatency}
         onSetShareLatency={voice.setShareLatency}
+        onStartDuel={(target) => { void duel.inviteTo(target); }}
         onWatchScreen={voice.setScreenWatch}
         shareViewMode={voice.shareViewMode}
         onSetShareViewMode={voice.setShareViewMode}
         onOpenFeedback={openFeedback}
       />
+      {duelSession && duelSession.phase === "playing" ? (
+        <DuelOverlay
+          session={duelSession}
+          myName={voice.members.find((m) => m.local)?.name ?? "我"}
+          myAvatar={voice.members.find((m) => m.local)?.avatar || undefined}
+          foeAvatar={voice.members.find((m) => !m.local && m.name === duelSession.opponentName)?.avatar || undefined}
+          bridge={duel}
+          onExit={() => duel.leave()}
+        />
+      ) : null}
+      {duelSession && duelSession.role === "host" && duelSession.phase === "invite" ? (
+        <div className="duel-invite-layer">
+          <div className="duel-invite-card">
+            <div className="duel-invite-title">已向 {duelSession.opponentName} 发起对局</div>
+            <div className="duel-invite-sub">等对方接受…（3 分钟内有效）</div>
+            <button type="button" className="duel-btn ghost" onClick={() => duel.leave()}>取消邀请</button>
+          </div>
+        </div>
+      ) : null}
+      {duel.invite ? (
+        <div className="duel-invite-layer">
+          <div className="duel-invite-card">
+            <div className="duel-invite-title">⚔️ {duel.invite.hostName} 邀你来一局梗王对局</div>
+            <div className="duel-invite-sub">回合制卡牌 · 语音照常 · 3 分钟内有效</div>
+            <div className="duel-invite-actions">
+              <button type="button" className="duel-btn ghost" onClick={() => duel.decline()}>拒绝</button>
+              <button type="button" className="duel-btn primary" onClick={() => duel.accept()}>接受</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
       {settingsOverRoom ? (
         <div className="vx-overlay-layer">
           <SettingsView
