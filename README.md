@@ -26,6 +26,51 @@
 
 ---
 
+## AI 智能降噪升级 + 语音"重连中"根治（2026-11-04 · 1.9.22 / 1.9.23）
+
+### 语音重连问题（1.9.22 已发）：三个叠加的真 bug
+
+"进房后卡「重连中/连接失败」"其实声音多半是通的——诊断包实锤（ICE connected、
+音频在流、状态却写 failed）。三个根因全部修复：
+
+1. **护栏失效**：1.9.20 的"迟到的失败不覆盖已连接"只护了 `"connected"` 一种值，
+   而 PeerJS 腿写入的健康值是 `"direct"/"relay"`——护栏从未真正生效。已扩围。
+2. **凭据晚到拆健康腿**：`/ice` 中继凭据进房 1~2.5 秒才到，`onIceUpgrade`
+   无差别拆掉所有腿重拨（"连上→1 秒后重连中"的闪断）。已改为只拆未连通的腿。
+3. **补拨巡检搅死自建协商**：`ensureCalls`（每 3 秒）不认识自建协商腿，
+   反复对正在握手的腿重复发起 → 每次 18 秒超时被迫回落 PeerJS（信令 trace
+   实锤回落精确在 +20 秒）。已修复；失败路径全部埋点进诊断包 `events`。
+4. **房主关房广播 `room-closed`**：访客立刻退房，不再看 30 秒心跳超时 + 重拨。
+5. **后台幽灵成员**：离开成员误用 peerId 当 key（一人两行）已修；快照带
+   `ended:true` 让后台**立即**收尾（不再等 90~150 秒清扫）；在线卡片按人折叠
+   历史行。
+
+### AI 降噪升级（1.9.23）：RNNoise（2018）→ DeepFilterNet3（2023）
+
+- **实测选型**：Node 里直接跑真模型对比——DFN3 稳态噪声抑制 **25.8 dB**、
+  人声损耗 **1.6 dB**；RNNoise 对键盘/零食袋这类瞬态脉冲声天然乏力。
+- **引擎**：`denoise-voice-clarity`（MIT，DFN3 权重烧进 18MB wasm，全程本机处理）。
+  废案：`@lofcz/deepfilternet-web`（实测权重损坏输出全零）。
+- **三级降级**：DFN3 → RNNoise → 直通，任何故障不挡通话。
+- **首次使用**：弹下载对话框（Portal 挂 body 最外层 + z-index 顶格，不会被任何
+  页面 UI 吞掉），进度条/重试/暂不；Cache Storage 登记，**下载一次永久有效**；
+  点"暂不"也能正常进房（自动退回老模型）。降噪默认开启，用户零配置。
+- **模型闸门测试**：`tests/deepfilter-model.test.ts` 在 Node 里直接跑真 wasm，
+  断言噪声抑制 >15dB、人声损耗 <3dB——模型换版/构建坏了这里直接爆。
+
+### 运维注意（2026-11-04）
+
+- **5blong.pages.dev 的 worker 已被替换为"迁移提示页"**（业主安排，新站不再
+  使用 CF worker；release.yml 已停发 Pages）。完整版 worker 存档于
+  [worker/pages-migration-snapshot.20261104.js](./worker/pages-migration-snapshot.20261104.js)。
+- **服务端（ECS 5blong.site）与客户端（5blong.site 自托管）是当前唯一线上**：
+  部署方式见下节与 [docs/HANDOVER-2026-11-03.md](./docs/HANDOVER-2026-11-03.md)、
+  [docs/HANDOVER-2026-11-03-VOICE.md](./docs/HANDOVER-2026-11-03-VOICE.md)。
+- 房间 078306（5 人）实测：自建协商 8 次应答全部成功、零回落——1.9.19 以来
+  "每次必 20 秒回落"已成为历史。
+
+---
+
 ## 下载与版本显示（2026-11-03 · 1.9.16）：网页走加速、客户端走直连
 
 > 这一轮的完整实测矩阵与坑，见 [HANDOVER-2026-11-03.md 第 13 节](./docs/HANDOVER-2026-11-03.md)。
@@ -102,7 +147,7 @@
 
 > **本节专为后续维护者（含 AI）而写**：交代"共享屏幕为什么卡、改了什么、怎么验证、别踩哪些坑"。  
 > 这一轮**只动共享链路，语音一行未碰**（语音零影响是硬约束）；四批次全部落地，  
-> `npm run check` 全绿（typecheck + <!-- AUTO:TESTS -->404<!-- /AUTO:TESTS --> 单测 + 构建）。  
+> `npm run check` 全绿（typecheck + <!-- AUTO:TESTS -->406<!-- /AUTO:TESTS --> 单测 + 构建）。  
 > 完整方案与逐条推理见 [SCREENSHARE-OPT-PLAN.md](./docs/archive/SCREENSHARE-OPT-PLAN.md)（已归档）；  
 > 早期 v1~v3 草稿 [SCREENSHARE-PERF-PLAN.md](./docs/archive/SCREENSHARE-PERF-PLAN.md) 已被其取代（仅存档）。
 
@@ -724,7 +769,7 @@ SFU 多档（simulcast）也有；但房主有硬编时只发**一档**，SFU �
 
 - 新增 `tests/game-room-code.test.ts`：6 位能进、老 4 位能进、5 位/7 位/字母不算码、首尾空白归一、邀请链接往返解析。
 - 新增视觉夹具 `tests/fixtures/game-join.html?code=<房号>&fill=1`：手输 6 位 / 链接带入 / 填完游戏 ID 三种状态可直接截图目检。
-- 全量用例 <!-- AUTO:TESTS -->404<!-- /AUTO:TESTS --> 项通过；`typecheck`、`build:web:pages`、`docs:check` 全绿。
+- 全量用例 <!-- AUTO:TESTS -->406<!-- /AUTO:TESTS --> 项通过；`typecheck`、`build:web:pages`、`docs:check` 全绿。
 
 ### 三、已知未修（单独排期，不在这版）
 
@@ -1255,7 +1300,7 @@ npm install                 # 安装依赖
 npm run dev                 # 本地开发服务器（网页）
 npm run tauri dev           # 桌面端开发模式（自动起 dev 服务器 + Tauri 窗口）
 npm run typecheck           # 类型检查
-npm test                    # 单元测试（<!-- AUTO:TESTS -->404<!-- /AUTO:TESTS --> 项，由 docs:sync 注入）
+npm test                    # 单元测试（<!-- AUTO:TESTS -->406<!-- /AUTO:TESTS --> 项，由 docs:sync 注入）
 npm run build:web:pages     # 构建静态网页到 dist-web
 npm run tauri build         # 本地出桌面安装包（更新签名需要环境变量，一般直接用 CI）
 npm run deploy:pages        # 手动部署网页到 Cloudflare Pages（复用本机 wrangler 凭据）
@@ -1351,7 +1396,7 @@ npm run signal:setup        # 绑定 Pages → 信令 Worker（service binding S
 - `.github/workflows/`：`release.yml`（云出包，`app-v*` 标签触发）、
   `readme-log.yml`（自动更新 README 提交列表，`[skip ci]`）
 - `tests/`：协议 / 握手 / 准入、屏幕共享（含调谐器与硬编预检）、猪圈、说话检测、定时器、
-  ICE、反馈、会话统计、音量上限、blake3 等，当前合计 <!-- AUTO:TESTS -->404<!-- /AUTO:TESTS --> 项
+  ICE、反馈、会话统计、音量上限、blake3 等，当前合计 <!-- AUTO:TESTS -->406<!-- /AUTO:TESTS --> 项
 - `scripts/`：`deploy-pages.mjs`（部署）、`publish-desktop.mjs`（桌面端更新源发布）、
   `pages-status.mjs`、`bump-version.mjs`（发版一键化）、`readme-log.mjs`（AUTO-LOG，含畸形自愈）、
   `docs-sync.mjs` / `check-docs.mjs`（文档数字注入与校验）、`lib/blake3.mjs`

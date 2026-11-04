@@ -1,7 +1,8 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { preloadRnnoise } from "./engine";
-import { preloadDeepFilter } from "./ns-deepfilter";
+import { hasDfModel, warmModelCache } from "./ns-deepfilter";
+import { ModelDownloadDialog } from "./components/ModelDownloadDialog";
 import { shouldShowOnboarding } from "./onboarding";
 import { hostPeerIdForCode, isJoinInFlight, makeRoomCode, randomIndex } from "./protocol";
 import { ensureRoomKey, migrateRoomKey, normalizeFixedRoomCode } from "./my-room";
@@ -478,14 +479,19 @@ export function App() {
 
   /*
    * 打开页面就预热 AI 降噪的模型资源：
-   * - DeepFilterNet3（主力，~13MB 压缩）：后台拉进 HTTP 缓存，进房即秒生效，
-   *   用户不用管任何开关——降噪默认开启，这是默认体验的一部分（2026-11-04）；
-   * - RNNoise（兜底，~300KB）：加载失败时的退路，一并预热。
+   * - 缓存里已有 DeepFilterNet3：预热编译（进房即秒生效）；
+   * - 没有：弹一次下载对话框（Portal 顶层，不会被任何页面 UI 吞掉）。
+   *   用户点"暂不"也能正常进房——引擎自动换回 RNNoise 兜底；
+   *   下次打开会再次提醒，直到模型下载完成（下载一次永久有效）。
    * 都不占麦克风权限，也不阻塞页面。
    */
+  const [modelDialogOpen, setModelDialogOpen] = useState(false);
   useEffect(() => {
     preloadRnnoise();
-    preloadDeepFilter();
+    void hasDfModel().then((has) => {
+      if (has) void warmModelCache();
+      else setModelDialogOpen(true);
+    });
   }, []);
 
   /*
@@ -903,6 +909,8 @@ export function App() {
 
   return (
     <>
+      {/* AI 降噪模型下载对话框：Portal 挂 body 最外层 + z-index 顶格，不被任何页面 UI 吞掉 */}
+      {modelDialogOpen && <ModelDownloadDialog onClose={() => setModelDialogOpen(false)} />}
       {/*
        * gameActive（开黑圈房间/结算接管整屏）时整块卸载：猪圈常驻动画不再空转。
        * 条件分支占一个固定子槽位，gameLayer 的挂载位置因此保持稳定——React 不会

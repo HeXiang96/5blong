@@ -120,6 +120,31 @@
   .mascot .pig {
     position: relative; width: 100%; max-width: 390px; height: auto;
     filter: drop-shadow(0 18px 26px rgba(113, 80, 41, .14));
+    animation: floaty 6s ease-in-out infinite;
+  }
+  .mascot .halo { animation: breathe 6s ease-in-out infinite; }
+  @keyframes floaty {
+    0%, 100% { transform: translateY(0) rotate(-.4deg); }
+    50%      { transform: translateY(-10px) rotate(.4deg); }
+  }
+  @keyframes breathe {
+    0%, 100% { opacity: .8; transform: translate(-50%, -50%) scale(1); }
+    50%      { opacity: 1;  transform: translate(-50%, -50%) scale(1.06); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .mascot .pig, .mascot .halo { animation: none; }
+  }
+
+  /* ------------------------------------------------ 产品长相（插画展示带） */
+  .peek { max-width: 860px; margin: 0 auto; }
+  .peek img {
+    width: 100%; display: block; border-radius: 20px;
+    border: 1px solid var(--line);
+    box-shadow: 0 24px 60px rgba(113, 80, 41, .16);
+  }
+  .peek figcaption {
+    text-align: center; margin-top: 14px;
+    font-size: 13px; color: var(--ink-3);
   }
 
   /* ---------------------------------------------------------------- 区块 */
@@ -140,29 +165,26 @@
   }
   .step h3 { font-size: 19px; margin: 0 0 8px; letter-spacing: -.01em; }
   .step p { margin: 0; color: var(--ink-2); font-size: 14.5px; }
-  .step .deco {
-    position: absolute; right: -30px; bottom: -30px; width: 130px; height: 130px;
-    border-radius: 50%; background: var(--bg-soft); z-index: 0;
-  }
-  .step > * { position: relative; z-index: 1; }
 
-  /* ---------------------------------------------------------------- 能做的事 */
-  .features { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+  /* ---------------------------------------------------------------- 能做的事（深色夜话） */
+  .dark-band { background: #241d12; }
+  .dark-band .sec-head h2 { color: #f3ede2; }
+  .dark-band .sec-head p { color: #a89a86; }
+  .features { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
   @media (max-width: 1000px) { .features { grid-template-columns: repeat(2, 1fr); } }
   @media (max-width: 560px) { .features { grid-template-columns: 1fr; } }
   .feat {
-    background: var(--card); border: 1px solid var(--line); border-radius: 14px;
-    padding: 18px 18px 20px;
+    background: rgba(255, 253, 248, .055); border: 1px solid rgba(255, 253, 248, .12);
+    border-radius: 14px; padding: 20px 20px 22px;
+    transition: background .18s ease, transform .18s ease;
   }
+  .feat:hover { background: rgba(255, 253, 248, .09); transform: translateY(-2px); }
   .feat h3 {
-    margin: 0 0 6px; font-size: 15px; letter-spacing: -.01em;
-    display: flex; align-items: center; gap: 8px;
+    margin: 0 0 7px; font-size: 15.5px; letter-spacing: -.01em; color: #f3ede2;
+    display: flex; align-items: center; gap: 9px;
   }
-  .feat h3::before {
-    content: ""; width: 7px; height: 7px; border-radius: 50%;
-    background: var(--brand); flex: 0 0 auto;
-  }
-  .feat p { margin: 0; font-size: 13.5px; color: var(--ink-2); line-height: 1.55; }
+  .feat h3 svg { color: #f0a04b; flex: 0 0 auto; }
+  .feat p { margin: 0; font-size: 13.5px; color: #b3a692; line-height: 1.6; }
 
   /* ---------------------------------------------------------------- 平台 */
   .platforms { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
@@ -225,7 +247,7 @@
       <a class="hide-sm" href="#how">怎么用</a>
       <a class="hide-sm" href="#platforms">下载</a>
       <a class="hide-sm" href="#faq">常见问题</a>
-      <a class="btn btn-primary btn-sm" href="https://web.5blong.site/">开始使用</a>
+      <a class="btn btn-primary btn-sm" href="https://web.5blong.site/">开个房 →</a>
     </nav>
   </div>
 </header>
@@ -241,7 +263,7 @@
           对方点开链接就在房间里，什么都不用装。
         </p>
         <div class="cta-row">
-          <a class="btn btn-primary" href="https://web.5blong.site/">使用网页版 →</a>
+          <a class="btn btn-primary" href="https://web.5blong.site/">开个房 →</a>
           <a class="btn btn-ghost" href="#platforms">下载 Windows 客户端</a>
         </div>
         <p class="hint">单房建议 2–6 人，最多 13 人 · 手机浏览器也能进房听</p>
@@ -252,6 +274,19 @@
       </div>
     </div>
   </div>
+
+  <section id="look" style="padding-top: 8px;">
+    <div class="wrap">
+      <div class="sec-head">
+        <h2>进去长这样</h2>
+        <p>一间房，一个链接，和你朋友。这就是全部界面。</p>
+      </div>
+      <figure class="peek">
+        <img src="/anime-hero.png" alt="5blong 房间插画：开个语音房，把链接丢给朋友" loading="lazy">
+        <figcaption>开房、输码、发链接，都在这一屏——朋友点开链接就进来了。</figcaption>
+      </figure>
+    </div>
+  </section>
 
   <section id="how">
     <div class="wrap">
@@ -264,19 +299,16 @@
           <span class="step-n">01</span>
           <h3>开个房</h3>
           <p>点一下「创建语音房」，六位房号自动生成。不登录也能开。</p>
-          <span class="deco"></span>
         </article>
         <article class="step">
           <span class="step-n">02</span>
           <h3>发个链接</h3>
           <p>复制邀请链接丢到群里。对方点开，直接进房间，不用装、不用注册。</p>
-          <span class="deco"></span>
         </article>
         <article class="step">
           <span class="step-n">03</span>
           <h3>一起待着</h3>
           <p>开麦聊天、一起听歌、共享屏幕看电影。谁说话头像会亮。</p>
-          <span class="deco"></span>
         </article>
       </div>
     </div>

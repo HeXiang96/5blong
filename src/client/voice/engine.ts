@@ -1,7 +1,7 @@
 import { Peer } from "peerjs";
 import type { DataConnection, MediaConnection } from "peerjs";
 import { RnnoiseWorkletNode, loadRnnoise } from "@sapphi-red/web-noise-suppressor";
-import { createDeepFilterNode } from "./ns-deepfilter";
+import { createDenoisedTrack, type DenoiseHandle } from "denoise-voice-clarity";
 // RNNoise 的 worklet 脚本与 wasm（Vite 以 ?url 产出带哈希的静态资源）。
 import rnnoiseWorkletUrl from "@sapphi-red/web-noise-suppressor/rnnoiseWorklet.js?url";
 import rnnoiseWasmUrl from "@sapphi-red/web-noise-suppressor/rnnoise.wasm?url";
@@ -646,6 +646,10 @@ export class VoiceMesh {
   private outgoingStream: MediaStream | null = null;
   private micSourceNode: MediaStreamAudioSourceNode | null = null;
   private nsNode: AudioWorkletNode | null = null;
+  /** DeepFilterNet3 引擎句柄（denoise-voice-clarity）；null = 未启用/已回退。 */
+  private denoiseHandle: DenoiseHandle | null = null;
+  /** 降噪后音频在音频图上的源节点（连到 gain 的那条）。 */
+  private nsSourceNode: MediaStreamAudioSourceNode | null = null;
   private micGainNode: GainNode | null = null;
   /** 发送链尾部的软限幅（见 buildOutgoing 注释）。 */
   private micLimiterNode: DynamicsCompressorNode | null = null;
@@ -5567,22 +5571,30 @@ export class VoiceMesh {
 
     /*
      * AI 降噪三级降级（2026-11-04 起主力换 DeepFilterNet3）：
-     *   DFN3（新模型，键盘/薯片袋这类瞬态噪声抑制强）→
+     *   DFN3（新模型，键盘/薯片袋这类瞬态噪声抑制强；引擎 = denoise-voice-clarity，
+     *   Node 实测稳态噪声压 25.8dB / 人声损 1.5dB）→
      *   RNNoise（老模型，稳态噪声兜底）→
      *   直通（都不行也别挡通话）。
-     * DFN3 的 wasm 有 34MB，懒加载：走到这一步才下载，失败自动退一级。
+     * 模型 wasm 已随应用打包；缓存仓库里有登记（对话框下载过）才走 DFN3。
      */
     if (settings.processing.noiseSuppression) {
       let connected = false;
       try {
-        const ns = await createDeepFilterNode(ctx);
-        this.nsNode = ns;
+        const micTrack = this.localStream.getAudioTracks()[0];
+        if (!micTrack) throw new Error("麦克风轨道不存在");
+        const handle = await createDenoisedTrack(micTrack, { enabled: true, presenceGainDb: 0 }, ctx);
+        const processed = ctx.createMediaStreamSource(handle.stream);
+        this.denoiseHandle = handle;
+        this.nsSourceNode = processed;
+        this.nsNode = null;
         this.nsEnabled = true;
-        source.connect(ns);
-        ns.connect(gain);
+        // 注意：原始 source（micSourceNode）只挂分析器用，不再直连 gain；
+        // 真正进发送链的是降噪后的 processed。
+        processed.connect(gain);
         connected = true;
       } catch {
-        this.nsNode = null;
+        this.denoiseHandle = null;
+        this.nsSourceNode = null;
       }
       if (!connected) {
         try {
@@ -5679,6 +5691,8 @@ export class VoiceMesh {
     if (on === this.nsEnabled) return true;
 
     if (!on) {
+      // 关降噪：拆掉 DFN3 引擎（若有）与 RNNoise 节点，恢复原始直连
+      await this.teardownDenoiseHandle();
       try {
         this.nsNode?.disconnect();
       } catch {
@@ -5691,16 +5705,21 @@ export class VoiceMesh {
 
     // 同样的三级降级：DFN3 → RNNoise → 失败（保持现状由 UI 提示）
     try {
-      const ns = await createDeepFilterNode(ctx);
+      const micTrack = this.localStream?.getAudioTracks()[0];
+      if (!micTrack) throw new Error("麦克风轨道不存在");
+      const handle = await createDenoisedTrack(micTrack, { enabled: true, presenceGainDb: 0 }, ctx);
+      const processed = ctx.createMediaStreamSource(handle.stream);
       try {
         source.disconnect(gain);
       } catch {
         /* noop */
       }
+      await this.teardownDenoiseHandle();
       this.nsNode?.disconnect();
-      this.nsNode = ns;
-      source.connect(ns);
-      ns.connect(gain);
+      this.nsNode = null;
+      this.denoiseHandle = handle;
+      this.nsSourceNode = processed;
+      processed.connect(gain);
       this.nsEnabled = true;
       return true;
     } catch {
@@ -5719,6 +5738,7 @@ export class VoiceMesh {
         /* noop */
       }
       this.nsNode?.disconnect();
+      await this.teardownDenoiseHandle();
       this.nsNode = ns;
       source.connect(ns);
       ns.connect(gain);
@@ -5727,6 +5747,21 @@ export class VoiceMesh {
       return true;
     } catch {
       return false;
+    }
+  }
+
+  /** 拆掉 DFN3 引擎与其在音频图上的节点（幂等）。 */
+  private async teardownDenoiseHandle(): Promise<void> {
+    this.nsSourceNode?.disconnect();
+    this.nsSourceNode = null;
+    const handle = this.denoiseHandle;
+    this.denoiseHandle = null;
+    if (handle) {
+      try {
+        await handle.destroy();
+      } catch {
+        /* noop */
+      }
     }
   }
 
@@ -5792,7 +5827,10 @@ export class VoiceMesh {
 
   /** 只拆处理链节点，保留原始麦克风流（供重建/销毁复用）。 */
   private teardownOutgoingGraph(): void {
-    for (const node of [this.nsNode, this.micSourceNode, this.micGainNode, this.micLimiterNode, this.outDestNode]) {
+    this.teardownDenoiseHandle().catch(() => {
+      /* 销毁失败也没关系：引用已清空 */
+    });
+    for (const node of [this.nsNode, this.nsSourceNode, this.micSourceNode, this.micGainNode, this.micLimiterNode, this.outDestNode]) {
       try {
         node?.disconnect();
       } catch {
@@ -5800,6 +5838,15 @@ export class VoiceMesh {
       }
     }
     this.nsNode = null;
+    this.nsSourceNode = null;
+    const handle = this.denoiseHandle;
+    this.denoiseHandle = null;
+    if (handle) {
+      // 这里是同步清理路径：销毁是异步的也只管发出去，不阻塞重建新链
+      void handle.destroy().catch(() => {
+        /* noop */
+      });
+    }
     this.micSourceNode = null;
     this.micGainNode = null;
     this.micLimiterNode = null;
