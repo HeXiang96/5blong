@@ -719,12 +719,24 @@ ${list}`;
     const liveCards = live.length
       ? live
           .map((r) => {
-            const members = db
+            const rowsRaw = db
               .prepare(
                 "SELECT * FROM room_members WHERE session_id = (SELECT id FROM room_sessions WHERE code = ? ORDER BY created_at DESC LIMIT 1) ORDER BY joined_at",
               )
               .bind(r.id)
               .all().results;
+            /*
+             * 同一个人可能出现多行：重进房后 peer id 变了，member_key 跟着变
+             * （旧版本快照还曾用 peerId 当离开成员的 key，一人两行）。
+             * 在线卡片只看"现在谁在房"：按人去重，保留最新一行（2026-11-04）。
+             */
+            const latest = new Map();
+            for (const m of rowsRaw) {
+              const k = m.name || m.member_key || m.id;
+              const prev = latest.get(k);
+              if (!prev || String(m.joined_at) >= String(prev.joined_at)) latest.set(k, m);
+            }
+            const members = [...latest.values()];
             const rows =
               members
                 .map((m) => {

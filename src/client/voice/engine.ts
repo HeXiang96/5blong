@@ -1203,6 +1203,7 @@ export class VoiceMesh {
       let stat = t.members.get(key);
       if (!stat) {
         stat = {
+          key,
           peerId: member.id, name: member.name, joinedAt: nowIso, leftAt: null,
           rttSum: 0, rttCount: 0, rttMax: 0, jitterMax: 0, lossPct: 0,
           link: member.local ? "self" : "connecting", reconnects: 0, speakingS: 0,
@@ -1279,7 +1280,14 @@ export class VoiceMesh {
     const departed = [...t.members.values()].filter((m) => m.leftAt && !seen.has(m.peerId));
     for (const stat of departed) {
       membersPayload.push({
-        key: stat.peerId, name: stat.name, joinedAt: stat.joinedAt, leftAt: stat.leftAt,
+        /*
+         * ⚠️ key 必须用**它在 t.members 里的键**（sessionId||id）。
+         * 原来这里误用 stat.peerId —— 同一个人以两个不同 key 落进
+         * room_members：原 key 那行永远收不到 leftAt（一直显示"在房"），
+         * peerId key 那行是凭空多出来的"已离开"。后台面板同一个成员
+         * 出现三条记录就是这个（2026-11-04 房 896363 海豹×3）。
+         */
+        key: stat.key, name: stat.name, joinedAt: stat.joinedAt, leftAt: stat.leftAt,
         rttSum: stat.rttSum, rttCount: stat.rttCount, rttMax: stat.rttMax,
         jitterMax: stat.jitterMax, lossPct: stat.lossPct, link: stat.link,
         reconnects: stat.reconnects, speakingS: stat.speakingS,
@@ -1346,6 +1354,54 @@ export class VoiceMesh {
     }
   }
 
+  /**
+   * 房主关房时补发的**最终快照**（2026-11-04）。
+   *
+   * 不发它，后台要等 90 秒空闲清扫 + 60 秒扫描间隔才把这场收尾，
+   * 期间面板一直显示"房间在线、成员在房"——业主对着已经消失的房间排障。
+   *
+   * 细节：
+   * - 只走 HTTP keepalive（此刻信令 socket 可能正被销毁，不能赌它刷得出去）；
+   * - 不做 getStats 采样（关房这一刻没人关心 RTT，同步构造完立刻发）；
+   * - `ended: true` 让服务端**立刻** finalize（写结束时间、成员全部标离开、
+   *   删在线行），而不是等心跳超时。
+   */
+  private sendFinalRoomSnapshot(): void {
+    const t = this.roomTelemetry;
+    if (!t) return;
+    const nowIso = new Date().toISOString();
+    const membersPayload = [...t.members.values()].map((stat) => ({
+      key: stat.key, name: stat.name, joinedAt: stat.joinedAt, leftAt: stat.leftAt ?? nowIso,
+      rttSum: stat.rttSum, rttCount: stat.rttCount, rttMax: stat.rttMax,
+      jitterMax: stat.jitterMax, lossPct: stat.lossPct, link: stat.link,
+      reconnects: stat.reconnects, speakingS: stat.speakingS,
+      runtime: stat.runtime, version: stat.version,
+    }));
+    const payload = {
+      sessionId: t.sessionId,
+      code: t.code,
+      createdAt: t.createdAt,
+      runtime: isTauriRuntime() ? "client" : "web",
+      version: currentVersion(),
+      members: membersPayload.slice(0, 64),
+      events: t.events.slice(-20),
+      share: { active: t.share.active, totalS: t.share.totalS, transport: t.share.transport, last: t.share.last },
+      ended: true,
+    };
+    try {
+      void fetch(ROOM_TELEMETRY_ENDPOINT, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        keepalive: true,
+      }).catch(() => {
+        /* 发不出去：90 秒空闲清扫兜底 */
+      });
+    } catch {
+      /* 同上 */
+    }
+  }
+
   /** 占位续期：这是"别人开临时房不会占掉我的号"的硬保证，别省。 */
   private startHoldRenewal(): void {
     const hold = this.options.holdCode;
@@ -1370,6 +1426,20 @@ export class VoiceMesh {
     this.stopHoldRenewal();
     if (this.heldCode) void this.options.releaseHold?.(this.roomHoldToken);
     this.heldCode = "";
+    /*
+     * 房主结束房间：① 广播 room-closed（新版本访客立刻退房，不再看"重连中"）；
+     * ② 补发一份带 ended 标记的最终快照，让后台**立刻**收尾这一场——
+     *   不发的话要等 90~150 秒空闲清扫，期间面板一直显示"房间在线、成员在房"。
+     * 必须在连接关闭之前做（后面立刻拆 peer/连接）。
+     */
+    if (this.hosting) {
+      try {
+        this.broadcastHost({ t: "room-closed" });
+      } catch {
+        /* noop */
+      }
+      this.sendFinalRoomSnapshot();
+    }
     this.stopRoomTelemetry();
     this.stopSessionStats(true);
     stopPoseTickerFn();
@@ -3086,6 +3156,16 @@ export class VoiceMesh {
         // 主题已是个人偏好（2026-10-22）：老版本房主仍会广播，直接忽略。
         break;
       }
+      case "room-closed": {
+        /*
+         * 房主明确说"房间结束了"：立刻退房，不走"30 秒心跳超时 → 重拨 2 次
+         * → 每次宽限"的老路——那条路让每个访客对着已消失的房间看几十秒
+         * "重连中"（2026-11-04 业主实测）。旧版本房主不广播此消息，照旧走超时。
+         */
+        this.pushRoomEvent("info", "房主已结束房间");
+        this.events.ended("closed", "房主已结束房间");
+        break;
+      }
       case "roster": {
         const seen = new Set<string>();
         for (const member of message.members) {
@@ -3396,6 +3476,13 @@ export class VoiceMesh {
        * 2026-11-03 实测：Bink↔爱睡的锦鲤 两边都 new，重拨 3 次全部失败。
        */
       if (!this.shouldCall(member.id)) continue;
+      /*
+       * 自建协商腿不在 calls 表里：活着（协商中/已连通）就别再拨——
+       * 否则每 3 秒戳一次正在收敛的协商（见 startDcOffer 的说明）。
+       * 已 failed/closed 的链路会从 dcLinks 表里清掉，不会卡在这里。
+       */
+      const dcLive = this.dcLinks.get(member.id);
+      if (dcLive && (dcLive.currentState === "connecting" || dcLive.currentState === "connected")) continue;
       if (dialed >= 1) continue;
       /*
        * 自愈次数到顶就停手：这条腿已经连续失败 3 次，后台再偷偷拨只会
@@ -3423,8 +3510,19 @@ export class VoiceMesh {
    */
   private onIceUpgrade(): void {
     if (this.destroyed || !this.me || !this.joined) return;
-    this.pushRoomEvent("error", "中继凭据已就绪，正在重拨语音链路…");
     this.resetLinkRetries();
+    /*
+     * 只拆"没连上"的腿（2026-11-04 修正）。
+     *
+     * 这段自愈的本意：开局 /ice 凭据晚到，以纯 STUN 起步、卡在 new/checking
+     * 的腿要用中继重拨。但它原来**无差别拆掉所有腿**——刚连上的健康直连腿
+     * 也被拆（实测"连上 1 秒就变重连中，几秒后又连上"的闪断就是这么来的，
+     * /ice 通常在进房 1~2.5 秒返回，正好踩在链路刚通的时刻）。
+     *
+     * 已经连通的腿不需要中继救：真单向/僵死由单向检查与补拨巡检兜底，
+     * 那两条路都带 relay 重拨。
+     */
+    let redialed = 0;
     for (const member of this.members.values()) {
       if (member.local) continue;
       /*
@@ -3432,9 +3530,19 @@ export class VoiceMesh {
        * 两边都拆、两边都拨，就会重现"互相抢答 → 双方都停在 new"的死局。
        */
       if (!this.shouldCall(member.id)) continue;
+      const dcLink = this.dcLinks.get(member.id);
+      if (dcLink && (dcLink.currentState === "connected" || dcLink.currentState === "connecting")) continue;
+      const call = this.calls.get(member.id);
+      const pc = call ? (call as unknown as { peerConnection?: RTCPeerConnection }).peerConnection : null;
+      const ice = pc?.iceConnectionState;
+      if (ice === "connected" || ice === "completed") continue;
       this.dropMedia(member.id);
       this.roomLinkState.set(member.id, "connecting");
       this.events.mediaState(member.id, "connecting");
+      redialed += 1;
+    }
+    if (redialed > 0) {
+      this.pushRoomEvent("error", `中继凭据已就绪，重拨 ${redialed} 条未建成的语音链路…`);
     }
     // 共享画面腿同样可能开局没拿到中继，收掉让补拨按新配置重建
     this.closeScreenCalls();
@@ -3966,7 +4074,7 @@ export class VoiceMesh {
     code: string;
     createdAt: string;
     members: Map<string, {
-      peerId: string; name: string; joinedAt: string; leftAt: string | null;
+      key: string; peerId: string; name: string; joinedAt: string; leftAt: string | null;
       rttSum: number; rttCount: number; rttMax: number;
       jitterMax: number; lossPct: number; link: string;
       reconnects: number; speakingS: number; runtime: string; version: string;
@@ -4382,18 +4490,30 @@ export class VoiceMesh {
           this.lastMediaAt.set(peerId, Date.now());
           return;
         }
+        if (state === "closed") {
+          // 对端发来 rtc-bye / 本端已关闭：从表里清掉，别留僵尸
+          // （僵尸会让诊断包出现同一个人两条记录，还会挡住新 offer 的处理）
+          this.dcLinks.delete(peerId);
+          return;
+        }
         if (state !== "failed") return;
         this.closeDcLink(peerId);
         /*
-         * 迟到的失败不覆盖已连接（2026-11-03）。
+         * 迟到的失败不覆盖已连接（2026-11-03；2026-11-04 扩围）。
          *
          * 自建腿 answer 超时（12~18s）才判 failed，此时回落 PeerJS 的腿可能
          * 已经连上（诊断实测：pk=20 与 link=failed 并存）。旧实现无条件把
          * 状态写成 failed —— 界面从此卡"重连中"，稳定连接不再触发 ICE 事件，
          * 直到某个偶然事件把判定再跑一遍才翻正，表现就是"重连一两分钟"。
+         *
+         * 1.9.20 只护了 "connected" 一种值，但 PeerJS 的 ICE classify 写进去的
+         * 是 "direct"/"relay" —— 护栏等于没护住最常见的场景（海豹/ceshi3 的
+         * 诊断包：ICE connected、音频在流，状态却永远卡 failed）。现在把三种
+         * 健康值全护住。
          */
-        const alreadyConnected = this.roomLinkState.get(peerId) === "connected";
-        if (alreadyConnected) {
+        const prev = this.roomLinkState.get(peerId);
+        const hasWorkingLeg = prev === "connected" || prev === "direct" || prev === "relay";
+        if (hasWorkingLeg) {
           this.pushRoomEvent("info", "自建协商失败，但 PeerJS 腿已接管且连接正常——状态保持");
           return;
         }
@@ -4431,6 +4551,15 @@ export class VoiceMesh {
 
   /** 访客主动向房主发起自建协商（房主不主动发起，保持"id 小的一侧拨"的约定）。 */
   private startDcOffer(peerId: string): void {
+    /*
+     * 补拨巡检每 3 秒跑一次，而自建协商腿不在 calls 表里——不挡这里，
+     * 巡检就会对一条"正在协商/已连通"的链路反复 start()：在旧 PC 上重复
+     * setLocalDescription（wrong state / 强行重协商），把正在收敛的 ICE 搅死。
+     * 实测表现：自建协商每次都被迫走 18 秒超时回落 PeerJS（2026-11-04 房 896363）。
+     */
+    const existing = this.dcLinks.get(peerId);
+    if (existing && (existing.currentState === "connecting" || existing.currentState === "connected")) return;
+    if (existing) this.closeDcLink(peerId); // 已关闭的残链：清掉重建
     const link = this.ensureDcLink(peerId, "offer");
     if (!link) {
       /*

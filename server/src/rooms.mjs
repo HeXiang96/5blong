@@ -294,6 +294,17 @@ export function createRoomsHarness(db) {
       console.error("[rooms] 快照落库失败：", error.message);
     }
 
+    /*
+     * 房主关房时补发的最终快照带 ended:true（2026-11-04）：
+     * 立刻收尾这一场（写结束时间、成员全部标离开、删在线行），
+     * 不用等 90 秒空闲清扫 + 60 秒扫描间隔——期间面板一直显示
+     * "房间在线、成员在房"，业主对着已消失的房间排障。
+     */
+    if (payload?.ended === true) {
+      finalize(sessionId, "host-closed");
+      return { ok: true };
+    }
+
     return { ok: true };
   }
 

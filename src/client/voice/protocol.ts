@@ -513,7 +513,7 @@ export interface ScreenShareState {
    * 订阅端用它 + 实收分辨率推算"当前订阅到哪一层"（f/h/q），显示在灯箱里。
    * 缺省 = 旧版本房主，不显示层信息。
    */
-  quality?: "hd720" | "hd720p30" | "fhd1080" | "fhd1080p30";
+  quality?: "hd720" | "hd720p30" | "fhd1080" | "fhd1080p30";
 }
 
 /** 校验从线上收到的屏幕共享状态；形状不对就丢弃。 */
@@ -524,7 +524,7 @@ export function parseScreenShareState(input: unknown): ScreenShareState | null {
   const sharerId = typeof raw["sharerId"] === "string" ? raw["sharerId"].slice(0, 64) : "";
   const sessionId = typeof raw["sessionId"] === "string" ? raw["sessionId"].slice(0, 128) : "";
   const trackName = typeof raw["trackName"] === "string" ? raw["trackName"].slice(0, 64) : "";
-  if (!sharerId || !sessionId || !trackName) return null;
+  if (!sharerId || !sessionId || !trackName) return null;
   return {
     active: true,
     sharerId,
@@ -543,7 +543,7 @@ export function parseScreenShareState(input: unknown): ScreenShareState | null {
     raw["quality"] === "fhd1080" ||
     raw["quality"] === "fhd1080p30"
       ? { quality: raw["quality"] }
-      : {}),
+      : {}),
   };
 }
 
@@ -558,7 +558,7 @@ export interface ScreenSharePublication {
   /** SFU 发布是否用了 simulcast 多档（缺省 = 单档）。 */
   simulcast?: boolean;
   /** 发布档位（订阅端据实收分辨率推算订阅层）。 */
-  quality?: "hd720" | "hd720p30" | "fhd1080" | "fhd1080p30";
+  quality?: "hd720" | "hd720p30" | "fhd1080" | "fhd1080p30";
 }
 
 export function parseScreenSharePublication(input: unknown): ScreenSharePublication | null {
@@ -566,7 +566,7 @@ export function parseScreenSharePublication(input: unknown): ScreenSharePublicat
   const raw = input as Record<string, unknown>;
   const sessionId = typeof raw["sessionId"] === "string" ? raw["sessionId"].slice(0, 128) : "";
   const trackName = typeof raw["trackName"] === "string" ? raw["trackName"].slice(0, 64) : "";
-  if (!sessionId || !trackName) return null;
+  if (!sessionId || !trackName) return null;
   return {
     sessionId,
     trackName,
@@ -581,7 +581,7 @@ export function parseScreenSharePublication(input: unknown): ScreenSharePublicat
     raw["quality"] === "fhd1080" ||
     raw["quality"] === "fhd1080p30"
       ? { quality: raw["quality"] }
-      : {}),
+      : {}),
   };
 }
 
@@ -746,6 +746,8 @@ export type HostMessage =
    */
   | { t: "pen-poses"; ts: number; poses: PenPose[] }
   | { t: "sound"; event: SoundEvent }
+  /** 房主结束房间：访客立刻退房，不再走 30 秒心跳超时 + 重拨那套流程（2026-11-04）。 */
+  | { t: "room-closed" }
   | { t: "ping"; ts: number }
   | { t: "pong"; ts: number };
 

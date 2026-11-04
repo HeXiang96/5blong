@@ -65,6 +65,8 @@ export class MediaLink {
   /** node 单测里没有 window，统一用全局计时器（浏览器/Node 都可用）。 */
   private answerTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly pendingCandidates: RTCIceCandidateInit[] = [];
+  /** 最近一次成功发出的 answer：发起方重发 offer（上一轮丢了）时原样补发，不重建。 */
+  private lastAnswerSdp: string | null = null;
   private closed = false;
 
   constructor(options: MediaLinkOptions) {
@@ -84,6 +86,12 @@ export class MediaLink {
   /** 发起方开始协商；应答方什么都不用做，等 offer。 */
   async start(): Promise<void> {
     if (this.closed || this.role !== "offer") return;
+    /*
+     * 已经连通的链路绝不能再 negotiate：在 connected 的 PC 上重新
+     * setLocalDescription(offer) 要么抛 wrong state、要么触发一次谁也没
+     * 要求的重协商，把健康的腿搅死（2026-11-04 房 896363 实测）。
+     */
+    if (this.state === "connected") return;
     await this.negotiate();
   }
 
@@ -130,6 +138,11 @@ export class MediaLink {
   // ------------------------------------------------------------------ 内部
 
   private async negotiate(): Promise<void> {
+    /*
+     * 重发前必须拆掉旧 PC：不拆会留下一个还在跑 ICE 的僵尸（它迟到的
+     * failed 会覆盖已连通的新腿），而且旧 PC 上再设描述会进 wrong state。
+     */
+    this.teardownPc();
     const pc = this.buildPc();
     /*
      * 整形必须在 setLocalDescription **之前**，且只设一次（2026-11-03 实锤）。
@@ -144,10 +157,23 @@ export class MediaLink {
     const sdp = this.transform(offer.sdp ?? "");
     await pc.setLocalDescription({ type: "offer", sdp });
     this.pipe.send({ t: "rtc-offer", sdp });
+    this.opts.onEvent?.("info", `offer 已发出，等待 answer（超时 ${this.opts.answerTimeoutMs ?? DEFAULT_ANSWER_TIMEOUT_MS}ms）`);
     this.armAnswerTimer();
   }
 
   private async answerTo(offerSdp: string): Promise<void> {
+    /*
+     * 链路已经连通又收到 offer = 对方在重发（他的 answer 路上丢了）。
+     * 这时**绝不能** teardown 重建——那会把双方都已经连通的腿一起拆掉。
+     * 把缓存的原 answer 原样补发即可：如果对方是新 PC（重试重建过的），
+     * 旧 answer 里的 ICE 凭据对不上，他会按超时流程继续重试/回落，
+     * 但我们这条健康的腿不动摇。
+     */
+    if (this.state === "connected" && this.lastAnswerSdp) {
+      this.pipe.send({ t: "rtc-answer", sdp: this.lastAnswerSdp });
+      this.opts.onEvent?.("info", "已连通时收到重复 offer：补发原 answer，不重建链路");
+      return;
+    }
     /*
      * 收到 offer 就重建 PC：发起方重发（上一轮 answer 丢了）时，
      * 旧 PC 上直接 setRemoteDescription 会进入 renegotiation，状态更难预测。
@@ -163,7 +189,9 @@ export class MediaLink {
     const answer = await pc.createAnswer();
     const sdp = this.transform(answer.sdp ?? "");
     await pc.setLocalDescription({ type: "answer", sdp });
+    this.lastAnswerSdp = sdp;
     this.pipe.send({ t: "rtc-answer", sdp });
+    this.opts.onEvent?.("info", "answer 已生成并发出");
   }
 
   private async applyAnswer(answerSdp: string): Promise<void> {
@@ -174,6 +202,7 @@ export class MediaLink {
     this.clearAnswerTimer();
     await pc.setRemoteDescription({ type: "answer", sdp: answerSdp });
     await this.flushPendingCandidates();
+    this.opts.onEvent?.("info", "answer 已应用，开始 ICE 打洞");
   }
 
   private async addRemoteCandidate(cand: RTCIceCandidateInit | null): Promise<void> {
@@ -259,10 +288,16 @@ export class MediaLink {
       this.answerTimer = null;
       if (this.closed || this.state === "connected") return;
       if (this.retries >= max) {
+        /*
+         * 埋点（2026-11-04）：这条失败路径原来零痕迹——诊断包 events 全空，
+         * "自建协商为什么每次都超时"查了一早上只能靠推理。
+         */
+        this.opts.onEvent?.("error", `answer 一直等不到（重发 ${max} 次耗尽），放弃自建协商、回落 PeerJS`);
         this.setState("failed");
         return;
       }
       this.retries += 1;
+      this.opts.onEvent?.("info", `answer 超时，第 ${this.retries}/${max} 次重发 offer（旧 PC 已拆、带新凭据重建）`);
       void this.negotiate();
     }, timeout);
   }

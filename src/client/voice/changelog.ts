@@ -20,6 +20,15 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.9.22",
+    date: "2026-11-04",
+    lines: [
+      "修复「重连中」误报：连接正常却显示重连",
+      "进房瞬间的闪断（连上又重连）已消除",
+      "房主结束房间后，大家立刻退出不再干等",
+    ],
+  },
+  {
     version: "1.9.21",
     date: "2026-11-03",
     lines: [
