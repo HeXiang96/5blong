@@ -148,6 +148,31 @@
 - 桌面端更新源已双通道：`5blong.site` 优先、GitHub Releases 兜底
   （`/desktop/latest.json` + exe 已同步一份到 ECS）。
 
+### ⚠️⚠️ 发版必检：server 端永远不在 CI 里（2026-11-04 血泪教训）
+
+CI（release.yml）只发**网页 + 桌面安装包**。**`server/src`、`server/db/schema.sql`
+永远不会跟着 Release 走** —— 每次改了服务端代码，必须手动部署，一次都不能漏：
+
+```bash
+# 1) 推 server 代码与表结构（src 全量覆盖最稳）
+scp -i .deploy_key 5blong/server/src/*.mjs  root@8.210.198.140:/opt/5blong/server/src/
+scp -i .deploy_key 5blong/server/db/schema.sql root@8.210.198.140:/opt/5blong/server/db/
+# 2) 建表/迁移（幂等，重复跑没副作用）
+ssh -i .deploy_key root@8.210.198.140 'node /opt/5blong/server/scripts/init-db.mjs'
+# 3) 重启并自检
+ssh -i .deploy_key root@8.210.198.140 'systemctl restart 5blong-api && systemctl is-active 5blong-api'
+# 4) 线上验证新接口真的存在（比如新加了 /api/duel）
+curl -s https://5blong.site/api/duel -o /dev/null -w "%{http_code}\n"   # ≠404 才算上线
+```
+
+> **1.9.24 事故记录**：v1.9.24 带了新的 `/api/duel` 服务端代码并发了 Release，
+> 但没有任何人推 server —— 网页端上线了、接口 404，直到两天后才被发现。
+> 原因：发版的人只看 CI 绿了就收工。**CI 绿 ≠ 全部上线。**
+
+**发版自检口诀：改了什么端，就部署什么端，并 curl 验证那个端。**
+（客户端 → 等 CI；server → 手动 scp + 建表 + 重启；介绍页 → 手动传
+`/var/www/5blong/` 根目录；最后跑 sync-web.mjs / sync-desktop.mjs 让服务器拉 Release。）
+
 ### ⚠️ 并行期的硬规则
 
 信令是**全局注册表**：网页端（5blong.site）和已安装的桌面客户端（pages.dev）
