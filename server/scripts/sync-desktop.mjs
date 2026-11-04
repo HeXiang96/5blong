@@ -27,7 +27,7 @@
  *   node sync-desktop.mjs --force      # 忽略"不降级"护栏（回滚时用）
  */
 
-import { createWriteStream, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, createWriteStream, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import https from "node:https";
 import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
@@ -462,6 +462,25 @@ async function main() {
     .filter((f) => /^5blong_\d+\.\d+\.\d+_x64-setup\.exe$/.test(f) && f !== exeName)
     .sort((a, b) => compareVersion(b.match(/_([\d.]+)_/)[1], a.match(/_([\d.]+)_/)[1]))[0];
   pruneOldExe(prev ? [exeName, prev] : [exeName]);
+
+  /*
+   * 稳定下载别名（2026-11-04）：介绍页的「下载客户端」按钮写死的是
+   * /desktop/5blong_latest_x64-setup.exe——版本号会变，链接不能跟着变。
+   * 每轮同步把软链指到当前版本；Windows 上没法用软链，故用复制兜底。
+   */
+  const alias = path.join(DEST, "5blong_latest_x64-setup.exe");
+  try {
+    if (existsSync(alias) || lstatSync(alias, { throwIfNoEntry: false })) rmSync(alias, { force: true });
+    symlinkSync(exeName, alias);
+    log("alias", `5blong_latest_x64-setup.exe → ${exeName}`);
+  } catch {
+    try {
+      copyFileSync(exePath, alias);
+      log("alias", `5blong_latest_x64-setup.exe 复制自 ${exeName}`);
+    } catch (e) {
+      log("warn", `稳定下载别名创建失败：${e.message}`);
+    }
+  }
 
   log("done", `更新源已就绪：${SITE}/desktop/latest.json`);
 }
