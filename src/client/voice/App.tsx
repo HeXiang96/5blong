@@ -826,7 +826,7 @@ export function App() {
         onSetShareViewMode={voice.setShareViewMode}
         onOpenFeedback={openFeedback}
       />
-      {duelSession && duelSession.phase === "playing" ? (
+      {duelSession && (duelSession.phase === "playing" || duelSession.phase === "over") ? (
         <DuelOverlay
           session={duelSession}
           myName={voice.members.find((m) => m.local)?.name ?? "我"}
@@ -840,7 +840,7 @@ export function App() {
         <div className="duel-invite-layer">
           <div className="duel-invite-card">
             <div className="duel-invite-title">已向 {duelSession.opponentName} 发起对局</div>
-            <div className="duel-invite-sub">等对方接受…（3 分钟内有效）</div>
+            <div className="duel-invite-sub">等对方接受…（1 分钟内有效）</div>
             <button type="button" className="duel-btn ghost" onClick={() => duel.leave()}>取消邀请</button>
           </div>
         </div>
@@ -849,7 +849,7 @@ export function App() {
         <div className="duel-invite-layer">
           <div className="duel-invite-card">
             <div className="duel-invite-title">⚔️ {duel.invite.hostName} 邀你来一局梗王对局</div>
-            <div className="duel-invite-sub">回合制卡牌 · 语音照常 · 3 分钟内有效</div>
+            <div className="duel-invite-sub">回合制卡牌 · 语音照常 · 1 分钟内有效</div>
             <div className="duel-invite-actions">
               <button type="button" className="duel-btn ghost" onClick={() => duel.decline()}>拒绝</button>
               <button type="button" className="duel-btn primary" onClick={() => duel.accept()}>接受</button>

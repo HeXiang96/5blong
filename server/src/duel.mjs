@@ -21,8 +21,8 @@
 import express from "express";
 import { randomUUID } from "node:crypto";
 
-/** 邀请 3 分钟内有效：再久的对方大概率已经不在电脑前。 */
-const INVITE_TTL_MS = 3 * 60_000;
+/** 邀请 1 分钟内有效：超过这个时间对方大概率已经不在电脑前，也容易挡住下一局。 */
+const INVITE_TTL_MS = 60_000;
 /** 一局最多活 30 分钟（客户端有轮询保活，这里兜住忘记关的情况）。 */
 const SESSION_TTL_MS = 30 * 60_000;
 /** 结束/取消的对局再保留 60 秒，够对方看到最终画面。 */
@@ -106,16 +106,36 @@ export function createDuelRouter(db) {
     const guestName = str(body.guestName, NAME_MAX) || "对手";
     const now = Date.now();
 
-    // 双方都不能已经在别的局里：一局没结束就开第二局，两边状态会串
+    /*
+     * 换了房间 = 上一间房的邀请/对局全部作废，先就地收掉。
+     *
+     * 不清的话，一条没人理的邀请会跟着人走：在新房间点「梗王对局」直接 409 busy，
+     * 而且那条邀请可能来自几十分钟前、房号都完全不一样——2026-11-04 线上实测，
+     * 房主侧表现为「点了按钮什么都不出来」，只在角落闪一条 4 秒提示。
+     * 对局同理：房间都没了（房主关房/退出账号回首页），那局不可能继续。
+     */
+    db.prepare(
+      `UPDATE duel_sessions
+          SET phase = 'cancelled', updated_at = ?
+        WHERE (host_id = ? OR guest_id = ?)
+          AND phase IN ('invite', 'playing')
+          AND room_code <> ?
+          AND created_at > ?`,
+    )
+      .bind(now, clientId, clientId, room, now - SESSION_TTL_MS)
+      .run();
+
+    // 双方都不能已经在别的局里：一局没结束就开第二局，两边状态会串。
+    // 注意邀请只挡 1 分钟：过期邀请算垃圾，不能像以前那样挡满 30 分钟。
     const busy = db
       .prepare(
         `SELECT id FROM duel_sessions
           WHERE (host_id = ? OR guest_id = ? OR host_id = ? OR guest_id = ?)
-            AND phase IN ('invite', 'playing')
+            AND (phase = 'playing' OR (phase = 'invite' AND created_at > ?))
             AND updated_at > ?
           LIMIT 1`,
       )
-      .bind(clientId, clientId, guestId, guestId, now - SESSION_TTL_MS)
+      .bind(clientId, clientId, guestId, guestId, now - INVITE_TTL_MS, now - SESSION_TTL_MS)
       .first();
     if (busy) return res.status(409).json({ error: "busy", message: "对方或你已经在另一局里了" });
 
@@ -168,7 +188,12 @@ export function createDuelRouter(db) {
     if (row.phase === "over" && Date.now() - row.updated_at > OVER_GRACE_MS) {
       return res.json({ ok: true, session: null });
     }
-    if (row.phase === "invite" && Date.now() - row.updated_at > INVITE_TTL_MS) {
+    /*
+     * 邀请过期按 **created_at** 算，不能按 updated_at：
+     * 每次 /poll 都会刷新 updated_at（当心跳用），房主一直轮询时
+     * 「1 分钟内有效」就永远不会生效——一个等待卡可以挂一整天。
+     */
+    if (row.phase === "invite" && Date.now() - row.created_at > INVITE_TTL_MS) {
       db.prepare("UPDATE duel_sessions SET phase = 'cancelled', updated_at = ? WHERE id = ?")
         .bind(Date.now(), row.id)
         .run();
@@ -183,10 +208,16 @@ export function createDuelRouter(db) {
     if (cmd === "decline" && !isHost) patch.phase = "cancelled";
     if (cmd === "leave") {
       patch[isHost ? "host_left" : "guest_left"] = 1;
-      // 邀请阶段点退出 = 取消；对局中退出保留 phase，让对方看到 left 后自己收
+      /*
+       * 邀请阶段点退出 = 取消；对局中任一方点退出 = 这局直接结束。
+       *
+       * 以前是「两个人都退了才算 over」，于是先退出的那个人会被自己上一局挡住：
+       * 服务端那行还是 playing，他马上想再邀别人 → 409 busy（2026-11-04 业主反馈
+       * 「有人点退出游戏了，之后再邀请」）。现在只要有人退出就 over，
+       * 对方下一轮仍然看得到「XX 退出了对局」的结算画面（over 保留 60 秒）。
+       */
       if (row.phase === "invite") patch.phase = "cancelled";
-      // 对方也已经退了：这局事实上结束，别再让任何人拉到
-      else if ((isHost ? row.guest_left : row.host_left) === 1) patch.phase = "over";
+      else patch.phase = "over";
     }
 
     // 房主推快照
@@ -243,13 +274,12 @@ export function createDuelRouter(db) {
       return res.status(403).json({ error: "forbidden" });
     }
     const isHost = row.host_id === clientId;
-    const otherLeft = isHost ? row.guest_left === 1 : row.host_left === 1;
     db.prepare(
       `UPDATE duel_sessions
           SET ${isHost ? "host_left" : "guest_left"} = 1,
               phase = CASE
                 WHEN phase = 'invite' THEN 'cancelled'
-                WHEN ${otherLeft ? "1" : "0"} THEN 'over'
+                WHEN phase = 'playing' THEN 'over'
                 ELSE phase END,
               updated_at = ?
         WHERE id = ?`,

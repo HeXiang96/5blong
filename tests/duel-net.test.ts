@@ -107,6 +107,17 @@ describe("梗王对局 · LocalDuelTransport 状态机", () => {
     expect(again.ok).toBe(false);
   });
 
+  it("过了 1 分钟的邀请不再挡人（与服务端同口径）", async () => {
+    await host.invite({ clientId: HOST, gameId: GAME, room: ROOM, guestId: GUEST, guestName: "Renai", hostName: "大东彦" });
+    // 把创建时间往前拨 4 分钟：这条邀请已经过期
+    const rows = JSON.parse(localStorage.getItem("5blong.duel.sessions")!);
+    rows[GAME].createdAt = Date.now() - 4 * 60_000;
+    localStorage.setItem("5blong.duel.sessions", JSON.stringify(rows));
+
+    const again = await host.invite({ clientId: HOST, gameId: "game-test-0003", room: ROOM, guestId: BYE, guestName: "C", hostName: "大东彦" });
+    expect(again.ok).toBe(true);
+  });
+
   it("房主推旧版本（重放）被拒收", async () => {
     await host.invite({ clientId: HOST, gameId: GAME, room: ROOM, guestId: GUEST, guestName: "Renai", hostName: "大东彦" });
     await guest.poll({ clientId: GUEST, gameId: GAME, room: ROOM, cmd: "accept" });

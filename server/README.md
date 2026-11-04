@@ -132,6 +132,35 @@ npm run build:web:pages
 rsync -av --delete dist-web/ root@5blong.site:/var/www/5blong/
 ```
 
+### 4b. 降噪模型（18MB，单独放，不随前端产物）
+
+DeepFilterNet3 的 wasm 已经从安装包/前端产物里摘出去了（否则安装包多 11MB），
+由用户在首次使用时点「立即下载」拉取。文件放在**前端产物之外**的目录，
+因为上面那条 rsync 带 `--delete`，放站点根目录里每次发版都会被删掉。
+
+```bash
+# 1) 从依赖包里取（和客户端构建用的是同一份）
+cp node_modules/denoise-voice-clarity/dist/wasm/denoise_voice_core_bg.wasm /tmp/dfn3.wasm
+
+# 2) 传到独立目录
+ssh root@5blong.site 'mkdir -p /var/www/5blong-models'
+scp /tmp/dfn3.wasm root@5blong.site:/var/www/5blong-models/denoise_voice_core_bg.wasm
+```
+
+nginx 的 `/models/` 段已经写在 `deploy/nginx.conf` 里（主域和 web 子域各一份），
+换文件后 `sudo nginx -t && sudo systemctl reload nginx` 即可。
+
+验证（两个域都要通，且必须是 `application/wasm` + 带 ACAO）：
+
+```bash
+curl -sI https://5blong.site/models/denoise_voice_core_bg.wasm | grep -iE "HTTP/|content-type|content-length|access-control"
+curl -sI https://web.5blong.site/models/denoise_voice_core_bg.wasm | grep -iE "HTTP/|content-type|content-length|access-control"
+```
+
+> 没有这个文件会怎样：下载对话框报 `HTTP 404`，用户点「暂不」或下载失败后，
+> 客户端自动降级到 RNNoise——能正常通话，只是降噪效果回到 1.9.22 之前。
+
+
 ### 5. 配 nginx + 证书
 
 ```bash

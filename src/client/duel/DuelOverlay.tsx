@@ -10,7 +10,7 @@
  * 视角：引擎实例的 mySide 决定「哪边是我的」，渲染全部走它，
  * 因此同一套 JSX 不用关心自己是房主还是访客。
  */
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { DuelGame, MANA_MAX, type DuelAction } from "./duel-engine";
 import {
@@ -18,6 +18,7 @@ import {
   type Minion, type Player, type Side, type Target,
 } from "./duel-cards";
 import type { DuelBridge, DuelSessionView } from "./duel-net";
+import { DuelIcon, DuelIconDefs } from "./duel-icons";
 import "./duel.css";
 
 interface Props {
@@ -29,10 +30,25 @@ interface Props {
   onExit: () => void;
 }
 
-interface Zone { left: number; top: number; width: number; height: number }
-
 const bold = (text: string) => text.replace(/(\d+)/g, "<b>$1</b>");
-const STEP_BY_COUNT: Record<number, number> = { 5: 90, 6: 78, 7: 66 };
+
+/**
+ * 手牌扇形步长（每张露出来的宽度）。
+ *
+ * 卡面 138 宽，桌子内区约 1130；超过 4 张就必须压叠，否则会顶到桌沿。
+ * 数值是按"标题至少露出 74px"倒推的：再小就只能看到卡边，认不出是哪张牌。
+ */
+const STEP_BY_COUNT: Record<number, number> = { 5: 146, 6: 140, 7: 134, 8: 130, 9: 120, 10: 108 };
+
+/** 扇形角度：以正中为 0，往两边逐渐倾斜；离中心越远，往下沉一点。 */
+function fanStyle(i: number, n: number): { "--rot": string; "--lift": string } {
+  const mid = (n - 1) / 2;
+  const d = i - mid;
+  const step = n <= 4 ? 1.4 : Math.max(0.9, 7 / Math.max(1, mid));
+  const rot = d * step;
+  const lift = Math.pow(Math.abs(d), 2) * (n <= 4 ? 2.2 : 1.6);
+  return { "--rot": `${rot.toFixed(2)}deg`, "--lift": `${lift.toFixed(1)}px` };
+}
 
 type Pending = { type: "card"; idx: number } | { type: "attack"; uid: number };
 
@@ -40,11 +56,18 @@ export function DuelOverlay({ session, myName, myAvatar, foeAvatar, bridge, onEx
   const isHost = session.role === "host";
   const gameRef = useRef<DuelGame | null>(null);
   const [, rerender] = useReducer((x: number) => x + 1, 0);
-  const [zones, setZones] = useState<{ me: Zone | null; foe: Zone | null }>({ me: null, foe: null });
   const [hover, setHover] = useState<{ id: string; x: number; y: number } | null>(null);
   /** 选中的牌/随从（guest 不写引擎 pending，两边统一用本地状态） */
   const [pending, setPending] = useState<Pending | null>(null);
   const [staleSchema, setStaleSchema] = useState(false);
+  /**
+   * 访客是否已经收到过第一份快照。
+   *
+   * 不能直接看 `session.state` 判"在同步"：服务端只在 version 变化时回传 state
+   * （没变化就置 null 省流量），所以第一份快照落地之后，后续每次轮询
+   * session.state 又变成 null，"正在同步牌局…"会一直糊在屏幕上（2026-11-04 实测）。
+   */
+  const [synced, setSynced] = useState(false);
   const appliedVersion = useRef(-1);
 
   if (!gameRef.current) {
@@ -56,6 +79,8 @@ export function DuelOverlay({ session, myName, myAvatar, foeAvatar, bridge, onEx
   /* ---------- host：跑引擎；guest：收快照 ---------- */
   useEffect(() => {
     if (!isHost) return;
+    // 结算态挂载（刷新后重连、对方先退）不要再开一局新的：只负责显示结果
+    if (session.phase === "over") return;
     g.onChange = () => {
       rerender();
       bridge.registerState(g.snapshot());
@@ -75,6 +100,7 @@ export function DuelOverlay({ session, myName, myAvatar, foeAvatar, bridge, onEx
         g.restore(session.state);
         g.mySide = 1; // 快照里是房主的 0，访客本地翻转视角
         rerender();
+        setSynced(true);
       } catch {
         // 快照结构和本端引擎版本不一致（一边没更新就进了房）：不渲染鬼状态
         setStaleSchema(true);
@@ -93,36 +119,16 @@ export function DuelOverlay({ session, myName, myAvatar, foeAvatar, bridge, onEx
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isHost, g, bridge]);
 
-  /* ---------- 把「英雄热区」贴到房间里真实的猪身上 ---------- */
-  const measureZones = useCallback(() => {
-    const slots = Array.from(document.querySelectorAll<HTMLElement>(".vx-pig-slot"));
-    if (!slots.length) {
-      setZones({ me: null, foe: null });
-      return;
-    }
-    const read = (el: HTMLElement): Zone => {
-      const r = el.getBoundingClientRect();
-      return { left: r.left - 8, top: r.top - 10, width: r.width + 16, height: r.height + 20 };
-    };
-    const label = (el: HTMLElement) => el.querySelector(".vx-pig-hit")?.getAttribute("aria-label") ?? "";
-    const mine = slots.find((el) => label(el).includes("（我）") || label(el).includes("你")) ?? slots[0];
-    const foeEl = slots.find((el) => el !== mine && label(el).includes(session.opponentName)) ?? slots[slots.length - 1];
-    const foeZone: Zone = slots.length >= 2
-      ? read(foeEl)
-      : { left: window.innerWidth - 150, top: window.innerHeight - 300, width: 112, height: 140 };
-    setZones({ me: read(mine), foe: foeZone });
-  }, [session.opponentName]);
-
-  useEffect(() => {
-    measureZones();
-    const t = window.setTimeout(measureZones, 600);
-    window.addEventListener("resize", measureZones);
-    return () => { window.clearTimeout(t); window.removeEventListener("resize", measureZones); };
-  }, [measureZones]);
+  /*
+   * 英雄热区（2026-11-04 改版）：
+   * 原来是把一块透明按钮贴在房间里真实的猪身上（读 .vx-pig-slot 的屏幕坐标）。
+   * 新界面是一张**不透明的牌桌**，猪被桌布盖住了，继续贴猪就成了"点空气也能打"。
+   * 现在直接把顶部两块英雄木牌做成热区：点对方的牌子＝打对方英雄，语义更直白。
+   */
 
   /* ---------- 交互（动作去向由角色决定） ---------- */
   const pv = g.mySide;
-  const waiting = !isHost && !session.state; // guest 第一份快照没到
+  const waiting = !isHost && !synced; // guest 第一份快照没到（收到过就不再闪回来）
 
   const onCardClick = (i: number) => {
     if (!g.isMyTurn()) return;
@@ -177,18 +183,26 @@ export function DuelOverlay({ session, myName, myAvatar, foeAvatar, bridge, onEx
 
   const manaPips = useMemo(() => Array.from({ length: MANA_MAX }, (_, i) => i), []);
 
-  const plate = (p: Player, mine: boolean) => (
-    <div className={`duel-plate${mine ? "" : " foe"}`}>
-      <div className="duel-avatar">
-        {(mine ? myAvatar : foeAvatar)
-          ? <img src={(mine ? myAvatar : foeAvatar)} alt="" draggable={false} />
-          : <span className="duel-avatar-fallback">{(mine ? myName : foeName).slice(0, 1)}</span>}
-      </div>
-      <div className="duel-pinfo">
-        <div className="duel-pname">{mine ? "我" : foeName}</div>
-        <div className="duel-hprow">
-          <div className="duel-hpbar"><i style={{ width: `${Math.max(0, (p.hp / p.maxHp) * 100)}%` }} /></div>
-          <b className={`duel-hpnum${p.hp <= 10 ? " low" : ""}`}>{Math.max(0, p.hp)}</b>
+  const plate = (p: Player, mine: boolean) => {
+    const side = (mine ? pv : (1 - pv)) as Side;
+    const targetable = g.isTargetable({ type: "hero", side }, pending);
+    return (
+      <button
+        type="button"
+        aria-label={mine ? "我" : foeName}
+        className={`duel-plate${mine ? "" : " foe"}${targetable ? " targetable" : ""}`}
+        onClick={() => { if (targetable) onTarget({ type: "hero", side }); }}
+      >
+        <div className="duel-avatar">
+          {(mine ? myAvatar : foeAvatar)
+            ? <img src={(mine ? myAvatar : foeAvatar)} alt="" draggable={false} />
+            : <span className="duel-avatar-fallback">{(mine ? myName : foeName).slice(0, 1)}</span>}
+        </div>
+        <div className="duel-pinfo">
+          <div className="duel-pname">{mine ? "我" : foeName}</div>
+          <div className="duel-hprow">
+            <div className="duel-hpbar"><i style={{ width: `${Math.max(0, (p.hp / p.maxHp) * 100)}%` }} /></div>
+            <b className={`duel-hpnum${p.hp <= 10 ? " low" : ""}`}>{Math.max(0, p.hp)}</b>
         </div>
         <div className="duel-mana">
           {manaPips.map((i) => (
@@ -197,8 +211,9 @@ export function DuelOverlay({ session, myName, myAvatar, foeAvatar, bridge, onEx
         </div>
         <div className="duel-psub">牌库 {p.deck.length} · 手牌 {p.hand.length}</div>
       </div>
-    </div>
-  );
+      </button>
+    );
+  };
 
   const minionCard = (m: Minion, mine: boolean) => {
     const c = CARD_DB[m.id];
@@ -217,8 +232,8 @@ export function DuelOverlay({ session, myName, myAvatar, foeAvatar, bridge, onEx
         style={{ ["--rar" as string]: RARITY_COLOR[c?.r ?? "n"] }}
         onClick={() => onMinionClick(m.uid)}
       >
+        <span className="duel-mini-icon"><DuelIcon type={c?.t} /></span>
         <span className="duel-mini-name">{m.name}</span>
-        <span className="duel-mini-icon">{m.icon}</span>
         <span className="duel-mini-atk">{m.atk}</span>
         <span className="duel-mini-hp">{m.hp}</span>
       </button>
@@ -238,22 +253,7 @@ export function DuelOverlay({ session, myName, myAvatar, foeAvatar, bridge, onEx
   );
 
   const n = me.hand.length;
-  const step = n <= 4 ? 106 : STEP_BY_COUNT[n] ?? 58;
-
-  const heroZone = (side: Side) => {
-    const z = side === pv ? zones.me : zones.foe;
-    const targetable = g.isTargetable({ type: "hero", side }, pending);
-    if (!z) return null;
-    return (
-      <button
-        type="button"
-        aria-label={side === pv ? "我" : foeName}
-        className={`duel-hero-zone${targetable ? " target" : ""}`}
-        style={{ left: z.left, top: z.top, width: z.width, height: z.height }}
-        onClick={() => { if (pending) onTarget({ type: "hero", side }); }}
-      />
-    );
-  };
+  const step = n <= 4 ? 152 : STEP_BY_COUNT[n] ?? 100;
 
   const hpDef = HERO_POWERS[pv];
   const hpReady = isMine && !me.heroPowerUsed && me.mana >= hpDef.cost;
@@ -280,6 +280,9 @@ export function DuelOverlay({ session, myName, myAvatar, foeAvatar, bridge, onEx
   return createPortal(
     <div className="duel-root">
       <div className="duel-dim" />
+      <DuelIconDefs />
+
+      <div className="duel-table">
 
       <header className="duel-hud">
         {plate(me, true)}
@@ -293,9 +296,6 @@ export function DuelOverlay({ session, myName, myAvatar, foeAvatar, bridge, onEx
         </div>
         {plate(foe, false)}
       </header>
-
-      {heroZone(pv)}
-      {heroZone((1 - pv) as Side)}
 
       <section className="duel-field">
         {lane(foe.board, false)}
@@ -326,9 +326,9 @@ export function DuelOverlay({ session, myName, myAvatar, foeAvatar, bridge, onEx
               style={{
                 ["--rar" as string]: RARITY_COLOR[c.r],
                 ["--type" as string]: TYPE_COLOR[c.t],
-                width: 100,
-                marginLeft: i === 0 ? 0 : step - 106,
-                zIndex: selected ? 61 : i + 1,
+                marginLeft: i === 0 ? 0 : step - 138,
+                zIndex: selected ? 71 : i + 1,
+                ...fanStyle(i, n),
               }}
               onClick={() => onCardClick(i)}
               onMouseEnter={(e) => {
@@ -338,6 +338,7 @@ export function DuelOverlay({ session, myName, myAvatar, foeAvatar, bridge, onEx
             >
               <span className="duel-cost">{c.cost}</span>
               <span className="duel-cname">{c.name}</span>
+              <span className="duel-ciocn"><DuelIcon type={c.t} /></span>
               <span className="duel-ctxt" dangerouslySetInnerHTML={{ __html: bold(c.txt) }} />
               <span className="duel-cfoot">
                 {c.kind === "minion" ? (
@@ -362,7 +363,7 @@ export function DuelOverlay({ session, myName, myAvatar, foeAvatar, bridge, onEx
         <button type="button" className="duel-btn ghost" onClick={onExit}>退出对局</button>
         <div className="duel-hint">
           {pending?.type === "card"
-            ? "点红色框住的目标（对方的猪可以点）"
+            ? "点金色框住的目标（对方的木牌或随从）"
             : pending?.type === "attack"
               ? "选攻击目标"
               : isMine ? "点手牌 → 点目标 · 点自己随从 → 点对方发起攻击" : "等对手操作…"}
@@ -384,6 +385,8 @@ export function DuelOverlay({ session, myName, myAvatar, foeAvatar, bridge, onEx
           结束回合
         </button>
       </footer>
+
+      </div>
 
       {hover ? (
         <div className="duel-tip" style={{ left: Math.max(12, Math.min(window.innerWidth - 236, hover.x - 112)), top: Math.max(12, hover.y - 170) }}>

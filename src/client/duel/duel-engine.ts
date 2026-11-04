@@ -248,7 +248,15 @@ export class DuelGame {
   }
 
   /* ---------------- 出牌 ---------------- */
-  isMyTurn() { return !this.over && !this.busy && this.cur === 0; }
+  /**
+   * 现在是不是「我」的回合。
+   *
+   * ⚠️ 这里必须比 `mySide`，不能写死 `cur === 0`：
+   * 房主机跑引擎时 mySide=0，写死 0 看起来没问题；但访客端 restore 快照后
+   * 把 mySide 翻成 1，`cur === 0` 就永远为 false —— 两边同时显示"对方出牌中"，
+   * 谁也点不动（2026-11-04 双窗口实测）。
+   */
+  isMyTurn() { return !this.over && !this.busy && this.cur === this.mySide; }
 
   canPlay(i: number, p: Player = this.me()): boolean {
     const c = CARD_DB[p.hand[i]];

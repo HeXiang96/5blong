@@ -15,6 +15,8 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { isDesktopRuntime } from "../runtime";
+import { loadIdentity } from "../voice/identity";
 import type { DuelAction, DuelSnapshot } from "./duel-engine";
 
 /* ------------------------------------------------------------------ */
@@ -75,7 +77,7 @@ interface InviteReq {
 }
 
 export interface DuelTransport {
-  invite(req: InviteReq): Promise<{ ok: boolean; gameId?: string; message?: string }>;
+  invite(req: InviteReq): Promise<{ ok: boolean; gameId?: string; message?: string; code?: string }>;
   poll(req: PollReq): Promise<PollRes>;
   leave(req: { clientId: string; gameId: string }): Promise<void>;
 }
@@ -86,40 +88,26 @@ const IDLE_MS = 15_000;
 /* clientId：本地随机生成，未登录也能玩                                 */
 /* ------------------------------------------------------------------ */
 
-const CLIENT_ID_KEY = "5blong.duel.clientId";
-
 /**
- * 本端身份。存 **sessionStorage（每个标签页独立）** 而不是 localStorage：
- * 同一台浏览器开两个标签页 = 两个客户端（本地测试就是这么做的），
- * 共享 localStorage 会让两边拿到同一个 id，访客会被识别成房主，
- * 邀请永远收不到。真实设备本来就各有一个浏览器，互不影响。
+ * 本端对局身份。
+ *
+ * ⚠️ 必须和房间成员卡里的 id 是**同一个值**：房主发邀请时带的 guestId 是
+ * 成员卡里的 personId（RoomView → onStartDuel → inviteTo），服务端按
+ * `guest_id = clientId` 找人。这里早先用的是 sessionStorage 里的随机串，
+ * 于是房主写进去的 guest_id 永远是对方不认识的号——**邀请发得出去，
+ * 对面一次也拉不到**（2026-11-04 双设备实测：网页端等待卡一直挂着，对方毫无反应）。
+ *
+ * 现在统一用本机 personId（10 位数字，正好满足服务端 ID_RE 的形状要求）。
+ * 副作用：同一个浏览器开两个标签页 = 同一个人（同一 personId），本地联调请用
+ * 「普通窗口 + 无痕窗口」或两台设备；`?local-duel` 仍走本地信箱，用于纯 UI 目检。
  */
 export function duelClientId(): string {
-  let id = "";
-  try {
-    id = sessionStorage.getItem(CLIENT_ID_KEY) ?? "";
-  } catch {
-    /* 隐私模式拿不到 sessionStorage：退化为会话内随机 */
-  }
-  if (!/^[0-9a-zA-Z_-]{8,64}$/.test(id)) {
-    id = crypto.randomUUID().replace(/-/g, "");
-    try {
-      sessionStorage.setItem(CLIENT_ID_KEY, id);
-    } catch {
-      /* 同上 */
-    }
-  }
-  return id;
+  return loadIdentity().personId;
 }
 
 /* ------------------------------------------------------------------ */
 /* Remote：ECS 上的 /api/duel/*                                        */
 /* ------------------------------------------------------------------ */
-
-function isDesktopRuntime(): boolean {
-  // 与账号层同一判据：桌面 WebView 里没有同源后端，直接打域名
-  return typeof navigator !== "undefined" && /tauri/i.test(navigator.userAgent);
-}
 
 function apiBase(): string {
   const override = import.meta.env["VITE_DUEL_API"] as string | undefined;
@@ -136,7 +124,15 @@ export class RemoteDuelTransport implements DuelTransport {
       body: JSON.stringify(req),
     });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) return { ok: false as const, message: data?.message ?? "发邀请失败了" };
+    if (!res.ok) {
+      /*
+       * 把服务端的错误码一起带回去：
+       *   busy        —— 我之前发过的邀请还挂在服务端（最久 30 分钟），
+       *                  inviteTo 会先把它清掉再重试一次，见下面的自愈逻辑。
+       *   self-invite —— 两个窗口是同一个 personId（同浏览器开的两个标签页）。
+       */
+      return { ok: false as const, message: data?.message ?? "发邀请失败了", code: data?.error as string | undefined };
+    }
     return { ok: true as const, gameId: data.gameId as string };
   }
 
@@ -190,7 +186,7 @@ interface LocalRow {
   updatedAt: number;
 }
 
-const INVITE_TTL = 3 * 60_000;
+const INVITE_TTL = 60_000;
 const SESSION_TTL = 30 * 60_000;
 const OVER_GRACE = 60_000;
 const STATE_MAX = 200_000;
@@ -244,7 +240,7 @@ export class LocalDuelTransport implements DuelTransport {
       const row = rows[id];
       const dead =
         row.updatedAt < alive ||
-        (row.phase === "invite" && now - row.updatedAt > INVITE_TTL) ||
+        (row.phase === "invite" && now - row.createdAt > INVITE_TTL) ||
         ((row.phase === "over" || row.phase === "cancelled") && now - row.updatedAt > OVER_GRACE);
       if (dead) delete rows[id];
     }
@@ -255,7 +251,7 @@ export class LocalDuelTransport implements DuelTransport {
         (row.phase === "invite" || row.phase === "playing") &&
         row.updatedAt > alive,
     );
-    if (busy) return { ok: false as const, message: "对方或你已经在另一局里了" };
+    if (busy) return { ok: false as const, message: "对方或你已经在另一局里了", code: "busy" };
 
     const row: LocalRow = {
       id: req.gameId,
@@ -306,7 +302,7 @@ export class LocalDuelTransport implements DuelTransport {
     if (row.phase === "over" && now - row.updatedAt > OVER_GRACE) {
       return { ok: true, session: null };
     }
-    if (row.phase === "invite" && now - row.updatedAt > INVITE_TTL) {
+    if (row.phase === "invite" && now - row.createdAt > INVITE_TTL) {
       row.phase = "cancelled";
       row.updatedAt = now;
       saveRows(rows);
@@ -320,8 +316,9 @@ export class LocalDuelTransport implements DuelTransport {
     if (req.cmd === "leave") {
       if (isHost) row.hostLeft = true;
       else row.guestLeft = true;
+      // 与服务端同口径：有人退出 = 这局结束，别把先退的人挡在下一局外面
       if (row.phase === "invite") row.phase = "cancelled";
-      else if (row.hostLeft && row.guestLeft) row.phase = "over";
+      else row.phase = "over";
     }
     if (isHost && row.phase !== "cancelled" && req.state) {
       const version = Number(req.version);
@@ -418,6 +415,15 @@ export function useDuel(room: string, myName: string): DuelBridge {
   const pendingRef = useRef<{ snap: DuelSnapshot; version: number } | null>(null);
   const pendingActionRef = useRef<DuelAction | null>(null);
   const ackRef = useRef(0);
+  /**
+   * 已经主动退出的对局 id。
+   *
+   * 退出时本地先清空，但**可能还有一轮请求在飞**：它回来时还带着刚才那局
+   * （服务端 over 会保留 60 秒），会把刚拆掉的牌桌又装回去——表现就是
+   * 「点了退出对局，桌子还在，要等一分钟才消失」（2026-11-04 业主反馈）。
+   * 这里记下 id，回包一律当没有对局处理。
+   */
+  const exitedRef = useRef<Set<string>>(new Set());
   const actionHandlerRef = useRef<((a: DuelAction, seq: number) => void) | null>(null);
   const tickRef = useRef<() => void>(() => {});
   const inflightRef = useRef(false);
@@ -485,7 +491,9 @@ export function useDuel(room: string, myName: string): DuelBridge {
       if (!alive) return;
 
       pendingActionRef.current = null; // 发过了（丢包靠下一动作覆盖，回合制可接受）
-      const next = res.session ?? null;
+      const raw = res.session ?? null;
+      // 已经主动退出的那局，回包当没有：否则会把刚拆掉的牌桌重新装回去
+      const next = raw && !exitedRef.current.has(raw.gameId) ? raw : null;
       const prev = sessionRef.current;
 
       if (next && next.role === "host" && req.state && next.version >= (req.version ?? 0)) {
@@ -496,8 +504,30 @@ export function useDuel(room: string, myName: string): DuelBridge {
         ackRef.current = next.actionSeq;
       }
 
-      if (next && next.phase === "invite" && next.role === "guest" && !prev) {
-        // 别人邀请我（只有当前没在局里才弹）
+      if (next && next.opponentLeft && next.phase === "playing") {
+        /*
+         * 对方退出了对局 → 这局对双方都已经不存在了。
+         *
+         * 本端**立刻跟着退**，别把这行留在 playing：服务端是先退的人不算结束
+         * （老逻辑要两个人都退才置 over），谁先退谁接下来 30 分钟都开不了新局。
+         * 现在两边都退 → 行立刻变 over，牌桌也随之销毁，只在房间里留一条提示。
+         */
+        exitedRef.current.add(next.gameId);
+        void transport.poll({ clientId, room: roomRef.current, gameId: next.gameId, cmd: "leave" });
+        applySession(null);
+        setInvite(null);
+        setNotice(`${next.opponentName} 退出了对局`);
+        timer = window.setTimeout(tick, 2500);
+        return;
+      }
+
+      if (next && next.phase === "invite" && next.role === "guest") {
+        /*
+         * 别人邀请我：弹窗必须**一直挂着**，直到我点接受/拒绝或邀请过期。
+         * 早先这里的条件是 `!prev`，于是第二圈轮询（2.5 秒后）就落进下面的
+         * else 分支把弹窗关掉了——表现就是"邀请闪一下就消失"，
+         * 房主那边还在等，访客这边已经什么看不到了（2026-11-04 双端实测）。
+         */
         setInvite({ gameId: next.gameId, hostName: next.opponentName });
         applySession(next);
       } else if (next) {
@@ -525,10 +555,48 @@ export function useDuel(room: string, myName: string): DuelBridge {
     };
 
     tickRef.current = () => void tick();
-    void tick();
+    /*
+     * 进房先自检：把「上一间房遗留的邀请/对局」收掉。
+     *
+     * 关页面、刷新、崩溃、直接换成另一个房号——这些情况客户端的清理不保证跑得到，
+     * 服务端那行就会一直挂着。到时候在新房间点「梗王对局」直接 409 busy，
+     * 表现成「点了按钮什么都不出来」（2026-11-04 业主反馈）。
+     * 这里用空房号问一次服务端「我身上还有没有局」，只收**别的房间**的，
+     * 同一间房里的正常对局不动。
+     */
+    void (async () => {
+      try {
+        const probe = await transport.poll({ clientId, room: "" });
+        const stale = probe.session;
+        if (
+          stale &&
+          stale.room &&
+          stale.room !== room &&
+          (stale.phase === "invite" || stale.phase === "playing")
+        ) {
+          await transport.poll({ clientId, room: "", gameId: stale.gameId, cmd: "leave" });
+        }
+      } catch {
+        /* 自检失败不影响正常轮询 */
+      }
+      if (alive) void tick();
+    })();
     return () => {
       alive = false;
       window.clearTimeout(timer);
+      /*
+       * 离开这间房（换房 / 回首页 / 房间被关 / 账号切换后重新进房）时，把这一局收掉。
+       * 以前这里只是停掉轮询，服务端那行还挂着——房主换房后再邀别人就被判 busy，
+       * 表现成「点梗王对局什么都不出来」（2026-11-04 业主反馈）。
+       * 邀请阶段也要收：对方看到的是「邀请已取消」，而不是一个永远不会开始的等待卡。
+       */
+      const cur = sessionRef.current;
+      if (cur && cur.phase !== "cancelled" && cur.phase !== "over") {
+        sessionRef.current = null;
+        setSession(null);
+        setInvite(null);
+        void transport.leave({ clientId, gameId: cur.gameId });
+      }
     };
   }, [room, clientId, transport, applySession]);
 
@@ -539,35 +607,91 @@ export function useDuel(room: string, myName: string): DuelBridge {
     return () => window.clearTimeout(t);
   }, [notice]);
 
-  // 卸载时还在局里 → 告知对方我退了（关页面 / 切房间）
+  // 卸载时还在局里 → 告知对方我退了（关页面 / 切房间 / 刷新）
   useEffect(() => {
-    return () => {
+    const bye = () => {
       const cur = sessionRef.current;
-      if (cur && cur.phase === "playing") {
+      // 邀请阶段也要收：否则关掉页面后那行邀请会一直挂在服务端，
+      // 把双方接下来 30 分钟内的新邀请全部顶成 409 busy（2026-11-04 实测）。
+      if (cur && (cur.phase === "playing" || cur.phase === "invite")) {
         void transport.leave({ clientId, gameId: cur.gameId });
       }
+    };
+    // pagehide 是关标签页/刷新时最后还能发请求的时机，React 的卸载清理在这时不保证执行
+    window.addEventListener("pagehide", bye);
+    return () => {
+      window.removeEventListener("pagehide", bye);
+      bye();
     };
   }, [clientId, transport]);
 
   const bridge = useMemo<DuelBridge>(() => {
+    /**
+     * 清掉「我自己遗留的邀请/对局」。
+     *
+     * 服务端 /invite 判忙时只看 host_id/guest_id 是否命中一条 invite/playing 的行，
+     * **不看房间、也不套 1 分钟有效期**——于是任何一次没被接受也没被取消的邀请，
+     * 都会让同一个人的下一次邀请直接 409 busy（最长 30 分钟）。房主这边表现就是
+     * 「点了梗王对局什么都不出来」，只在角落闪一条 4 秒提示。
+     *
+     * 服务端没有「列出我的对局」接口，但 /poll 的 room 传空串就等于不限房间
+     * （SQL 里是 `? = '' OR room_code = ?`），正好能把自己的残留行捞出来。
+     *
+     * 三种都算残留，全部收掉：
+     *   1. 还在 invite 阶段的（没人接受）；
+     *   2. 我已经点过「退出对局」的（exitedRef）；
+     *   3. 房号都不是当前这间的（换房/退房/房间没了）。
+     * 正在打、又确实在本房间的局不碰。
+     */
+    const clearStaleInvite = async (): Promise<boolean> => {
+      try {
+        const probe = await transport.poll({ clientId, room: "" });
+        const stale = probe.session;
+        if (!stale) return false;
+        const mineToClear =
+          stale.phase === "invite" ||
+          exitedRef.current.has(stale.gameId) ||
+          (!!stale.room && stale.room !== roomRef.current);
+        if (!mineToClear) return false;
+        await transport.poll({ clientId, room: "", gameId: stale.gameId, cmd: "leave" });
+        return true;
+      } catch {
+        return false;
+      }
+    };
+
     const inviteTo = async (member: DuelMember) => {
-      const gameId = crypto.randomUUID().replace(/-/g, "");
-      const res = await transport
-        .invite({
-          clientId,
-          gameId,
-          room: roomRef.current,
-          guestId: member.id,
-          guestName: member.name,
-          hostName: nameRef.current,
-        })
-        .catch(() => ({ ok: false as const, message: "网络不给力，稍后再试" }));
+      const send = () => {
+        const gameId = crypto.randomUUID().replace(/-/g, "");
+        return transport
+          .invite({
+            clientId,
+            gameId,
+            room: roomRef.current,
+            guestId: member.id,
+            guestName: member.name,
+            hostName: nameRef.current,
+          })
+          .catch(() => ({ ok: false as const, message: "网络不给力，稍后再试", code: "network" }));
+      };
+
+      let res = await send();
+      if (!res.ok && res.code === "busy") {
+        // 先把上一次没收尾的邀请清掉，再重试一次——用户什么都不用做
+        if (await clearStaleInvite()) res = await send();
+      }
       if (!res.ok) {
-        setNotice(res.message ?? "发邀请失败了");
+        setNotice(
+          res.code === "self-invite"
+            ? "这两个窗口是同一个人（同一浏览器），换个无痕窗口或另一台设备再试"
+            : res.code === "busy"
+              ? "上一局的邀请还挂着，过 1 分钟再试；或让对方点一次拒绝"
+              : res.message ?? "发邀请失败了",
+        );
         return;
       }
       applySession({
-        gameId: res.gameId ?? gameId,
+        gameId: res.gameId ?? crypto.randomUUID().replace(/-/g, ""),
         room: roomRef.current,
         role: "host",
         phase: "invite",
@@ -589,11 +713,27 @@ export function useDuel(room: string, myName: string): DuelBridge {
       inviteTo,
       accept() {
         const cur = sessionRef.current;
-        if (cur) applySession({ ...cur, phase: "playing" }); // 下轮 poll 拿权威状态
+        if (!cur) return;
+        /*
+         * 必须真的把「接受」告诉服务端（cmd=accept）。
+         * 早先这里只改本地 phase：服务端那行永远停在 invite，房主也就永远
+         * 等不到开局——两个人都卡在「等对方接受」。
+         */
+        void transport
+          .poll({ clientId, room: roomRef.current, gameId: cur.gameId, cmd: "accept" })
+          .then((res) => {
+            if (res.session) applySession(res.session);
+          })
+          .catch(() => {
+            /* 拉不到就让轮询循环再去拉，别让接受按钮卡死 */
+          });
+        setInvite(null);
+        applySession({ ...cur, phase: "playing" }); // 先让本端进对局，随后以服务端快照为准
       },
       decline() {
         const cur = sessionRef.current;
         if (cur) {
+          exitedRef.current.add(cur.gameId);
           void transport.poll({ clientId, room: roomRef.current, gameId: cur.gameId, cmd: "decline" });
         }
         applySession(null);
@@ -602,6 +742,8 @@ export function useDuel(room: string, myName: string): DuelBridge {
       leave() {
         const cur = sessionRef.current;
         if (!cur) return;
+        // 记下来：这局之后任何回包都不许再把牌桌装回去
+        exitedRef.current.add(cur.gameId);
         void transport.leave({ clientId, gameId: cur.gameId });
         applySession(null);
         setInvite(null);
