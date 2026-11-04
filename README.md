@@ -1239,17 +1239,20 @@ npm run feedback:admin list 20   # 终端查看最近反馈（url / list / rm �
 
 ---
 
+
+
 <!-- AUTO-LOG:START -->
 ### 近期提交（自动生成）
 
+- `4d8690e` release: v1.9.26（11-04 18:52）
+- `932db36` docs: 梗王对局上线收尾交接（推送 1.9.25 + 双设备验收清单）（11-04 15:40）
+- `73a7b7b` release: v1.9.25（11-04 15:18）
+- `68b1cf7` fix: 对局轮询非 200 抛错并提示连接状态（等待层不再无声消失）（11-04 15:18）
+- `b2e50e7` docs: README 增加发版必检清单（server 不在 CI 里，1.9.24 /api/duel 404 事故记录）（11-04 14:52）
 - `dc3e7bd` release: v1.9.24（11-04 14:19）
 - `717010c` feat: 成员客户端版本上报后台（hello 带 version → 名册 → 遥测）（11-04 11:35）
 - `993e6e2` chore: sync-desktop 维护稳定下载别名 5blong_latest_x64-setup.exe（介绍页按钮依赖）（11-04 11:29）
 - `3abad4e` chore: 强制更新闸门提到 1.9.22 + 同步脚本 minimum 只升不降（11-04 11:25）
-- `bbe4359` docs: README 补充衰减限幅 24dB 定参依据与 RTT 采样修复（11-04 11:13）
-- `096d636` fix: 降噪衰减限幅定为 24dB（实测无限制会误伤人声 50dB+）+ 模型四角度闸门测试（11-04 11:10）
-- `04ebc41` feat: AI 智能降噪升级 DeepFilterNet3 + README 记录 1.9.22/1.9.23 修复（11-04 10:56）
-- `ab3558a` release: v1.9.23（11-04 10:04）
 <!-- AUTO-LOG:END -->
 
 ## 怎么用
