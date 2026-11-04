@@ -5582,7 +5582,20 @@ export class VoiceMesh {
       try {
         const micTrack = this.localStream.getAudioTracks()[0];
         if (!micTrack) throw new Error("麦克风轨道不存在");
-        const handle = await createDenoisedTrack(micTrack, { enabled: true, presenceGainDb: 0 }, ctx);
+        const handle = await createDenoisedTrack(
+          micTrack,
+          {
+            enabled: true,
+            presenceGainDb: 0, // EQ 提亮交给我们的增益/压限链，不二次处理
+            /*
+             * 衰减限幅 24dB（2026-11-04 实测定参）：无限制（100）时模型一旦
+             * 误判会把人声压掉 50dB+（合成信号实测）。24dB = 稳态噪声/键盘
+             * 脉冲可压 18~20dB，人声最坏只损 2dB——官方推荐区间内最平衡的值。
+             */
+            attenuationLimitDb: 24,
+          },
+          ctx,
+        );
         const processed = ctx.createMediaStreamSource(handle.stream);
         this.denoiseHandle = handle;
         this.nsSourceNode = processed;

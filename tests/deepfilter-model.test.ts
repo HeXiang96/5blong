@@ -33,10 +33,13 @@ function suppressionDb(inputRms: number, outputRms: number): number {
   return 20 * Math.log10(inputRms / Math.max(outputRms, 1e-9));
 }
 
-function createEngine(): VoiceClarityWasm {
+function createEngine(attenLim = 24): VoiceClarityWasm {
   const bytes = readFileSync(WASM_PATH);
   initSync(new Uint8Array(bytes.buffer.slice(bytes.byteOffset) as ArrayBuffer));
-  return new VoiceClarityWasm();
+  const eng = new VoiceClarityWasm();
+  // 与引擎一致的安全限幅：无限制时模型误判会把人声压掉 50dB+（实测）
+  eng.set_attenuation_limit_db(attenLim);
+  return eng;
 }
 
 describe("DeepFilterNet3 模型实测（真 wasm，非 mock）", () => {
@@ -95,9 +98,85 @@ describe("DeepFilterNet3 模型实测（真 wasm，非 mock）", () => {
     const voiceSup = suppressionDb(vi / vn, vo / vn);
     console.log(`[实测] 人声样信号损耗：${voiceSup.toFixed(1)} dB（越小越保真）`);
 
-    expect(noiseSup).toBeGreaterThan(15); // 稳态噪声：至少压掉 15 dB（首轮实测 25.8）
-    expect(voiceSup).toBeLessThan(3); // 人声：损耗必须小（首轮实测 1.5）
+    expect(noiseSup).toBeGreaterThan(15); // 稳态噪声：至少压掉 15 dB（实测 19.5 @ 限幅24）
+    expect(voiceSup).toBeLessThan(3); // 人声：损耗必须小（实测 2.0）
     expect(noiseSup - voiceSup).toBeGreaterThan(10); // 降噪与保真的对比度
+    eng.free();
+  }, 60_000);
+
+  it("键盘样瞬态脉冲被抑制（>10dB，实测 18.4）", () => {
+    const eng = createEngine();
+    const L = eng.frame_size;
+    let ti = 0;
+    let to = 0;
+    let n = 0;
+    for (let f = 0; f < 200; f++) {
+      const frame = new Float32Array(L);
+      for (let i = 0; i < L; i++) {
+        const pos = f * L + i;
+        frame[i] = pos % 2400 < 144 ? Math.sin(pos * 0.7) * 0.5 : 0;
+      }
+      const before = rms(frame);
+      eng.process(frame);
+      if (f >= 100) {
+        ti += before;
+        to += rms(frame);
+        n += 1;
+      }
+    }
+    const sup = suppressionDb(ti / n, to / n);
+    console.log(`[实测] 键盘样瞬态抑制：${sup.toFixed(1)} dB`);
+    expect(sup).toBeGreaterThan(10);
+    eng.free();
+  }, 60_000);
+
+  it("类真实语音 + 稳态噪声混合：分段信噪比改善 >6dB（实测 9.5）", () => {
+    const eng = createEngine();
+    const L = eng.frame_size;
+    const speechGen = (p: number) => {
+      const period = 0.65 * 48000;
+      const ph = p % period;
+      const env = ph < 0.4 * 48000 ? Math.sin((Math.PI * ph) / (0.4 * 48000)) : 0;
+      return (
+        env *
+        (0.3 * Math.sin((2 * Math.PI * 160 * p) / 48000) +
+          0.2 * Math.sin((2 * Math.PI * 320 * p) / 48000) +
+          0.12 * Math.sin((2 * Math.PI * 480 * p) / 48000))
+      );
+    };
+    const sIn: number[] = [];
+    const sOut: number[] = [];
+    const nIn: number[] = [];
+    const nOut: number[] = [];
+    for (let f = 0; f < 400; f++) {
+      const speaking = (f * L) % (0.65 * 48000) < 0.4 * 48000;
+      const frame = new Float32Array(L);
+      for (let i = 0; i < L; i++) frame[i] = speechGen(f * L + i) + (Math.random() * 2 - 1) * 0.05;
+      const before = rms(frame);
+      eng.process(frame);
+      if (f >= 100) {
+        (speaking ? sIn : nIn).push(before);
+        (speaking ? sOut : nOut).push(rms(frame));
+      }
+    }
+    const avg = (x: number[]) => x.reduce((s, v) => s + v, 0) / x.length;
+    const snrBefore = suppressionDb(avg(sIn), avg(nIn));
+    const snrAfter = suppressionDb(avg(sOut), avg(nOut));
+    const gain = snrAfter - snrBefore;
+    console.log(`[实测] 语音+噪声混合信噪比：${snrBefore.toFixed(1)}dB → ${snrAfter.toFixed(1)}dB（改善 ${gain.toFixed(1)}dB）`);
+    expect(gain).toBeGreaterThan(6);
+    eng.free();
+  }, 60_000);
+
+  it("纯静音输入输出也是静音（不注入底噪）", () => {
+    const eng = createEngine();
+    const L = eng.frame_size;
+    for (let f = 0; f < 100; f++) eng.process(new Float32Array(L));
+    const out = new Float32Array(L);
+    eng.process(out);
+    let peak = 0;
+    for (const v of out) peak = Math.max(peak, Math.abs(v));
+    expect(peak).toBeLessThan(1e-4);
     eng.free();
   }, 60_000);
 });

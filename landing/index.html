@@ -166,25 +166,28 @@
   .step h3 { font-size: 19px; margin: 0 0 8px; letter-spacing: -.01em; }
   .step p { margin: 0; color: var(--ink-2); font-size: 14.5px; }
 
-  /* ---------------------------------------------------------------- 能做的事（深色夜话） */
-  .dark-band { background: #241d12; }
-  .dark-band .sec-head h2 { color: #f3ede2; }
-  .dark-band .sec-head p { color: #a89a86; }
+  /* ---------------------------------------------------------------- 能做的事 */
+  /* 底色与全页完全一致（业主 2026-11-04：任何色块差异都不要，统一优先）。
+     区块节奏只靠卡片本身的边框与留白，不加底色。 */
+  .band-soft { background: var(--bg); }
   .features { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
   @media (max-width: 1000px) { .features { grid-template-columns: repeat(2, 1fr); } }
   @media (max-width: 560px) { .features { grid-template-columns: 1fr; } }
   .feat {
-    background: rgba(255, 253, 248, .055); border: 1px solid rgba(255, 253, 248, .12);
+    background: var(--card); border: 1px solid var(--line);
     border-radius: 14px; padding: 20px 20px 22px;
-    transition: background .18s ease, transform .18s ease;
+    transition: border-color .18s ease, transform .18s ease, box-shadow .18s ease;
   }
-  .feat:hover { background: rgba(255, 253, 248, .09); transform: translateY(-2px); }
+  .feat:hover {
+    border-color: #d9c6a6; transform: translateY(-2px);
+    box-shadow: 0 8px 20px rgba(113, 80, 41, .08);
+  }
   .feat h3 {
-    margin: 0 0 7px; font-size: 15.5px; letter-spacing: -.01em; color: #f3ede2;
+    margin: 0 0 7px; font-size: 15.5px; letter-spacing: -.01em; color: var(--ink);
     display: flex; align-items: center; gap: 9px;
   }
-  .feat h3 svg { color: #f0a04b; flex: 0 0 auto; }
-  .feat p { margin: 0; font-size: 13.5px; color: #b3a692; line-height: 1.6; }
+  .feat h3 svg { color: var(--brand); flex: 0 0 auto; }
+  .feat p { margin: 0; font-size: 13.5px; color: var(--ink-2); line-height: 1.6; }
 
   /* ---------------------------------------------------------------- 平台 */
   .platforms { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
@@ -282,7 +285,7 @@
         <p>一间房，一个链接，和你朋友。这就是全部界面。</p>
       </div>
       <figure class="peek">
-        <img src="/anime-hero.png" alt="5blong 房间插画：开个语音房，把链接丢给朋友" loading="lazy">
+        <img src="/anime-hero.webp" alt="5blong 房间插画：开个语音房，把链接丢给朋友" loading="lazy">
         <figcaption>开房、输码、发链接，都在这一屏——朋友点开链接就进来了。</figcaption>
       </figure>
     </div>
@@ -314,21 +317,19 @@
     </div>
   </section>
 
-  <section id="features" style="padding-top: 8px;">
+  <section id="features" class="band-soft" style="padding: 64px 0;">
     <div class="wrap">
       <div class="sec-head">
         <h2>能做的事</h2>
         <p>不多，但都是天天会用的。</p>
       </div>
       <div class="features">
-        <article class="feat"><h3>语音</h3><p>64kbps 起步，自动降噪。谁在说话，头像会亮。</p></article>
-        <article class="feat"><h3>共享屏幕</h3><p>一起看电影、看游戏。人少走直连，人多自动换转发。</p></article>
-        <article class="feat"><h3>开黑圈</h3><p>5v5 分队，队内语音分开，对面听不到你们。</p></article>
-        <article class="feat"><h3>好友</h3><p>看谁在线、在哪个房，一键把人叫过来。</p></article>
-        <article class="feat"><h3>私密房</h3><p>房号配临时密码。换密码不踢人，关掉就只剩链接能进。</p></article>
-        <article class="feat"><h3>主题</h3><p>雪原、万圣夜、春节，早晚还各有一套配色。</p></article>
-        <article class="feat"><h3>猪圈</h3><p>点一下有反应，还能喂。待久了会自己走动。</p></article>
-        <article class="feat"><h3>今晚小结</h3><p>离开时告诉你聊了多久、几个人、开了几轮麦。</p></article>
+        <article class="feat"><h3><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3"/></svg>语音</h3><p>64kbps 起步，自动降噪。谁在说话，头像会亮。</p></article>
+        <article class="feat"><h3><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M9 20h6"/><path d="M12 16v4"/></svg>共享屏幕</h3><p>一起看电影、看游戏。人少走直连，人多自动换转发。</p></article>
+        <article class="feat"><h3><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9h4M8 7v4"/><path d="M15 10h.01"/><path d="M17.5 8.5h.01"/><path d="M17.8 4H6.2a4.2 4.2 0 0 0-4.15 5L3 16a2.4 2.4 0 0 0 4.2 1.6L9.4 15h5.2l2.2 2.6A2.4 2.4 0 0 0 21 16l.95-7a4.2 4.2 0 0 0-4.15-5Z"/></svg>开黑圈</h3><p>5v5 分队，队内语音分开，对面听不到你们。</p></article>
+        <article class="feat"><h3><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 20a5.5 5.5 0 0 1 11 0"/><circle cx="17" cy="9" r="2.6"/><path d="M16 14.5c2.8.3 4.7 2 5 5.5"/></svg>好友</h3><p>看谁在线、在哪个房，一键把人叫过来。</p></article>
+        <article class="feat"><h3><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/><circle cx="12" cy="15" r="1.4"/></svg>私密房</h3><p>房号配临时密码。换密码不踢人，关掉就只剩链接能进。</p></article>
+        <article class="feat"><h3><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 13.5A8.5 8.5 0 1 1 10.5 4a6.8 6.8 0 0 0 9.5 9.5Z"/></svg>今晚小结</h3><p>离开时告诉你聊了多久、几个人、开了几轮麦。</p></article>
       </div>
     </div>
   </section>
@@ -344,14 +345,14 @@
           <h3>Windows <span class="tag">推荐</span></h3>
           <p>免管理员安装，托盘常驻，一键把电脑里的声音也分享出来。</p>
           <div class="act">
-            <a class="btn btn-ghost btn-sm" href="/desktop/5blong_latest_x64-setup.exe" data-latest>下载安装包</a>
+            <a class="btn btn-primary btn-sm" href="/desktop/5blong_latest_x64-setup.exe" data-latest>下载安装包</a>
             <a class="dl-alt" href="/desktop/5blong_latest_x64-setup.exe" data-latest-alt>下载慢？换直连</a>
           </div>
         </article>
         <article class="plat">
           <h3>网页版 <span class="tag">无需安装</span></h3>
           <p>浏览器直接开房、进房。手机浏览器也能听、能说。</p>
-          <div class="act"><a class="btn btn-primary btn-sm" href="https://web.5blong.site/">进入网页版</a></div>
+          <div class="act"><a class="btn btn-ghost btn-sm" href="https://web.5blong.site/">开个房 →</a></div>
         </article>
         <article class="plat off">
           <h3>Android <span class="tag soon">即将上线</span></h3>
@@ -393,7 +394,7 @@
           <h2>现在就开一间。</h2>
           <p>不用注册，不用安装。复制链接就能叫人。</p>
         </div>
-        <a class="btn btn-primary" href="https://web.5blong.site/">使用网页版 →</a>
+        <a class="btn btn-primary" href="https://web.5blong.site/">开个房 →</a>
       </div>
     </div>
   </section>
@@ -403,6 +404,10 @@
   <div class="wrap foot">
     <div>© 2026 5blong · 低延迟语音房 <span class="ver" data-version></span></div>
     <div>
+      <a href="https://web.5blong.site/">网页版</a>
+      <span style="opacity:.4;margin:0 10px;">/</span>
+      <a href="#faq">常见问题</a>
+      <span style="opacity:.4;margin:0 10px;">/</span>
       <a href="https://github.com/HeXiang96/5blong" target="_blank" rel="noopener">开源仓库</a>
       <span style="opacity:.4;margin:0 10px;">/</span>
       <a href="/desktop/latest.json" target="_blank" rel="noopener">更新日志</a>
