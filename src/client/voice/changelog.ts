@@ -20,6 +20,15 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.9.23",
+    date: "2026-11-04",
+    lines: [
+      "AI 智能降噪升级新一代模型",
+      "键盘声、零食袋声这类杂音明显减弱",
+      "进房自动加载，无需任何设置",
+    ],
+  },
+  {
     version: "1.9.22",
     date: "2026-11-04",
     lines: [

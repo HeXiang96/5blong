@@ -1,6 +1,6 @@
 {
   "name": "5blong",
-  "version": "1.9.22",
+  "version": "1.9.23",
   "private": true,
   "type": "module",
   "license": "MIT",
@@ -33,6 +33,7 @@
     "accounts:setup": "node scripts/accounts-setup.mjs"
   },
   "dependencies": {
+    "@lofcz/deepfilternet-web": "^0.1.0",
     "@sapphi-red/web-noise-suppressor": "^0.4.1",
     "@tauri-apps/api": "^2.12.3",
     "lucide-react": "^1.55.0",

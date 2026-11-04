@@ -1,6 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { preloadRnnoise } from "./engine";
+import { preloadDeepFilter } from "./ns-deepfilter";
 import { shouldShowOnboarding } from "./onboarding";
 import { hostPeerIdForCode, isJoinInFlight, makeRoomCode, randomIndex } from "./protocol";
 import { ensureRoomKey, migrateRoomKey, normalizeFixedRoomCode } from "./my-room";
@@ -476,11 +477,15 @@ export function App() {
   const closeGamePrompt = useCallback(() => setGamePrompt(null), []);
 
   /*
-   * 打开页面就预热 AI 降噪（RNNoise）的 wasm/worklet 资源：
-   * 不需要麦克风权限，进房开启智能降噪时秒生效。
+   * 打开页面就预热 AI 降噪的模型资源：
+   * - DeepFilterNet3（主力，~13MB 压缩）：后台拉进 HTTP 缓存，进房即秒生效，
+   *   用户不用管任何开关——降噪默认开启，这是默认体验的一部分（2026-11-04）；
+   * - RNNoise（兜底，~300KB）：加载失败时的退路，一并预热。
+   * 都不占麦克风权限，也不阻塞页面。
    */
   useEffect(() => {
     preloadRnnoise();
+    preloadDeepFilter();
   }, []);
 
   /*

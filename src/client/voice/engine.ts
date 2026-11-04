@@ -1,6 +1,7 @@
 import { Peer } from "peerjs";
 import type { DataConnection, MediaConnection } from "peerjs";
 import { RnnoiseWorkletNode, loadRnnoise } from "@sapphi-red/web-noise-suppressor";
+import { createDeepFilterNode } from "./ns-deepfilter";
 // RNNoise 的 worklet 脚本与 wasm（Vite 以 ?url 产出带哈希的静态资源）。
 import rnnoiseWorkletUrl from "@sapphi-red/web-noise-suppressor/rnnoiseWorklet.js?url";
 import rnnoiseWasmUrl from "@sapphi-red/web-noise-suppressor/rnnoise.wasm?url";
@@ -1227,7 +1228,15 @@ export class VoiceMesh {
         stat.peerId = member.id;
       }
       if (!member.local) {
-        const pc = this.calls.get(member.id)?.peerConnection ?? null;
+        /*
+         * RTT 采样要看两条路：PeerJS 呼叫腿（calls）和自建协商腿（dcLinks）。
+         * 房主↔访客的媒体现在走自建协商，只看 calls 的话这些成员的 RTT
+         * 会永远是"采样中"（2026-11-04 房 078306 实测）。
+         */
+        const pc =
+          this.calls.get(member.id)?.peerConnection ??
+          this.dcLinks.get(member.id)?.peerConnection ??
+          null;
         if (pc) {
           try {
             const stats = await pc.getStats();
@@ -5556,22 +5565,45 @@ export class VoiceMesh {
     this.micLimiterNode = limiter;
     this.outDestNode = dest;
 
+    /*
+     * AI 降噪三级降级（2026-11-04 起主力换 DeepFilterNet3）：
+     *   DFN3（新模型，键盘/薯片袋这类瞬态噪声抑制强）→
+     *   RNNoise（老模型，稳态噪声兜底）→
+     *   直通（都不行也别挡通话）。
+     * DFN3 的 wasm 有 34MB，懒加载：走到这一步才下载，失败自动退一级。
+     */
     if (settings.processing.noiseSuppression) {
+      let connected = false;
       try {
-        await ctx.audioWorklet.addModule(rnnoiseWorkletUrl);
-        const wasmBinary = await loadRnnoise({
-          url: rnnoiseWasmUrl,
-          simdUrl: rnnoiseSimdWasmUrl,
-        });
-        const ns = new RnnoiseWorkletNode(ctx, { maxChannels: 1, wasmBinary });
+        const ns = await createDeepFilterNode(ctx);
         this.nsNode = ns;
         this.nsEnabled = true;
         source.connect(ns);
         ns.connect(gain);
+        connected = true;
       } catch {
-        // worklet/wasm 不可用：降级直通（native NS 已在 openMic 关闭）。
-        this.nsEnabled = false;
-        source.connect(gain);
+        this.nsNode = null;
+      }
+      if (!connected) {
+        try {
+          await ctx.audioWorklet.addModule(rnnoiseWorkletUrl);
+          const wasmBinary = await loadRnnoise({
+            url: rnnoiseWasmUrl,
+            simdUrl: rnnoiseSimdWasmUrl,
+          });
+          const ns = new RnnoiseWorkletNode(ctx, { maxChannels: 1, wasmBinary });
+          this.nsNode = ns;
+          this.nsEnabled = true;
+          source.connect(ns);
+          ns.connect(gain);
+          connected = true;
+          this.pushRoomEvent("info", "AI 降噪用的是兜底模型（DeepFilterNet 加载失败）");
+        } catch {
+          // worklet/wasm 不可用：降级直通（native NS 已在 openMic 关闭）。
+          this.nsNode = null;
+          this.nsEnabled = false;
+          source.connect(gain);
+        }
       }
     } else {
       this.nsEnabled = false;
@@ -5657,11 +5689,28 @@ export class VoiceMesh {
       return true;
     }
 
+    // 同样的三级降级：DFN3 → RNNoise → 失败（保持现状由 UI 提示）
+    try {
+      const ns = await createDeepFilterNode(ctx);
+      try {
+        source.disconnect(gain);
+      } catch {
+        /* noop */
+      }
+      this.nsNode?.disconnect();
+      this.nsNode = ns;
+      source.connect(ns);
+      ns.connect(gain);
+      this.nsEnabled = true;
+      return true;
+    } catch {
+      /* DFN3 不可用：退 RNNoise */
+    }
     try {
       await ctx.audioWorklet.addModule(rnnoiseWorkletUrl);
       const wasmBinary = await loadRnnoise({
         url: rnnoiseWasmUrl,
-        simdUrl:rnnoiseSimdWasmUrl,
+        simdUrl: rnnoiseSimdWasmUrl,
       });
       const ns = new RnnoiseWorkletNode(ctx, { maxChannels: 1, wasmBinary });
       try {
@@ -5674,6 +5723,7 @@ export class VoiceMesh {
       source.connect(ns);
       ns.connect(gain);
       this.nsEnabled = true;
+      this.pushRoomEvent("info", "AI 降噪用的是兜底模型（DeepFilterNet 加载失败）");
       return true;
     } catch {
       return false;

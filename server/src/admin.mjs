@@ -726,17 +726,23 @@ ${list}`;
               .bind(r.id)
               .all().results;
             /*
-             * 同一个人可能出现多行：重进房后 peer id 变了，member_key 跟着变
-             * （旧版本快照还曾用 peerId 当离开成员的 key，一人两行）。
-             * 在线卡片只看"现在谁在房"：按人去重，保留最新一行（2026-11-04）。
+             * 历史行折叠：同一个人重进会有多行（member_key 跟着 peer id 变），
+             * 已离开的旧行按人只保留最新一条。**在房的人各自一行**——
+             * 两个成员可能同名（一人双设备/撞昵称），按昵称去重会把活人合并掉。
              */
-            const latest = new Map();
+            const history = new Map();
+            const members = [];
             for (const m of rowsRaw) {
+              if (!m.left_at) {
+                members.push(m);
+                continue;
+              }
               const k = m.name || m.member_key || m.id;
-              const prev = latest.get(k);
-              if (!prev || String(m.joined_at) >= String(prev.joined_at)) latest.set(k, m);
+              const prev = history.get(k);
+              if (!prev || String(m.joined_at) >= String(prev.joined_at)) history.set(k, m);
             }
-            const members = [...latest.values()];
+            members.push(...history.values());
+            members.sort((a, b) => String(a.joined_at).localeCompare(String(b.joined_at)));
             const rows =
               members
                 .map((m) => {
