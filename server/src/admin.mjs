@@ -759,6 +759,7 @@ ${list}`;
   <td class="num">${escapeHtml(fmtIso(m.joined_at))}</td>
   <td class="num">${escapeHtml(rtt)}</td>
   <td>${escapeHtml(linkText)}</td>
+  <td class="num">${escapeHtml(m.version || "—")}</td>
   <td class="dim">丢包 ${Number(m.loss_pct ?? 0).toFixed(1)}% · 重连 ${m.reconnects ?? 0} · 说话 ${escapeHtml(fmtDuration(m.speaking_s ?? 0))}</td>
 </tr>`;
                 })
@@ -772,7 +773,7 @@ ${list}`;
     <span class="chev">▶</span>
   </summary>
   <div class="room-body">
-    <table><thead><tr><th>成员</th><th>状态</th><th>加入</th><th>延迟(RTT)</th><th>接入</th><th>其它</th></tr></thead><tbody>${rows}</tbody></table>
+    <table><thead><tr><th>成员</th><th>状态</th><th>加入</th><th>延迟(RTT)</th><th>接入</th><th>版本</th><th>其它</th></tr></thead><tbody>${rows}</tbody></table>
   </div>
 </details>`;
           })

@@ -276,6 +276,11 @@ export interface Member {
    * **不参与任何进房或权限判断**。
    */
   accountId?: string;
+  /**
+   * 对方的客户端版本号（2026-11-04 起由 hello 上报）。
+   * 只用于后台档案展示与排障；旧客户端不发 = 空（后台显示 —）。
+   */
+  version?: string;
 }
 
 export interface ChatMessage {
@@ -1214,12 +1219,16 @@ export class VoiceMesh {
           link: member.local ? "self" : "connecting", reconnects: 0, speakingS: 0,
           runtime: isTauriRuntime() ? "client" : "web",
           /*
-           * 版本只报**自己的**：别人的版本我们其实不知道（hello 里没带），
-           * 以前一律填 latestChangelog()，等于把房主自己的版本号安到每个成员头上。
+           * 版本：自己的用 currentVersion()；别人用 hello 上报的（2026-11-04 起）。
+           * 旧客户端不发 version → 空串（后台显示 —），不能猜、更不能填房主的版本。
            */
-          version: member.local ? currentVersion() : "",
+          version: member.local ? currentVersion() : (member.version ?? ""),
         };
         t.members.set(key, stat);
+      }
+      // 版本后到也算数（旧客户端升级后重连 / 名册重播补上）
+      if (!member.local && member.version && stat.version !== member.version) {
+        stat.version = member.version;
       }
       stat.name = member.name;
       /*
@@ -2091,6 +2100,8 @@ export class VoiceMesh {
       // AV1 硬解能力：共享者据此做双端判断（缺省 = 不支持）
       ...(message.av1Decode === true ? { av1Decode: true } : {}),
       ...(message.dev ? { dev: message.dev } : {}),
+      // 客户端版本：后台档案的"版本"列靠它（2026-11-04 起 hello 上报）
+      ...(message.version ? { version: message.version } : {}),
     };
     this.guests.set(peerId, {
       conn,
@@ -2331,6 +2342,8 @@ export class VoiceMesh {
       av1Decode: member.av1Decode === true,
       ...(member.dev ? { dev: member.dev } : {}),
       ...(member.accountId ? { accountId: member.accountId } : {}),
+      // 版本号随名册广播：后台档案的"版本"列靠它（房主汇总时读这个）
+      ...(member.version ? { version: member.version } : {}),
     }));
   }
 
@@ -3006,6 +3019,8 @@ export class VoiceMesh {
       muted: this.me.muted,
       ...(this.myAv1Decode ? { av1Decode: true } : {}),
       ...(this.myDev ? { dev: this.myDev } : {}),
+      // 客户端版本：房主记下来上报后台（旧客户端不发，后台显示 —）
+      version: currentVersion(),
       nonce,
       proof,
     });
@@ -3211,6 +3226,8 @@ export class VoiceMesh {
             serverMuted: member.serverMuted ?? false,
             ...(member.av1Decode === true ? { av1Decode: true } : {}),
             ...(member.dev ? { dev: member.dev } : {}),
+            // 版本号同理必须带上：整体替换成员记录，漏了就会被名册重播洗掉
+            ...(member.version ? { version: member.version } : {}),
             /*
              * accountId 同样必须带上——这里是**整体替换**成员记录，
              * 漏掉它意味着房主每次重播名册（有人进出/改名）都会把

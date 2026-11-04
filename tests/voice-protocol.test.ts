@@ -357,6 +357,30 @@ describe("wire message parsing", () => {
     });
   });
 
+  it("hello 带客户端版本：解析后随成员上报（后台版本列）", () => {
+    const hello = {
+      t: "hello",
+      personId: "1234567890",
+      sessionId: "ab12cd34",
+      name: "狐狸23",
+      avatar: "",
+      color: "hsl(1 2% 3%)",
+      hasMic: true,
+      muted: false,
+      version: "1.9.24",
+      nonce: "n",
+      proof: "p",
+    };
+    const parsed = parseGuestMessage(hello);
+    expect(parsed && "version" in parsed ? parsed.version : undefined).toBe("1.9.24");
+    // 旧客户端不写版本：正常放行，只是没有该字段
+    const legacy = parseGuestMessage({ ...hello, version: undefined });
+    expect(legacy && "version" in legacy ? legacy.version : undefined).toBeUndefined();
+    // 非法版本号一律丢弃，不往后台写脏数据
+    const dirty = parseGuestMessage({ ...hello, version: "v1.9.24-beta!" });
+    expect(dirty && "version" in dirty ? dirty.version : undefined).toBeUndefined();
+  });
+
   it("accepts a hello without sessionId for backward compatibility", () => {
     // 旧客户端不带 sessionId；房主必须照常放行，只是消歧退回用 personId。
     const parsed = parseGuestMessage({

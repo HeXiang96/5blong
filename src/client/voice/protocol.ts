@@ -595,6 +595,11 @@ export interface WireMember {  id: string;
   accountId?: string;
   /** 会话级短标识：同一个人开两个窗口也能区分开。 */
   sessionId: string;
+  /**
+   * 客户端版本号（2026-11-04 起由 hello 上报、随名册广播）。
+   * 只用于后台档案与排障；旧客户端没有 = 缺省。
+   */
+  version?: string;
   name: string;
   avatar: string;
   color: string;
@@ -684,7 +689,7 @@ export function sanitizeDeviceProfile(value: unknown): DeviceProfile | undefined
 
 /** 访客 → 房主。 */
 export type GuestMessage =
-  | { t: "hello"; personId: string; sessionId: string; name: string; avatar: string; color: string; hasMic: boolean; muted: boolean; av1Decode?: boolean; dev?: DeviceProfile; accountId?: string; nonce: string; proof: string }
+  | { t: "hello"; personId: string; sessionId: string; name: string; avatar: string; color: string; hasMic: boolean; muted: boolean; av1Decode?: boolean; dev?: DeviceProfile; accountId?: string; version?: string; nonce: string; proof: string }
   | { t: "identity"; name: string; avatar: string; color: string }
   | { t: "joined" }
   | { t: "chat"; text: string }
@@ -813,6 +818,11 @@ export function parseGuestMessage(data: unknown): GuestMessage | null {
         muted: msg["muted"] === true,
         ...(msg["av1Decode"] === true ? { av1Decode: true } : {}),
         ...(dev ? { dev } : {}),
+        // 客户端版本（2026-11-04 起上报；旧客户端没有 = 缺省）
+        ...(() => {
+          const version = str(msg["version"], 20);
+          return /^\d+\.\d+\.\d+$/.test(version) ? { version } : {};
+        })(),
         ...(() => {
           const accountId = str(msg["accountId"], 8);
           return /^\d{8}$/.test(accountId) ? { accountId } : {};
