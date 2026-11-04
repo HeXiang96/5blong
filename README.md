@@ -1151,6 +1151,7 @@ npm run feedback:admin list 20   # 终端查看最近反馈（url / list / rm �
 <!-- AUTO-LOG:START -->
 ### 近期提交（自动生成）
 
+- `993e6e2` chore: sync-desktop 维护稳定下载别名 5blong_latest_x64-setup.exe（介绍页按钮依赖）（11-04 11:29）
 - `3abad4e` chore: 强制更新闸门提到 1.9.22 + 同步脚本 minimum 只升不降（11-04 11:25）
 - `bbe4359` docs: README 补充衰减限幅 24dB 定参依据与 RTT 采样修复（11-04 11:13）
 - `096d636` fix: 降噪衰减限幅定为 24dB（实测无限制会误伤人声 50dB+）+ 模型四角度闸门测试（11-04 11:10）
@@ -1158,7 +1159,6 @@ npm run feedback:admin list 20   # 终端查看最近反馈（url / list / rm �
 - `ab3558a` release: v1.9.23（11-04 10:04）
 - `3fef89d` release: v1.9.22（11-04 09:20）
 - `3e2664b` docs: 更新公告栏补写 1.9.17~1.9.21 + README/交接收尾（11-03 23:32）
-- `dec268c` release: v1.9.21（11-03 23:31）
 <!-- AUTO-LOG:END -->
 
 ## 怎么用
