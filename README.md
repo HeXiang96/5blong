@@ -183,7 +183,7 @@ curl -s https://5blong.site/api/duel -o /dev/null -w "%{http_code}\n"   # ≠404
 
 > **本节专为后续维护者（含 AI）而写**：交代"共享屏幕为什么卡、改了什么、怎么验证、别踩哪些坑"。  
 > 这一轮**只动共享链路，语音一行未碰**（语音零影响是硬约束）；四批次全部落地，  
-> `npm run check` 全绿（typecheck + <!-- AUTO:TESTS -->410<!-- /AUTO:TESTS --> 单测 + 构建）。  
+> `npm run check` 全绿（typecheck + <!-- AUTO:TESTS -->420<!-- /AUTO:TESTS --> 单测 + 构建）。  
 > 完整方案与逐条推理见 [SCREENSHARE-OPT-PLAN.md](./docs/archive/SCREENSHARE-OPT-PLAN.md)（已归档）；  
 > 早期 v1~v3 草稿 [SCREENSHARE-PERF-PLAN.md](./docs/archive/SCREENSHARE-PERF-PLAN.md) 已被其取代（仅存档）。
 
@@ -805,7 +805,7 @@ SFU 多档（simulcast）也有；但房主有硬编时只发**一档**，SFU �
 
 - 新增 `tests/game-room-code.test.ts`：6 位能进、老 4 位能进、5 位/7 位/字母不算码、首尾空白归一、邀请链接往返解析。
 - 新增视觉夹具 `tests/fixtures/game-join.html?code=<房号>&fill=1`：手输 6 位 / 链接带入 / 填完游戏 ID 三种状态可直接截图目检。
-- 全量用例 <!-- AUTO:TESTS -->410<!-- /AUTO:TESTS --> 项通过；`typecheck`、`build:web:pages`、`docs:check` 全绿。
+- 全量用例 <!-- AUTO:TESTS -->420<!-- /AUTO:TESTS --> 项通过；`typecheck`、`build:web:pages`、`docs:check` 全绿。
 
 ### 三、已知未修（单独排期，不在这版）
 
@@ -1337,7 +1337,7 @@ npm install                 # 安装依赖
 npm run dev                 # 本地开发服务器（网页）
 npm run tauri dev           # 桌面端开发模式（自动起 dev 服务器 + Tauri 窗口）
 npm run typecheck           # 类型检查
-npm test                    # 单元测试（<!-- AUTO:TESTS -->410<!-- /AUTO:TESTS --> 项，由 docs:sync 注入）
+npm test                    # 单元测试（<!-- AUTO:TESTS -->420<!-- /AUTO:TESTS --> 项，由 docs:sync 注入）
 npm run build:web:pages     # 构建静态网页到 dist-web
 npm run tauri build         # 本地出桌面安装包（更新签名需要环境变量，一般直接用 CI）
 npm run deploy:pages        # 手动部署网页到 Cloudflare Pages（复用本机 wrangler 凭据）
@@ -1433,7 +1433,7 @@ npm run signal:setup        # 绑定 Pages → 信令 Worker（service binding S
 - `.github/workflows/`：`release.yml`（云出包，`app-v*` 标签触发）、
   `readme-log.yml`（自动更新 README 提交列表，`[skip ci]`）
 - `tests/`：协议 / 握手 / 准入、屏幕共享（含调谐器与硬编预检）、猪圈、说话检测、定时器、
-  ICE、反馈、会话统计、音量上限、blake3 等，当前合计 <!-- AUTO:TESTS -->410<!-- /AUTO:TESTS --> 项
+  ICE、反馈、会话统计、音量上限、blake3 等，当前合计 <!-- AUTO:TESTS -->420<!-- /AUTO:TESTS --> 项
 - `scripts/`：`deploy-pages.mjs`（部署）、`publish-desktop.mjs`（桌面端更新源发布）、
   `pages-status.mjs`、`bump-version.mjs`（发版一键化）、`readme-log.mjs`（AUTO-LOG，含畸形自愈）、
   `docs-sync.mjs` / `check-docs.mjs`（文档数字注入与校验）、`lib/blake3.mjs`
@@ -1513,8 +1513,16 @@ npm run signal:setup        # 绑定 Pages → 信令 Worker（service binding S
   两个实例=两个玩家）；全库 **420/420** 过；服务端冒烟 **24/24**（`server/scripts/duel-smoke.mjs`）。
 - 上线顺序：`server/` 传 ECS 重启 `5blong-api`（表自动建）→ 前端随 bump 走 CI。
   生产冒烟：`BASE=https://5blong.site node server/scripts/duel-smoke.mjs`。
-- **还没做**：对战特效（方案已定：快照里的战斗日志带 dmg/heal 分类、两端天然同步，
-  对比前后快照挂 CSS 动画即可，不需要特效通道）。
+### 已知待修（2026-11-04 实测，进 1.9.25）
+
+1. **对局等待层"几秒消失"假象**：客户端把服务端 404/500 吞成"没有对局"直接清掉
+   等待层——ECS 部署 `/api/duel` 之前实测：点了邀请没反应、等待层闪没、对方收不到、
+   全程无提示。修法：poll 非 200 直接抛错，保留会话退避重试并弹「对局服务暂时不可用」。
+   （服务端已排除：24 项冒烟打生产全绿。）
+2. **降噪模型从安装包摘出**：`?url` 导入让 18MB 的 DFN3 wasm 打进了安装包
+   （7.16→16.63MB 的主因，**不是**对局功能的体积——对局只占 10KB）。
+   改成运行时从服务器下载，安装包回 ~7MB，下载进度条 UI 现成。
+3. 对战特效（方案已定：快照里的战斗日志带 dmg/heal 分类、两端天然同步，挂 CSS 动画即可）。
 
 ---
 

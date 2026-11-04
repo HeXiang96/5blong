@@ -146,7 +146,11 @@ export class RemoteDuelTransport implements DuelTransport {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(req),
     });
-    return (await res.json().catch(() => ({ ok: false, session: null }))) as PollRes;
+    // 非 200（服务端没部署/重启中/网络错误）必须抛错：
+    // 吞掉的话 hook 会把它当成「没有对局」，把等待层无声关掉——
+    // 2026-11-04 实测的"邀请几秒消失"就是这么来的。
+    if (!res.ok) throw new Error(`duel api ${res.status}`);
+    return (await res.json()) as PollRes;
   }
 
   async leave(req: { clientId: string; gameId: string }) {
@@ -417,6 +421,7 @@ export function useDuel(room: string, myName: string): DuelBridge {
   const actionHandlerRef = useRef<((a: DuelAction, seq: number) => void) | null>(null);
   const tickRef = useRef<() => void>(() => {});
   const inflightRef = useRef(false);
+  const failStreakRef = useRef(0);
   const nameRef = useRef(myName);
   nameRef.current = myName;
   const roomRef = useRef(room);
@@ -464,8 +469,17 @@ export function useDuel(room: string, myName: string): DuelBridge {
       let res: PollRes;
       try {
         res = await transport.poll(req);
+        if (failStreakRef.current >= 3) {
+          setNotice("对局服务恢复连接");
+        }
+        failStreakRef.current = 0;
       } catch {
-        if (alive) timer = window.setTimeout(tick, 2400); // 网络抖动：退避再试
+        failStreakRef.current += 1;
+        // 连续失败 3 次（约 4~8 秒）才提示一次：单次抖动不打扰
+        if (failStreakRef.current === 3) {
+          setNotice("对局服务暂时不可用，自动重试中…");
+        }
+        if (alive) timer = window.setTimeout(tick, 2400); // 退避再试，会话保留
         return;
       }
       if (!alive) return;
