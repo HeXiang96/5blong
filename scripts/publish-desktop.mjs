@@ -65,7 +65,12 @@ const exeName = `5blong_${version}_x64-setup.exe`;
  * 不会主动读 latest.json，要等它下次启动检查或用户点托盘「检查更新」。
  * 想立刻生效只能靠服务端拒绝（房间/信令校验版本），那是另一套改动，本次没做。
  */
-const MIN_SUPPORTED = process.env.MIN_SUPPORTED || "1.9.13";
+/*
+ * 1.9.22 起收紧闸门（2026-11-04 业主决定）：≥1.9.22 修掉了"卡重连中/进房闪断"
+ * 三个叠加 bug，低于它的客户端连接状态会误报，强制升级。
+ * 注意硬边界：闸门只对 1.9.4+ 的客户端有效，且要等它下一次检查更新。
+ */
+const MIN_SUPPORTED = process.env.MIN_SUPPORTED || "1.9.22";
 const sigName = `${exeName}.sig`;
 const PROXY = "http://127.0.0.1:7890";
 

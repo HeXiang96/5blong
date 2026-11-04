@@ -397,6 +397,20 @@ async function main() {
   log("target", `v${remote} → ${exeName}`);
 
   const gate = await resolveMinimum(manifest, localField("minimum", ""));
+  /*
+   * 闸门只能升不能降（2026-11-04）：本地已写下的 minimum 比这次解析到的高，
+   * 就保留高的。否则一份旧 Release 的 manifest 会把刚收紧的闸门悄悄放回去
+   * （业主把 minimum 提到 1.9.22 后，10 分钟一跑的同步就可能被 1.9.13 覆盖）。
+   */
+  const localMin = localField("minimum", "");
+  if (
+    localMin &&
+    /^\d+\.\d+\.\d+$/.test(localMin) &&
+    (!gate.value || compareVersion(localMin, gate.value) > 0)
+  ) {
+    gate.from = `本地已写入（只升不降，放弃 ${gate.value || "空"}）`;
+    gate.value = localMin;
+  }
   log("gate", `minimum=${gate.value || "空"}（来源：${gate.from}）`);
 
   // 两份清单各自的下载域名（见 resolveBases 的注释）
