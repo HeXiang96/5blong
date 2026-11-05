@@ -79,7 +79,7 @@ export function App() {
   const voice = useVoice();
 
   /*
-   * 梗王对局（docs/DUEL-NET-PLAN.md 方案 A）：ECS 信使 + 房主权威。
+   * 梗王对局（docs/DUEL.md 方案 A）：ECS 信使 + 房主权威。
    * 进房间就开始轮询（收到邀请 / 对局状态都靠它），语音链路零接触。
    */
   const duel = useDuel(voice.roomCode, voice.members.find((m) => m.local)?.name ?? "我");
@@ -691,6 +691,7 @@ export function App() {
           onOpenOnboarding={() => setOnboardingOpen(true)}
           onExportDiagnostics={() => void voice.exportDiagnostics()}
           onChangePassword={(current, next) => accountAdapter.changePassword(current, next)}
+          nsEngine={voice.nsEngine}
         />
         <FeedbackDialog
           open={feedback.open}
@@ -788,6 +789,7 @@ export function App() {
         onReportPenActor={voice.reportPenActor}
         getPenPosition={voice.getPenPosition}
         onSetNoiseSuppression={voice.setNoiseSuppression}
+        nsEngine={voice.nsEngine}
         onSetProcessingFlag={voice.setProcessingFlag}
         mediaStates={voice.mediaStates}
         roomLocked={voice.roomLocked}
@@ -869,6 +871,7 @@ export function App() {
             onOpenOnboarding={() => setOnboardingOpen(true)}
           onExportDiagnostics={() => void voice.exportDiagnostics()}
           onChangePassword={(current, next) => accountAdapter.changePassword(current, next)}
+          nsEngine={voice.nsEngine}
           />
         </div>
       ) : null}
@@ -957,7 +960,23 @@ export function App() {
   return (
     <>
       {/* AI 降噪模型下载对话框：Portal 挂 body 最外层 + z-index 顶格，不被任何页面 UI 吞掉 */}
-      {modelDialogOpen && <ModelDownloadDialog onClose={() => setModelDialogOpen(false)} />}
+      {modelDialogOpen && (
+        <ModelDownloadDialog
+          onClose={(downloaded) => {
+            setModelDialogOpen(false);
+            /*
+             * 房内下载的补救（2026-11-04）：DFN3 只在开麦那一刻尝试，
+             * 人已经在房间里才下载的话，本次会话会一直停在兜底/直通。
+             * 下载成功且正在房间里 → 关一次再开一次降噪，实时切到 DFN3。
+             */
+            if (downloaded && voice.roomCode) {
+              void voice.retryNoiseSuppression().then((ok) => {
+                if (ok) voice.setNotice({ kind: "info", text: "AI 智能降噪（DeepFilterNet3）已实时启用" });
+              });
+            }
+          }}
+        />
+      )}
       {/*
        * gameActive（开黑圈房间/结算接管整屏）时整块卸载：猪圈常驻动画不再空转。
        * 条件分支占一个固定子槽位，gameLayer 的挂载位置因此保持稳定——React 不会

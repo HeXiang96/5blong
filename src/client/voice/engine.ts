@@ -47,6 +47,7 @@ import {
   type DeviceProfile,
 } from "./protocol";
 import { canHardwareDecode, collectDeviceProfile } from "./device-profile";
+import { onModelReady } from "./ns-deepfilter";
 import { applyAudioProfile, opusSdpTransform } from "./audio-profile";
 import { forgetAutoplayElement, onAutoplayBlocked } from "./media-unlock";
 import { backgroundTimerMode } from "./background-ticker";
@@ -291,6 +292,9 @@ export interface ChatMessage {
   self: boolean;
 }
 
+/** 降噪引擎档位：dfn3=DeepFilterNet3（主力），rnnoise=兜底，passthrough=直通，off=关闭。 */
+export type NsEngineKind = "dfn3" | "rnnoise" | "passthrough" | "off";
+
 export interface EngineEvents {
   status: (status: EngineStatus, detail?: string) => void;
   members: (members: Member[]) => void;
@@ -324,6 +328,11 @@ export interface EngineEvents {
    * 不发这条事件的话，表现就是"别人听不见我，但我这边一切正常"。
    */
   micProblem?: (detail: string) => void;
+  /**
+   * 降噪引擎档位变化（dfn3 / rnnoise / passthrough / off）。
+   * 设置页与房内快速面板用它实时显示"现在用的什么模型"。
+   */
+  nsEngine?: (kind: NsEngineKind) => void;
   /**
    * 成员进出房间（带名字）。
    *
@@ -653,6 +662,31 @@ export class VoiceMesh {
   private nsNode: AudioWorkletNode | null = null;
   /** DeepFilterNet3 引擎句柄（denoise-voice-clarity）；null = 未启用/已回退。 */
   private denoiseHandle: DenoiseHandle | null = null;
+  /** 当前降噪引擎档位（给 UI 实时显示用，见 events.nsEngine）。 */
+  private nsKind: NsEngineKind = "off";
+  /** DFN3 失败时挂一次"模型就绪自动重试"，避免人在房间里下载完还得重进。 */
+  private modelRetryHooked = false;
+
+  /** DFN3 加载失败后的自救：模型一下载完就自动重建降噪链（幂等，只挂一次）。 */
+  private hookModelRetry(): void {
+    if (this.modelRetryHooked) return;
+    this.modelRetryHooked = true;
+    onModelReady(() => {
+      if (this.nsKind === "dfn3") return;
+      void this.setNoiseSuppression(true);
+    });
+  }
+
+  private setNsKind(kind: NsEngineKind): void {
+    if (this.nsKind === kind) return;
+    this.nsKind = kind;
+    this.events.nsEngine?.(kind);
+  }
+
+  /** 当前降噪引擎档位（设置页/房内面板实时显示用）。 */
+  get nsEngineKind(): NsEngineKind {
+    return this.nsKind;
+  }
   /** 降噪后音频在音频图上的源节点（连到 gain 的那条）。 */
   private nsSourceNode: MediaStreamAudioSourceNode | null = null;
   private micGainNode: GainNode | null = null;
@@ -5592,7 +5626,7 @@ export class VoiceMesh {
      *   Node 实测稳态噪声压 25.8dB / 人声损 1.5dB）→
      *   RNNoise（老模型，稳态噪声兜底）→
      *   直通（都不行也别挡通话）。
-     * 模型 wasm 已随应用打包；缓存仓库里有登记（对话框下载过）才走 DFN3。
+     * 模型 wasm 不再随应用打包（1.9.26 起按需下载），缓存里登记过才走 DFN3。
      */
     if (settings.processing.noiseSuppression) {
       let connected = false;
@@ -5622,9 +5656,11 @@ export class VoiceMesh {
         // 真正进发送链的是降噪后的 processed。
         processed.connect(gain);
         connected = true;
+        this.setNsKind("dfn3");
       } catch {
         this.denoiseHandle = null;
         this.nsSourceNode = null;
+        this.hookModelRetry();
       }
       if (!connected) {
         try {
@@ -5639,17 +5675,20 @@ export class VoiceMesh {
           source.connect(ns);
           ns.connect(gain);
           connected = true;
+          this.setNsKind("rnnoise");
           this.pushRoomEvent("info", "AI 降噪用的是兜底模型（DeepFilterNet 加载失败）");
         } catch {
           // worklet/wasm 不可用：降级直通（native NS 已在 openMic 关闭）。
           this.nsNode = null;
           this.nsEnabled = false;
           source.connect(gain);
+          this.setNsKind("passthrough");
         }
       }
     } else {
       this.nsEnabled = false;
       source.connect(gain);
+      this.setNsKind("off");
     }
     gain.connect(limiter ?? dest);
     limiter?.connect(dest);
@@ -5730,6 +5769,7 @@ export class VoiceMesh {
       }
       source.connect(gain);
       this.nsEnabled = false;
+      this.setNsKind("off");
       return true;
     }
 
@@ -5737,7 +5777,7 @@ export class VoiceMesh {
     try {
       const micTrack = this.localStream?.getAudioTracks()[0];
       if (!micTrack) throw new Error("麦克风轨道不存在");
-      const handle = await createDenoisedTrack(micTrack, { enabled: true, presenceGainDb: 0 }, ctx);
+      const handle = await createDenoisedTrack(micTrack, { enabled: true, presenceGainDb: 0, attenuationLimitDb: 24 }, ctx);
       const processed = ctx.createMediaStreamSource(handle.stream);
       try {
         source.disconnect(gain);
@@ -5751,8 +5791,10 @@ export class VoiceMesh {
       this.nsSourceNode = processed;
       processed.connect(gain);
       this.nsEnabled = true;
+      this.setNsKind("dfn3");
       return true;
     } catch {
+      this.hookModelRetry();
       /* DFN3 不可用：退 RNNoise */
     }
     try {
@@ -5773,9 +5815,11 @@ export class VoiceMesh {
       source.connect(ns);
       ns.connect(gain);
       this.nsEnabled = true;
+      this.setNsKind("rnnoise");
       this.pushRoomEvent("info", "AI 降噪用的是兜底模型（DeepFilterNet 加载失败）");
       return true;
     } catch {
+      this.setNsKind("passthrough");
       return false;
     }
   }

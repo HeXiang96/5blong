@@ -52,10 +52,18 @@ import {
   KeyRound,
 } from "lucide-react";
 
-import type { ChatMessage, EngineStatus, MediaLinkState, Member } from "../engine";
+import type { ChatMessage, EngineStatus, MediaLinkState, Member, NsEngineKind } from "../engine";
 import type { Notice } from "../use-voice";
 import type { InteractEvent, InteractKind, Invite } from "../protocol";
 import { GROUP_INTERACT_COOLDOWN_MS } from "../protocol";
+
+/** 降噪引擎档位 → 界面文案（房内快速面板用；口径与设置页一致）。 */
+const NS_LABEL: Record<NsEngineKind, string> = {
+  dfn3: "DeepFilterNet3",
+  rnnoise: "RNNoise（兜底）",
+  passthrough: "直通",
+  off: "已关闭",
+};
 
 /** 多久没被互动就算"发呆"（头顶冒 z z）。 */
 const IDLE_MOOD_MS = 180_000;
@@ -152,6 +160,7 @@ export function RoomView({
   processing,
   captureLive,
   onSetNoiseSuppression,
+  nsEngine,
   onSetProcessingFlag,
   penEvents,
   onReportPenActor,
@@ -236,6 +245,8 @@ export function RoomView({
   /** 回声消除 / 自动增益是否已实时应用到当前麦克风轨道（引擎回读确认）。 */
   captureLive: { echoCancellation: boolean; autoGainControl: boolean };
   onSetNoiseSuppression: (on: boolean) => void;
+  /** 当前降噪引擎档位（实时显示用）。 */
+  nsEngine: NsEngineKind;
   onSetProcessingFlag: (
     key: "echoCancellation" | "autoGainControl",
     value: boolean,
@@ -1589,6 +1600,12 @@ export function RoomView({
                 <div className="vx-voice-row">
                   <span className="vx-voice-row-label">
                     <Sparkles size={15} /> AI 智能降噪
+                    <span
+                      style={{ marginLeft: 8, fontSize: 11, opacity: 0.72, whiteSpace: "nowrap" }}
+                      title="当前实际使用的降噪模型；房内下载后会自动切换"
+                    >
+                      {NS_LABEL[nsEngine]}
+                    </span>
                   </span>
                   <Toggle
                     checked={processing.noiseSuppression}

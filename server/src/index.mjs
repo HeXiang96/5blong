@@ -85,7 +85,7 @@ app.all("/feedback", createFeedbackHandler(db));
 
 app.use("/api/account", createApiRouter(db, inbox));
 
-/* 梗王对局信使：/api/duel/invite、/poll、/leave（docs/DUEL-NET-PLAN.md 方案 A） */
+/* 梗王对局信使：/api/duel/invite、/poll、/leave（docs/DUEL.md 方案 A） */
 app.use("/api/duel", createDuelRouter(db));
 
 /* 开黑圈：/game/entitle、/game/verify、/game-admin（后台页） */

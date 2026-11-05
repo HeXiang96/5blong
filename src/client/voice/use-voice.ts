@@ -7,6 +7,7 @@ import {
   type EngineStatus,
   type MediaLinkState,
   type Member,
+  type NsEngineKind,
 } from "./engine";
 import { downloadDiagnostics } from "./diagnostics";
 import { loadIdentity, resolveDisplayNames, saveIdentity, type Identity } from "./identity";
@@ -117,6 +118,8 @@ export function useVoice() {
   const [chatOpen, setChatOpen] = useState(false);
   const [unread, setUnread] = useState(0);
   const [joined, setJoined] = useState(false);
+  /** 当前降噪引擎档位（引擎通过 events.nsEngine 推过来；设置页/房内面板实时显示）。 */
+  const [nsEngine, setNsEngine] = useState<NsEngineKind>("off");
   /**
    * 对方的音频被浏览器自动播放策略拦下了（用户听不见别人说话）。
    * 界面据此显示"点一下恢复"的提示——以前这种情况是完全静默的。
@@ -363,6 +366,13 @@ export function useVoice() {
        */
       micProblem: (detail) => {
         setNotice({ kind: "error", text: detail });
+      },
+      /*
+       * 降噪引擎档位变化：设置页与房内快速面板实时显示"现在用的什么模型"。
+       * 房内下载模型 → 引擎重建降噪链 → 这里自动更新，用户不用重进房。
+       */
+      nsEngine: (kind) => {
+        setNsEngine(kind);
       },
       /*
        * 成员进出：给一条带名字的可见提示。
@@ -1394,6 +1404,21 @@ export function useVoice() {
     engineRef.current?.setAccountId(id);
   }, []);
 
+  /**
+   * 模型下载完成后实时重建降噪链（2026-11-04）。
+   *
+   * 引擎的三级降级只在**开麦那一刻**尝试一次：如果用户在房间挂着的时候才下载模型，
+   * 本次会话就永远停在兜底/直通上，表现为"下载了但没生效"。
+   * 这里关一次再开一次，等于把 DFN3 重新试一遍（setNoiseSuppression 内部会拆旧链再建，
+   * 发送流是同一个 MediaStreamDestination，通话不会断）。
+   */
+  const retryNoiseSuppression = useCallback(async (): Promise<boolean> => {
+    const engine = engineRef.current;
+    if (!engine) return false;
+    await engine.setNoiseSuppression(false);
+    return engine.setNoiseSuppression(true);
+  }, []);
+
   const setScreenWatch = useCallback((state: "watch" | "preview" | "off") => {
     // 本地留一份：SFU 订阅层要按它切换（watch=满档、preview=低层）
     setScreenWatchState(state);
@@ -1864,5 +1889,7 @@ export function useVoice() {
     setShareLatency,
     setScreenWatch,
     setAccountId,
+    retryNoiseSuppression,
+    nsEngine,
   };
 }

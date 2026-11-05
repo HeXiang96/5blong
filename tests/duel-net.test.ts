@@ -1,5 +1,5 @@
 /**
- * 梗王对局 · 网络层状态机测试（docs/DUEL-NET-PLAN.md 验收清单的自动化部分）
+ * 梗王对局 · 网络层状态机测试（docs/DUEL.md 验收清单的自动化部分）
  *
  * LocalDuelTransport 的信箱就是 localStorage，同一 jsdom 里两个实例
  * 就等于两个玩家。覆盖：邀请→接受→房主推快照→访客拉到→访客推动作→

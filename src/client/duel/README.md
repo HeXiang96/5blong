@@ -16,7 +16,7 @@ server/db/schema.sql       duel_sessions 表
 server/scripts/duel-smoke.mjs  服务端冒烟（24 项）
 tests/duel-engine.test.ts  引擎单测
 tests/duel-net.test.ts     网络状态机单测（本地双标签页 = 两个玩家）
-docs/DUEL-NET-PLAN.md      联网方案与取舍（为什么走 HTTP 信使）
+docs/DUEL.md      联网方案与取舍（为什么走 HTTP 信使）
 ```
 
 ---

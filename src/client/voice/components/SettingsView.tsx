@@ -18,6 +18,7 @@ import {
   startMicTest,
   type DeviceOption,
 } from "../devices";
+import type { NsEngineKind } from "../engine";
 import { toAvatarDataUrl } from "../storage";
 import { Avatar, Toggle } from "./ui";
 import { HealthCheck } from "./HealthCheck";
@@ -38,6 +39,7 @@ export function SettingsView({
   onOpenOnboarding,
   onExportDiagnostics,
   onChangePassword,
+  nsEngine,
 }: {
   identity: Identity;
   settings: VoiceSettings;
@@ -52,6 +54,8 @@ export function SettingsView({
   onExportDiagnostics: () => void;
   /** 改登录密码：由上层注入（网页端走 cookie、客户端走 Bearer，适配器自己处理） */
   onChangePassword: (current: string, next: string) => Promise<{ error?: AccountError }>;
+  /** 当前降噪引擎档位（引擎实时推送，下载模型后会自动更新）。 */
+  nsEngine: NsEngineKind;
 }) {
   const [tab, setTab] = useState<Tab>("profile");
   const [draft, setDraft] = useState<Identity>(identity);
@@ -492,7 +496,15 @@ export function SettingsView({
               <label className="vx-field">
                 <span className="vx-field-label">
                   <Sparkles size={14} /> AI 智能降噪
-                  <span className="vx-field-sub">RNNoise · 实时生效</span>
+                  <span className="vx-field-sub">
+                    {nsEngine === "dfn3"
+                      ? "DeepFilterNet3 · 实时生效"
+                      : nsEngine === "rnnoise"
+                        ? "RNNoise · 实时生效（兜底）"
+                        : nsEngine === "passthrough"
+                          ? "直通 · 降噪未生效"
+                          : "已关闭"}
+                  </span>
                 </span>
                 <Toggle
                   checked={voice.processing.noiseSuppression}

@@ -20,6 +20,15 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.9.27",
+    date: "2026-11-05",
+    lines: [
+      "AI 降噪模型下载后立即生效，不用重进房",
+      "设置和房间里能看到当前用的降噪模型",
+      "文档收敛成 5 份，历史全部归档",
+    ],
+  },
+  {
     version: "1.9.26",
     date: "2026-11-04",
     lines: [

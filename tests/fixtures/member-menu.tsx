@@ -162,7 +162,7 @@ function Fixture() {
     onGetPeerAudio: () => ({ volume: 1, muted }),
     processing: { echoCancellation: true, noiseSuppression: false, autoGainControl: true },
     captureLive: { echoCancellation: true, autoGainControl: true },
-    onSetNoiseSuppression: (value) => record("noise", value), onSetProcessingFlag: (...args) => record("processing", ...args),
+    onSetNoiseSuppression: (value) => record("noise", value), nsEngine: "dfn3", onSetProcessingFlag: (...args) => record("processing", ...args),
     penEvents, onReportPenActor: reportPen, getPenPosition: (id) => poseStore.current[id]?.x,
     audioBlocked: false, onResumeAudio: () => {}, mediaStates: {}, roomLocked: false, deaf: false,
     interactions, feedCounts: params.get("fed") ? { "1000000002": Number(params.get("fed")) } : {}, onToggleDeaf: () => record("deaf"),

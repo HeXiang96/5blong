@@ -5,7 +5,7 @@
  * 5 费 AoE≈3 伤 / 6 费≈8 伤终结；两套牌各 14 张，按同一预算配平：
  *   大东彦 = 高爆发、随从少；Renai = 续航、解场、抽牌。
  *
- * 全部为 [PLACEHOLDER]，等实战数据再调（见 docs/DUEL-IN-ROOM-PLAN.md）。
+ * 全部为 [PLACEHOLDER]，等实战数据再调（见 docs/DUEL.md）。
  */
 
 export type TypeKey = "pig" | "aim" | "power" | "drama" | "hot" | "show" | "gun";

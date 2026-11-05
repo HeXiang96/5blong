@@ -89,6 +89,17 @@ async function migrateLegacyBytes(): Promise<ArrayBuffer | null> {
 
 let bytesPromise: Promise<ArrayBuffer | null> | null = null;
 
+/**
+ * 「模型就绪」回调：下载成功的那一刻触发。
+ * 引擎在 DFN3 失败时会挂一个回调，等模型到位自动重建降噪链——
+ * 这样"人在房间挂着才下载"也能实时切上，不用重进房。
+ */
+const modelReadyCbs: Array<() => void> = [];
+
+export function onModelReady(cb: () => void): void {
+  modelReadyCbs.push(cb);
+}
+
 function loadBytes(): Promise<ArrayBuffer | null> {
   bytesPromise ??= readCachedBytes().then(async (cached) => cached ?? migrateLegacyBytes());
   return bytesPromise;
@@ -137,7 +148,9 @@ export function installDfModelFetchShim(): void {
     }
     if (!url.includes(MODEL_SENTINEL)) return nativeFetch(input as RequestInfo, init);
     const bytes = await loadBytes();
-    if (!bytes) return new Response(null, { status: 404 });
+    if (!bytes) {
+        return new Response(null, { status: 404 });
+    }
     return new Response(bytes, {
       status: 200,
       headers: { "Content-Type": "application/wasm", "Content-Length": String(bytes.byteLength) },
@@ -178,6 +191,14 @@ export async function downloadModel(onProgress?: (value: number) => void): Promi
   }
   onProgress?.(1);
   bytesPromise = Promise.resolve(bytes.buffer);
+  const cbs = modelReadyCbs.splice(0);
+  for (const cb of cbs) {
+    try {
+      cb();
+    } catch {
+      /* 回调失败不影响下载结果 */
+    }
+  }
   try {
     const cache = await cacheStore();
     await cache.put(MODEL_BYTES_KEY, new Response(bytes, { headers: { "Content-Type": "application/wasm" } }));

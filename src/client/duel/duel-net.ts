@@ -1,5 +1,5 @@
 /**
- * 梗王对局 · 网络层（docs/DUEL-NET-PLAN.md 方案 A）
+ * 梗王对局 · 网络层（docs/DUEL.md 方案 A）
  *
  * 结构：
  *   DuelTransport        收发接口（invite / poll / leave）

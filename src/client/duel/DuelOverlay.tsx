@@ -1,7 +1,7 @@
 /**
  * 梗王对局 · 房间内覆盖层（host / guest 双角色）
  *
- * 数据流（docs/DUEL-NET-PLAN.md 方案 A）：
+ * 数据流（docs/DUEL.md 方案 A）：
  *   host：本机跑引擎，每次变化 snapshot → bridge.registerState（轮询上传）；
  *         收到访客动作 → g.applyAction。
  *   guest：不执行引擎；收快照 → g.restore（只用于渲染与判断）；

@@ -50,6 +50,7 @@ createRoot(document.getElementById("root")!).render(
         return {};
       }}
       onExportDiagnostics={() => {}}
+      nsEngine="dfn3"
       onNotice={() => {}}
     />
   </StrictMode>,

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * 梗王对局信使 · 冒烟测试（对 docs/DUEL-NET-PLAN.md 的 P0 验收）。
+ * 梗王对局信使 · 冒烟测试（对 docs/DUEL.md 的 P0 验收）。
  *
  * 跑法（先把服务起在 8791）：
  *   node scripts/duel-smoke.mjs

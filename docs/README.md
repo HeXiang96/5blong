@@ -1,56 +1,47 @@
-# docs/ 索引与文档治理规则
+# docs/ 读哪个？（索引 + 文档规矩）
 
-> 本目录放**跨版本的专题记录与历史档案**。仓库根 `README.md` 是唯一的用户/开发主文档；
-> 工作区入口 `../README.md`（仓库外一层）是维护者/AI 速查。
+> **现行 4 份 + 历史 1 份**。要改代码、要排查、要接着做，从这里进，别去翻归档。
 
-## 现行文档
+## 先读哪个
 
-| 文件 | 内容 |
+| 文件 | 什么时候读 | 状态 |
+|---|---|---|
+| **[../README.md](../README.md)** | **永远先读这个**。项目总览、版本历史、发版流程、各种红线，唯一用户/开发主文档 | 现行 |
+| **[DUEL.md](./DUEL.md)** | 改「梗王对局」任何代码之前 | 已上线（1.9.26） |
+| **[VOICE.md](./VOICE.md)** | 改语音链路、降噪、信令、TURN 之前 | 稳定 |
+| **[SERVER.md](./SERVER.md)** | 部署/运维 ECS、改 nginx、动数据库之前 | 稳定 |
+| **[ROADMAP.md](./ROADMAP.md)** | 想知道"接下来做什么"、哪些事还没拍板 | 未开工 |
+| **[HISTORY.md](./HISTORY.md)** | 想知道"某个版本改了什么""这事哪一版修好的" | 历史归档（只查不改） |
+
+一份都不用读的情况：只是改 UI 文案、调颜色——那些都在根 README 和代码注释里。
+
+## 归档区 `archive/`（只读）
+
+**已完成 / 已失效 / 已并入上面 4 份**的历史文档都在这里。开头的横幅写着"现行口径去哪儿找"。
+归档文档**不要据其改代码**——里面的版本号、文件名、结论大多已经过时。
+
+| 归档文件 | 为什么在这 |
 |---|---|
-| `2026-10-17-开黑圈上线记录.md` | 开黑圈（5v5 分队内战语音）从零到上线的完整记录：功能、修复、后台入口、数据结构 |
+| `DUEL-IN-ROOM-PLAN.md` / `DUEL-NET-PLAN.md` / `HANDOVER-2026-11-04-DUEL.md` | 对局的设计与施工记录，已并入 DUEL.md |
+| `HANDOVER-2026-11-03.md` / `SIGNAL-SERVER-PLAN-2026-11-03.md` | 后端迁移与信令方案，已并入 SERVER.md |
+| `HANDOVER-2026-11-03-VOICE.md` / `VOICE-LOSS-PLAN.md` | 1.9.19 语音故障与丢包方案，已并入 VOICE.md / ROADMAP.md |
+| `REVIEW-2026-10-22.md` / `UX-REVIEW.md` | 全量评审与交互审查，结论已并入 ROADMAP.md |
+| `V2-PLAN.md` / `SCREENSHARE-QUALITY-PLAN.md` | 未开工的方案，结论已并入 ROADMAP.md |
+| `2026-10-17-开黑圈上线记录.md` | 开黑圈上线当天的工作日志 |
+| `HANDOFF-2026-10-26.md` / `FRIENDS-PLAN-2026-10-27.md` | 迁移前的交接与好友优化方案（删除好友已实现，其余未采纳） |
+| `SCREENSHARE-OPT-PLAN.md` / `SCREENSHARE-PLAN.md` / `SCREENSHARE-PERF-PLAN.md` / `UI-REDESIGN-PLAN.md` / `KNOWN-ISSUES.md` / `DOCS-OPT-PLAN.md` | 更早的历史档案 |
 
-## 归档区 `archive/`（只读，勿据其动手）
+## 文档规矩（防再腐化）
 
-| 文件 | 归档原因 |
-|---|---|
-| `SCREENSHARE-OPT-PLAN.md` | 屏幕共享优化完整决策记录，四批次已于 2026-10-14 全部落地 |
-| `SCREENSHARE-PLAN.md` | 共享屏幕原始设计；头部传输参数已被取代，仅 §H 语音隔离约束仍有效 |
-| `SCREENSHARE-PERF-PLAN.md` | 被 OPT-PLAN 取代的 v1~v3 草稿（含 B站/H.265/AV1/Oopz 分析） |
-| `KNOWN-ISSUES.md` | 两份缺陷交接单均已于 2026-10-12 修复 |
-| `UI-REDESIGN-PLAN.md` | 房间视觉重做方案；P1/P2/P3 已落地，基线描述（1.0.3）过时 |
-| `DOCS-OPT-PLAN.md` | 2026-10-18 文档体系优化方案（本轮治理的依据与执行清单） |
-
-## 治理规则（防再腐化）
-
-1. **唯一事实源**：同一件事只在一个地方写"现行口径"，其余地方放链接。
-   凡代码里查得到的事实（版本号、测试数、文件清单），**禁止手写**，由
-   `npm run docs:sync` 注入（见仓库根 README「开发者命令」）。
-2. **归档规则**：计划类文档完成后移入 `archive/` 并加归档横幅（状态｜日期｜现行事实源），
-   同时更新所有引用。`archive/` 内文件**只读不改**；要改就拎出来立新文档。
-3. **元数据**：每份计划/方案类文档头部必须有 `状态（草稿/进行中/已定稿/已归档）｜基准版本｜最后核实日期`。
+1. **唯一事实源**：同一件事只在一处写"现行口径"，其余放链接。代码里查得到的事实
+   （版本号、测试数、文件清单）**禁止手写**，由 `npm run docs:sync` 注入。
+2. **做完就归档**：计划/方案类文档完成后移进 `archive/`，加横幅指向现行文档，更新引用。
+3. **每份方案必须带元数据**：`状态（草稿/进行中/已定稿/已归档）｜基准版本｜最后核实日期`。
    没有这三行的文档，AI 不得据其改代码。
-4. **状态快照加哨兵**：凡写"当前线上版本 / 当前进行中"的段落，必须带
+4. **快照要带哨兵**：写"当前线上版本/当前进行中"的段落必须带
    `> 快照日期：YYYY-MM-DD，过期以代码为准`。
-5. **校验**：`npm run docs:check` 会检查 AUTO-LOG 标记配对、本地链接有效性、
-   archive 外是否残留"已修复/已被取代"字样；已挂进 `npm run check`。
+5. **校验**：`npm run docs:check`（已挂进 `npm run check`）检查 AUTO-LOG 标记、
+   本地链接有效性、归档外是否残留"已修复/已被取代"字样。
 
-## 附录：素材重编码（landing-pig.gif → 动画 WebP）
-
-首页大图 `src/client/voice/assets/landing-pig.webp` 由 `landing-pig.gif` 转出
-（493KB → 383KB，30fps 原速、逐帧时长与总时长严格一致）。重编码用 Pillow：
-
-```python
-from PIL import Image
-gif = Image.open("src/client/voice/assets/landing-pig.gif")
-frames, durs = [], []
-for i in range(gif.n_frames):
-    gif.seek(i)
-    frames.append(gif.convert("RGBA"))
-    durs.append(gif.info.get("duration") or 30)
-frames[0].save("src/client/voice/assets/landing-pig.webp", "WEBP", save_all=True,
-               append_images=frames[1:], duration=durs, loop=0, quality=70, method=6)
-```
-
-注意：**不建议降帧率**（实测相邻帧平均差异 13.5/255，属快速动作动画，降帧会明显顿）；
-**无损 WebP 反而更大**（415KB）——GIF 只存变化区域，平涂动画在这个场景更省。
-GIF 源文件保留作再编码源，未被 import，不进构建产物。
+> 新增文档的门槛：**如果一个主题已经有现行文档，就改那份，不要新建**。
+> 只有当它是"一个还没拍板的新方案"时，才值得单独开一份，并在 ROADMAP 里挂一行。
