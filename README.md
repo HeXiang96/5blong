@@ -455,6 +455,7 @@ TURN key 与 SFU 的 appId/secret **是两套**，分别创建：
 <!-- AUTO-LOG:START -->
 ### 近期提交（自动生成）
 
+- `3e365c5` release: v1.9.28（11-05 10:50）
 - `0cce75f` release: v1.9.27（11-05 09:31）
 - `4d8690e` release: v1.9.26（11-04 18:52）
 - `932db36` docs: 梗王对局上线收尾交接（推送 1.9.25 + 双设备验收清单）（11-04 15:40）
@@ -463,7 +464,6 @@ TURN key 与 SFU 的 appId/secret **是两套**，分别创建：
 - `b2e50e7` docs: README 增加发版必检清单（server 不在 CI 里，1.9.24 /api/duel 404 事故记录）（11-04 14:52）
 - `dc3e7bd` release: v1.9.24（11-04 14:19）
 - `717010c` feat: 成员客户端版本上报后台（hello 带 version → 名册 → 遥测）（11-04 11:35）
-- `993e6e2` chore: sync-desktop 维护稳定下载别名 5blong_latest_x64-setup.exe（介绍页按钮依赖）（11-04 11:29）
 <!-- AUTO-LOG:END -->
 
 ## 怎么用
