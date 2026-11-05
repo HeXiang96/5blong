@@ -60,7 +60,7 @@ import { GROUP_INTERACT_COOLDOWN_MS } from "../protocol";
 /** 降噪引擎档位 → 界面文案（房内快速面板用；口径与设置页一致）。 */
 const NS_LABEL: Record<NsEngineKind, string> = {
   dfn3: "DeepFilterNet3",
-  rnnoise: "RNNoise（兜底）",
+  rnnoise: "RNNoise",
   passthrough: "直通",
   off: "已关闭",
 };

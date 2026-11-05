@@ -48,6 +48,17 @@ import {
 } from "./protocol";
 import { canHardwareDecode, collectDeviceProfile } from "./device-profile";
 import { onModelReady } from "./ns-deepfilter";
+
+/*
+ * 降噪链定稿（2026-11-05 业主）：RNNoise 主力 → DFN3 兜底 → 直通。
+ * - RNNoise 主力：业主实测 DFN3 24dB 压不住游戏声/键盘声（残留明显）。
+ * - DFN3 兜底：衰减限幅 DFN3_ATTENUATION_DB = 40（业主要求"兜底要有兜底的实力"，
+ *   原 24 只压 18~20dB；误伤人声的风险也随之升高，接受这个取舍）。
+ * - 模型 18MB 不随包发布，按需下载（对话框仍会提醒），没模型时 DFN3 兜底缺位，
+ *   先直通，模型到位自动重试（见 hookModelRetry）。
+ */
+const DFN3_ATTENUATION_DB = 40;
+
 import { applyAudioProfile, opusSdpTransform } from "./audio-profile";
 import { forgetAutoplayElement, onAutoplayBlocked } from "./media-unlock";
 import { backgroundTimerMode } from "./background-ticker";
@@ -667,7 +678,7 @@ export class VoiceMesh {
   /** DFN3 失败时挂一次"模型就绪自动重试"，避免人在房间里下载完还得重进。 */
   private modelRetryHooked = false;
 
-  /** DFN3 加载失败后的自救：模型一下载完就自动重建降噪链（幂等，只挂一次）。 */
+  /** DFN3 兜底失败（多半是模型没缓存）后的自救：模型一下载完就自动重建降噪链（幂等，只挂一次）。 */
   private hookModelRetry(): void {
     if (this.modelRetryHooked) return;
     this.modelRetryHooked = true;
@@ -690,6 +701,10 @@ export class VoiceMesh {
   /** 降噪后音频在音频图上的源节点（连到 gain 的那条）。 */
   private nsSourceNode: MediaStreamAudioSourceNode | null = null;
   private micGainNode: GainNode | null = null;
+  /** 静音用增益节点（闭麦置零用；不翻转 track.enabled，见 setMuted）。 */
+  private muteGainNode: GainNode | null = null;
+  /** 进房时的默认静音（joinMuted）：buildOutgoing 建 muteGain 时按它初始化。 */
+  private startMuted = false;
   /** 发送链尾部的软限幅（见 buildOutgoing 注释）。 */
   private micLimiterNode: DynamicsCompressorNode | null = null;
   /**
@@ -1045,13 +1060,22 @@ export class VoiceMesh {
     }
   }
 
+  /**
+   * 静音的唯一切换点：置零/恢复发送链上的 muteGain（不碰 track.enabled——
+   * 部分设备/内核下翻转后恢复不了输出，见 setMuted 的注释）。房主强制禁言、
+   * roster 同步、本人开关全部走这里。
+   */
+  private applyMutedToGraph(muted: boolean): void {
+    if (this.muteGainNode && this.ctx) {
+      this.muteGainNode.gain.setTargetAtTime(muted ? 0 : 1, this.ctx.currentTime, 0.01);
+    }
+  }
+
   setMuted(muted: boolean): void {
     // 被房主强制禁言期间，本人不能自行开麦（房主解禁后才可以）。
     if (!muted && this.me?.serverMuted) return;
     const changed = this.me ? this.me.muted !== muted : false;
-    if (this.localStream) {
-      for (const track of this.localStream.getAudioTracks()) track.enabled = !muted;
-    }
+    this.applyMutedToGraph(muted);
     if (!this.me) return;
     this.me.muted = muted;
     this.speaking.delete(this.myId);
@@ -3108,11 +3132,7 @@ export class VoiceMesh {
              */
             if (this.me.serverMuted && !this.me.muted) {
               this.me.muted = true;
-              if (this.localStream) {
-                for (const track of this.localStream.getAudioTracks()) {
-                  track.enabled = false;
-                }
-              }
+              this.applyMutedToGraph(true);
             }
           }
           continue;
@@ -3237,11 +3257,7 @@ export class VoiceMesh {
               const muted = member.muted || this.me.serverMuted;
               if (this.me.muted !== muted) {
                 this.me.muted = muted;
-                if (this.localStream) {
-                  for (const track of this.localStream.getAudioTracks()) {
-                    track.enabled = !muted;
-                  }
-                }
+                this.applyMutedToGraph(muted);
               }
             }
             continue;
@@ -3389,9 +3405,7 @@ export class VoiceMesh {
           this.me.serverMuted = message.muted;
           if (message.muted) {
             this.me.muted = true;
-            if (this.localStream) {
-              for (const track of this.localStream.getAudioTracks()) track.enabled = false;
-            }
+            this.applyMutedToGraph(true);
           }
           this.emitMembers();
         }
@@ -5621,76 +5635,88 @@ export class VoiceMesh {
     this.outDestNode = dest;
 
     /*
-     * AI 降噪三级降级（2026-11-04 起主力换 DeepFilterNet3）：
-     *   DFN3（新模型，键盘/薯片袋这类瞬态噪声抑制强；引擎 = denoise-voice-clarity，
-     *   Node 实测稳态噪声压 25.8dB / 人声损 1.5dB）→
-     *   RNNoise（老模型，稳态噪声兜底）→
-     *   直通（都不行也别挡通话）。
-     * 模型 wasm 不再随应用打包（1.9.26 起按需下载），缓存里登记过才走 DFN3。
+     * 静音用增益节点（2026-11-05）：闭麦靠它置零，不再翻转 track.enabled——
+     * 部分设备/内核下 MediaStreamAudioSourceNode 在 enabled 翻转后恢复不了输出
+     * （实测复现：关麦再开麦就没声音了）。增益瞬时、可靠、可恢复。
+     */
+    const muteGain = ctx.createGain();
+    muteGain.gain.value = this.startMuted ? 0 : 1;
+    this.muteGainNode = muteGain;
+
+    /*
+     * AI 降噪链（2026-11-05 业主定稿）：RNNoise 主力 → DFN3 兜底（40dB）→ 直通。
+     *
+     * - RNNoise 主力：2026-11-05 业主实测 DFN3 24dB 压不住游戏声/键盘声
+     *   （"别人能听见我游戏和键盘声音，很大很清楚"），换回 RNNoise。
+     * - DFN3 兜底：RNNoise 加载失败时顶上，衰减限幅 40dB（"兜底要有兜底的实力"，
+     *   原 24dB 只压 18~20dB）。模型 18MB 不随包发布，按需下载 + Cache Storage 登记；
+     *   没下载时下载对话框会提醒（兜底要有弹药），没模型就先直通、模型到位自动重试。
      */
     if (settings.processing.noiseSuppression) {
       let connected = false;
+      // ① 主力：RNNoise（无硬上限，门限对游戏/键盘这类噪声更狠）
       try {
-        const micTrack = this.localStream.getAudioTracks()[0];
-        if (!micTrack) throw new Error("麦克风轨道不存在");
-        const handle = await createDenoisedTrack(
-          micTrack,
-          {
-            enabled: true,
-            presenceGainDb: 0, // EQ 提亮交给我们的增益/压限链，不二次处理
-            /*
-             * 衰减限幅 24dB（2026-11-04 实测定参）：无限制（100）时模型一旦
-             * 误判会把人声压掉 50dB+（合成信号实测）。24dB = 稳态噪声/键盘
-             * 脉冲可压 18~20dB，人声最坏只损 2dB——官方推荐区间内最平衡的值。
-             */
-            attenuationLimitDb: 24,
-          },
-          ctx,
-        );
-        const processed = ctx.createMediaStreamSource(handle.stream);
-        this.denoiseHandle = handle;
-        this.nsSourceNode = processed;
-        this.nsNode = null;
+        await ctx.audioWorklet.addModule(rnnoiseWorkletUrl);
+        const wasmBinary = await loadRnnoise({
+          url: rnnoiseWasmUrl,
+          simdUrl: rnnoiseSimdWasmUrl,
+        });
+        const ns = new RnnoiseWorkletNode(ctx, { maxChannels: 1, wasmBinary });
+        this.nsNode = ns;
         this.nsEnabled = true;
-        // 注意：原始 source（micSourceNode）只挂分析器用，不再直连 gain；
-        // 真正进发送链的是降噪后的 processed。
-        processed.connect(gain);
+        source.connect(ns);
+        ns.connect(gain);
         connected = true;
-        this.setNsKind("dfn3");
+        this.setNsKind("rnnoise");
       } catch {
-        this.denoiseHandle = null;
-        this.nsSourceNode = null;
-        this.hookModelRetry();
+        // worklet/wasm 起不来：交给下面的 DFN3 兜底
+        this.nsNode = null;
+        this.nsEnabled = false;
       }
+      // ② 兜底：DFN3（40dB 档，RNNoise 起不来才用）。
+      // 模型没缓存时会失败 → 登记"模型就绪自动重试"，先直通不挡通话。
       if (!connected) {
         try {
-          await ctx.audioWorklet.addModule(rnnoiseWorkletUrl);
-          const wasmBinary = await loadRnnoise({
-            url: rnnoiseWasmUrl,
-            simdUrl: rnnoiseSimdWasmUrl,
-          });
-          const ns = new RnnoiseWorkletNode(ctx, { maxChannels: 1, wasmBinary });
-          this.nsNode = ns;
-          this.nsEnabled = true;
-          source.connect(ns);
-          ns.connect(gain);
-          connected = true;
-          this.setNsKind("rnnoise");
-          this.pushRoomEvent("info", "AI 降噪用的是兜底模型（DeepFilterNet 加载失败）");
-        } catch {
-          // worklet/wasm 不可用：降级直通（native NS 已在 openMic 关闭）。
+          const micTrack = this.localStream.getAudioTracks()[0];
+          if (!micTrack) throw new Error("麦克风轨道不存在");
+          const handle = await createDenoisedTrack(
+            micTrack,
+            {
+              enabled: true,
+              presenceGainDb: 0, // EQ 提亮交给我们的增益/压限链，不二次处理
+              attenuationLimitDb: DFN3_ATTENUATION_DB,
+            },
+            ctx,
+          );
+          const processed = ctx.createMediaStreamSource(handle.stream);
+          this.denoiseHandle = handle;
+          this.nsSourceNode = processed;
           this.nsNode = null;
-          this.nsEnabled = false;
-          source.connect(gain);
-          this.setNsKind("passthrough");
+          this.nsEnabled = true;
+          // 注意：原始 source（micSourceNode）只挂分析器用，不再直连 gain；
+          // 真正进发送链的是降噪后的 processed。
+          processed.connect(gain);
+          connected = true;
+          this.setNsKind("dfn3");
+        } catch {
+          this.denoiseHandle = null;
+          this.nsSourceNode = null;
+          this.hookModelRetry();
         }
+      }
+      // ③ 直通（都不行也别挡通话）
+      if (!connected) {
+        this.nsEnabled = false;
+        source.connect(gain);
+        this.setNsKind("passthrough");
       }
     } else {
       this.nsEnabled = false;
       source.connect(gain);
       this.setNsKind("off");
     }
-    gain.connect(limiter ?? dest);
+    gain.connect(muteGain);
+    muteGain.connect(limiter ?? dest);
     limiter?.connect(dest);
     this.outgoingStream = dest.stream;
 
@@ -5773,30 +5799,7 @@ export class VoiceMesh {
       return true;
     }
 
-    // 同样的三级降级：DFN3 → RNNoise → 失败（保持现状由 UI 提示）
-    try {
-      const micTrack = this.localStream?.getAudioTracks()[0];
-      if (!micTrack) throw new Error("麦克风轨道不存在");
-      const handle = await createDenoisedTrack(micTrack, { enabled: true, presenceGainDb: 0, attenuationLimitDb: 24 }, ctx);
-      const processed = ctx.createMediaStreamSource(handle.stream);
-      try {
-        source.disconnect(gain);
-      } catch {
-        /* noop */
-      }
-      await this.teardownDenoiseHandle();
-      this.nsNode?.disconnect();
-      this.nsNode = null;
-      this.denoiseHandle = handle;
-      this.nsSourceNode = processed;
-      processed.connect(gain);
-      this.nsEnabled = true;
-      this.setNsKind("dfn3");
-      return true;
-    } catch {
-      this.hookModelRetry();
-      /* DFN3 不可用：退 RNNoise */
-    }
+    // 同样的链路：RNNoise 主力 → DFN3 兜底（40dB）→ 失败（保持现状由 UI 提示）
     try {
       await ctx.audioWorklet.addModule(rnnoiseWorkletUrl);
       const wasmBinary = await loadRnnoise({
@@ -5816,9 +5819,31 @@ export class VoiceMesh {
       ns.connect(gain);
       this.nsEnabled = true;
       this.setNsKind("rnnoise");
-      this.pushRoomEvent("info", "AI 降噪用的是兜底模型（DeepFilterNet 加载失败）");
       return true;
     } catch {
+      /* RNNoise 起不来：交给 DFN3 兜底 */
+    }
+    try {
+      const micTrack = this.localStream?.getAudioTracks()[0];
+      if (!micTrack) throw new Error("麦克风轨道不存在");
+      const handle = await createDenoisedTrack(micTrack, { enabled: true, presenceGainDb: 0, attenuationLimitDb: DFN3_ATTENUATION_DB }, ctx);
+      const processed = ctx.createMediaStreamSource(handle.stream);
+      try {
+        source.disconnect(gain);
+      } catch {
+        /* noop */
+      }
+      await this.teardownDenoiseHandle();
+      this.nsNode?.disconnect();
+      this.nsNode = null;
+      this.denoiseHandle = handle;
+      this.nsSourceNode = processed;
+      processed.connect(gain);
+      this.nsEnabled = true;
+      this.setNsKind("dfn3");
+      return true;
+    } catch {
+      this.hookModelRetry();
       this.setNsKind("passthrough");
       return false;
     }
@@ -5904,7 +5929,7 @@ export class VoiceMesh {
     this.teardownDenoiseHandle().catch(() => {
       /* 销毁失败也没关系：引用已清空 */
     });
-    for (const node of [this.nsNode, this.nsSourceNode, this.micSourceNode, this.micGainNode, this.micLimiterNode, this.outDestNode]) {
+    for (const node of [this.nsNode, this.nsSourceNode, this.micSourceNode, this.micGainNode, this.muteGainNode, this.micLimiterNode, this.outDestNode]) {
       try {
         node?.disconnect();
       } catch {
@@ -5923,10 +5948,13 @@ export class VoiceMesh {
     }
     this.micSourceNode = null;
     this.micGainNode = null;
+    this.muteGainNode = null;
     this.micLimiterNode = null;
     this.outDestNode = null;
     this.outgoingStream = null;
     this.nsEnabled = false;
+    // 离房后徽标不该再显示"RNNoise · 实时生效"（没人说话的房间没有引擎在跑）
+    this.setNsKind("off");
   }
 
   // -------------------------------------------------- 成员收听音量/静音
@@ -6105,7 +6133,12 @@ export class VoiceMesh {
       this.localStream = await openMic(settings, (message) => {
         this.events.status(this.hosting ? "preparing" : "preparing", message);
       });
-      for (const track of this.localStream.getAudioTracks()) track.enabled = !muted;
+      /*
+       * 进房默认静音不再用 track.enabled 关轨道（2026-11-05）：轨道被关掉后
+       * 用户开麦时恢复不了输出（就是"开关麦克风没声音"的 bug）。改为把静音
+       * 状态记下来，buildOutgoing 建 muteGain 时按它初始化——开麦只开增益。
+       */
+      this.startMuted = muted;
       void resumeAudio(this.audioContext());
       for (const track of this.localStream.getAudioTracks()) {
         track.addEventListener("ended", () => {

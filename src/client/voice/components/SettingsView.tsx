@@ -500,7 +500,7 @@ export function SettingsView({
                     {nsEngine === "dfn3"
                       ? "DeepFilterNet3 · 实时生效"
                       : nsEngine === "rnnoise"
-                        ? "RNNoise · 实时生效（兜底）"
+                        ? "RNNoise · 实时生效"
                         : nsEngine === "passthrough"
                           ? "直通 · 降噪未生效"
                           : "已关闭"}

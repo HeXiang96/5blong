@@ -493,10 +493,10 @@ export function App() {
   const closeGamePrompt = useCallback(() => setGamePrompt(null), []);
 
   /*
-   * 打开页面就预热 AI 降噪的模型资源：
-   * - 缓存里已有 DeepFilterNet3：预热编译（进房即秒生效）；
+   * 打开页面就预热 AI 降噪的模型资源（DFN3 兜底档，2026-11-05 业主定稿：RNNoise 主力，DFN3 兜底——兜底要有弹药，下载对话框恢复弹出）：
+   * - 缓存里已有 DeepFilterNet3：预热编译（兜底随时顶上）；
    * - 没有：弹一次下载对话框（Portal 顶层，不会被任何页面 UI 吞掉）。
-   *   用户点"暂不"也能正常进房——引擎自动换回 RNNoise 兜底；
+   *   用户点"暂不"也能正常进房——主力 RNNoise 不受影响；
    *   下次打开会再次提醒，直到模型下载完成（下载一次永久有效）。
    * 都不占麦克风权限，也不阻塞页面。
    */
@@ -959,22 +959,9 @@ export function App() {
 
   return (
     <>
-      {/* AI 降噪模型下载对话框：Portal 挂 body 最外层 + z-index 顶格，不被任何页面 UI 吞掉 */}
       {modelDialogOpen && (
         <ModelDownloadDialog
-          onClose={(downloaded) => {
-            setModelDialogOpen(false);
-            /*
-             * 房内下载的补救（2026-11-04）：DFN3 只在开麦那一刻尝试，
-             * 人已经在房间里才下载的话，本次会话会一直停在兜底/直通。
-             * 下载成功且正在房间里 → 关一次再开一次降噪，实时切到 DFN3。
-             */
-            if (downloaded && voice.roomCode) {
-              void voice.retryNoiseSuppression().then((ok) => {
-                if (ok) voice.setNotice({ kind: "info", text: "AI 智能降噪（DeepFilterNet3）已实时启用" });
-              });
-            }
-          }}
+          onClose={() => setModelDialogOpen(false)}
         />
       )}
       {/*

@@ -37,22 +37,25 @@
 
 ---
 
-## 2. AI 降噪（DeepFilterNet3）
+## 2. AI 降噪：RNNoise 主力（DFN3 暂停，2026-11-05）
 
-三级降级：**DFN3 → RNNoise → 直通**，任何一级失败都不挡通话。
+**2026-11-05 定稿：RNNoise 主力 → DFN3 兜底（40dB）→ 直通。**
+业主实测 DFN3 24dB 压不住游戏声/键盘声（"别人能听见我游戏和键盘声音，很大很清楚"），
+RNNoise 恢复主力；DFN3 降为兜底且按业主要求把衰减限幅提到 40dB（"兜底要有兜底的实力"）。
 
-- 引擎 `denoise-voice-clarity`（MIT），权重烧在 18MB wasm 里，全程本机处理。
-- **模型不随安装包发布**（1.9.26 起）：构建期由 vite 插件把库里的
-  `new URL(…, import.meta.url)` 改写成哨兵，运行时由 `ns-deepfilter.ts` 拦截 fetch；
-  首次使用时**用户点「立即下载」**才从 `/models/denoise_voice_core_bg.wasm` 拉
-  （桌面端走 `https://5blong.site/models/…`），存 Cache Storage。
-- 缓存位置（桌面端）：`%LOCALAPPDATA%\com.5blong.app\EBWebView\Default\Service Worker\CacheStorage\`
-  下那个 18,248,906 字节的文件。
-- 判断有没有用上：**房间里没有**「AI 降噪用的是兜底模型（DeepFilterNet 加载失败）」这条提示
-  = DFN3 在跑；也可以用 `caches.open('5blong-models')` 查 `dfn3-model-bytes-v1`。
-- 关键参数：`attenuationLimitDb = 24`。无限制时模型误判会把人声压掉 50dB+（实测）。
-- 闸门测试：`tests/deepfilter-model.test.ts` 在 Node 里跑真 wasm（噪声抑制/人声损耗/
-  键盘脉冲/混合信噪比/纯静音），换模型或构建坏了直接爆。
+DFN3 基础设施全部保留，重开只改 `engine.ts` 顶部的 `DFN3_ENABLED` 开关：
+
+- 引擎 `denoise-voice-clarity`（MIT），模型 18MB 不随安装包发布，按需从
+  `/models/denoise_voice_core_bg.wasm` 下载（桌面端 `https://5blong.site/models/…`），
+  存 Cache Storage（`dfn3-model-bytes-v1` + 登记簿 `df-model-ledger-v1`）。
+- 服务端：nginx `/models/`（`/var/www/5blong-models/`，已部署，ACAO `*`）。
+- 关键参数：`DFN3_ATTENUATION_DB = 40`（业主定的兜底档，原 24 压不住游戏声）。
+- 下载对话框恢复弹出：没模型就提醒下载（兜底要有弹药）；没下载时 DFN3 兜底缺位，先直通。
+- RNNoise 起不来且 DFN3 失败（没模型）→ 自动登记"模型就绪重试"，模型到位自动切换。
+- 闸门测试：`tests/deepfilter-model.test.ts`（换模型/构建坏了直接爆）。
+
+降噪引擎档位（dfn3/rnnoise/passthrough/off）由引擎经 `events.nsEngine` 实时推送，
+设置页徽标与房内快速面板徽标据此显示当前模型。
 
 ---
 

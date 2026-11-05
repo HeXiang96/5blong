@@ -20,6 +20,16 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.9.28",
+    date: "2026-11-05",
+    lines: [
+      "降噪换回 RNNoise，游戏键盘声压得更干净",
+      "开关麦克风不会再出现没声音",
+      "设置和房间面板实时显示降噪模型",
+      "修复房主禁言解禁后没声音的问题",
+    ],
+  },
+  {
     version: "1.9.27",
     date: "2026-11-05",
     lines: [
