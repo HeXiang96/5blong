@@ -122,6 +122,14 @@ try {
   process.exit(1);
 }
 
+/*
+ * README 的「近期提交」在发版提交里一并生成（2026-11-05 起）：
+ * 以前靠 readme-log.yml 机器人在 push 后单独提交，结果它总在下次发版前
+ * 抢跑（连着两次把 main 顶成需要 rebase）。现在随发版一起推，不再抢跑。
+ * 注意：此时发版提交还没存在，列表里是到上一版为止的提交——正常。
+ */
+run("node scripts/readme-log.mjs");
+
 run("git add -A");
 run(`git commit -m "release: v${version}"`);
 run(`git tag app-v${version}`);

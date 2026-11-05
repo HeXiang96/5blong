@@ -453,7 +453,7 @@ TURN key 与 SFU 的 appId/secret **是两套**，分别创建：
 - **1.9.19 / 1.9.20**：自建协商四补丁；终极根因是中继配额（coturn user-quota=12）
 
 <!-- AUTO-LOG:START -->
-### 近期提交（自动生成）
+## 近期提交（自动生成）
 
 - `3e365c5` release: v1.9.28（11-05 10:50）
 - `0cce75f` release: v1.9.27（11-05 09:31）
@@ -709,12 +709,11 @@ npm run signal:setup        # 绑定 Pages → 信令 Worker（service binding S
   - `src/lib.rs`：托盘常驻、单实例、点 × 隐藏驻留、WebView2 麦克风权限自动放行、
     启动静默检查更新 + 托盘「检查更新」、WASAPI 系统音采集
   - `tauri.conf.json`：窗口 / NSIS 打包 / 自动更新源（Pages 主源 + GitHub 备源）与公钥
-- `.github/workflows/`：`release.yml`（云出包，`app-v*` 标签触发）、
-  `readme-log.yml`（自动更新 README 提交列表，`[skip ci]`）
+- `.github/workflows/`：`release.yml`（云出包，`app-v*` 标签触发；README 提交列表的机器人已于 2026-11-05 停用，改由 bump 随发版生成）
 - `tests/`：协议 / 握手 / 准入、屏幕共享（含调谐器与硬编预检）、猪圈、说话检测、定时器、
   ICE、反馈、会话统计、音量上限、blake3 等，当前合计 <!-- AUTO:TESTS -->421<!-- /AUTO:TESTS --> 项
 - `scripts/`：`deploy-pages.mjs`（部署）、`publish-desktop.mjs`（桌面端更新源发布）、
-  `pages-status.mjs`、`bump-version.mjs`（发版一键化）、`readme-log.mjs`（AUTO-LOG，含畸形自愈）、
+  `pages-status.mjs`、`bump-version.mjs`（发版一键化）、`readme-log.mjs`（AUTO-LOG，发版时由 bump 调用）、
   `docs-sync.mjs` / `check-docs.mjs`（文档数字注入与校验）、`lib/blake3.mjs`
 - `docs/`：专题记录与历史档案（索引与治理规则见 `docs/README.md`）
 - `public/`：图标与第三方许可（`index.html` 引用的 `/favicon.png`、`/icon-256.png` 来自这里）

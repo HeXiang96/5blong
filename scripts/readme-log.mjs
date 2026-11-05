@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // 自动把最近的提交记录写进 README 的「近期提交」小节。
 //
-// 由 .github/workflows/readme-log.yml 在每次 push main 后自动调用；
-// 本地也可直接 `node scripts/readme-log.mjs` 预览效果。
+// 由 `npm run bump` 在发版提交里调用（2026-11-05 起机器人已停：
+// 单独的自动提交总在发版后抢跑，两次把 main 顶成需要 rebase）。本地也可直接运行预览。
 //
 // 防循环：只统计的提交里跳过带 [skip ci] 的自动提交，
 // 且自动提交的信息本身带 [skip ci]，工作流也忽略 README.md 的单独变更。
@@ -21,7 +21,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const readmePath = path.join(root, "README.md");
 const START = "<!-- AUTO-LOG:START -->";
 const END = "<!-- AUTO-LOG:END -->";
-const HEADING = "### 近期提交（自动生成）";
+const HEADING = "## 近期提交（自动生成）";
 
 // 取最近 12 条提交（一行一条：hash、时间、说明）
 const log = execFileSync(
@@ -51,7 +51,7 @@ let body = readme.replace(
 );
 // ② 清掉孤儿块：没有 START 包裹的「近期提交」小节（到下一个 --- / 二级标题 / 文末为止）
 body = body.replace(
-  /\n*### 近期提交（自动生成）\n[\s\S]*?(?=\n---|\n## |$)/g,
+  /\n*##{1,2} 近期提交（自动生成）\n[\s\S]*?(?=\n---|\n## |$)/g,
   "",
 );
 // ③ 清掉任何残留的单只标记行
